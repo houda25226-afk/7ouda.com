@@ -306,6 +306,17 @@ if uploaded_file is not None:
         st.error(f"مش قادر أقرأ الملف: {e}")
         st.stop()
 
+    # ------------------------------------------------------
+    # معالجة تلقائية للملف بعد رفعه مباشرة:
+    #   1) تغيير اسم عمود "Note" لـ "الافادة" (لو موجود)
+    #   2) حذف أول صف بيانات بعد صف العناوين (index 0)
+    # ------------------------------------------------------
+    if "Note" in df.columns:
+        df = df.rename(columns={"Note": "الافادة"})
+
+    if len(df) > 0:
+        df = df.iloc[1:].reset_index(drop=True)
+
     st.markdown(
         f'<div class="card">✅ تم تحميل الملف بنجاح — عدد الصفوف: <b>{len(df)}</b></div>',
         unsafe_allow_html=True,

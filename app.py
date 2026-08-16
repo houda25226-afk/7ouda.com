@@ -1,43 +1,40 @@
 """
-تطبيق Streamlit لتصنيف إفادات المكالمات (ناجحة / غير ناجحة)
-باستخدام الموديل المرفوع على Hugging Face: Mahmoud252002/7oudaModel
+نقطة الدخول الرئيسية للتطبيق — تطبيق متعدد الصفحات.
+
+الصفحات:
+    - النشاط              (pages/nashat.py)      -> تصنيف إفادات المكالمات (ناجحة/غير ناجحة)
+    - الوعود القائمة        (pages/waeed_qaema.py)  -> لسه تحت الإنشاء
+    - الوعود المكسورة       (pages/maksora.py)      -> لسه تحت الإنشاء
+    - الإهمالي              (pages/ihmali.py)       -> لسه تحت الإنشاء
 
 طريقة التشغيل محليًا:
     pip install streamlit transformers torch pandas openpyxl --break-system-packages
     streamlit run app.py
 
 ============================================================
-دليل التخصيص السريع (لو عايز تضيف/تعدّل حاجة بعدين):
+دليل التخصيص السريع:
 - الألوان والخطوط كلها في متغير CSS_THEME تحت — عدّل من هناك بس.
-- منطق التصنيف كله في قسم "منطق الموديل" — منفصل عن الواجهة.
-- كل قسم في الواجهة متعلّم بعنوان تعليقي واضح عشان تلاقي مكانك بسرعة.
+- كل صفحة ملفها منفصل جوه فولدر pages/ — أي تعديل خاص بصفحة معينة يكون هناك.
+- عايز تضيف صفحة جديدة؟ اعمل ملف جديد في pages/ وضيفه في قائمة PAGES تحت
+  مع عنوان وأيقونة، وهيظهر تلقائيًا كزرار في السايدبار.
 ============================================================
 """
 
-import io
-import pandas as pd
 import streamlit as st
-import torch
-from transformers import AutoTokenizer, AutoModelForSequenceClassification
 
 # ==========================================================
-# إعدادات عامة
+# إعداد الصفحة (لازم يتنفذ مرة واحدة بس، وهنا في نقطة الدخول)
 # ==========================================================
-
-MODEL_REPO = "Mahmoud252002/7oudaModel"
-MAX_LENGTH = 256
-# التصنيف بقى رقمي: 1 = ناجحة، 0 = غير ناجحة
-LABEL_MAP = {0: 0, 1: 1}
-LABEL_NAMES = {0: "غير ناجحة", 1: "ناجحة"}
 
 st.set_page_config(
     page_title="النشاط",
     page_icon="📡",
     layout="centered",
+    initial_sidebar_state="expanded",
 )
 
 # ==========================================================
-# الهوية البصرية (Theme)
+# الهوية البصرية (Theme) — مشتركة بين كل الصفحات
 # ==========================================================
 # لوحة الألوان:
 #   خلفية داكنة رمادية-بنفسجي (#0D0F1A) بإحساس لوحة تحكم عصرية
@@ -62,10 +59,29 @@ CSS_THEME = """
     --text-dim: #8B90A8;
 }
 
-html, body, [class*="css"]  {
+html, body, [class*="css"] {
     font-family: 'Tajawal', sans-serif;
+}
+
+/* ------------------------------------------------------------
+   مهم: بنخلي النص RTL من غير ما نقلب ترتيب السايدبار مع المحتوى.
+   لو سبنا direction: rtl على الحاوية الكبيرة، السايدبار بيتقلب يمين.
+   عشان كدا الحاوية الكبيرة بتفضل LTR، والـ RTL بيتطبق بس جوه
+   المحتوى نفسه (السايدبار + المتن) عشان السايدبار يفضل شمال دايمًا.
+------------------------------------------------------------ */
+[data-testid="stAppViewContainer"] {
+    direction: ltr;
+}
+.main .block-container,
+[data-testid="stMain"] {
     direction: rtl;
 }
+section[data-testid="stSidebar"] {
+    direction: rtl;
+    background: #0A0C16;
+    border-left: 1px solid rgba(255,255,255,0.06);
+}
+section[data-testid="stSidebar"] * { color: var(--text) !important; }
 
 .stApp {
     background: radial-gradient(circle at 15% -5%, #1B1F35 0%, var(--bg) 55%);
@@ -131,48 +147,6 @@ html, body, [class*="css"]  {
     margin-bottom: 1rem;
 }
 
-/* ===== الشريط الجانبي ===== */
-section[data-testid="stSidebar"] {
-    background: #0A0C16;
-    border-left: 1px solid rgba(255,255,255,0.06);
-}
-section[data-testid="stSidebar"] * { color: var(--text) !important; }
-
-/* بلوك الهوية أعلى السايدبار */
-.brand-block {
-    display: flex;
-    align-items: center;
-    gap: 0.6rem;
-    padding: 0.9rem 0.2rem 1rem 0.2rem;
-    margin-bottom: 0.6rem;
-    border-bottom: 1px solid rgba(255,255,255,0.08);
-}
-.brand-logo {
-    width: 42px;
-    height: 42px;
-    border-radius: 12px;
-    background: linear-gradient(135deg, var(--accent), var(--accent-2));
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-size: 1.3rem;
-    flex-shrink: 0;
-    box-shadow: 0 4px 14px rgba(124, 92, 252, 0.35);
-}
-.brand-name {
-    font-weight: 900;
-    font-size: 1.25rem;
-    color: var(--text) !important;
-    line-height: 1.2;
-}
-.brand-sub {
-    font-family: 'JetBrains Mono', monospace;
-    font-size: 0.68rem;
-    letter-spacing: 0.1em;
-    color: var(--text-dim) !important;
-    text-transform: uppercase;
-}
-
 /* ===== منطقة رفع الملفات ===== */
 [data-testid="stFileUploader"] {
     background: var(--surface);
@@ -198,6 +172,12 @@ section[data-testid="stSidebar"] * { color: var(--text) !important; }
     transform: translateY(-1px);
     box-shadow: 0 6px 18px rgba(124, 92, 252, 0.3);
     color: #0A0C16;
+}
+
+/* ===== أزرار التنقل بين الصفحات في السايدبار ===== */
+[data-testid="stSidebarNav"] a,
+div[data-testid="stSidebar"] [data-testid="stPageLink-NavLink"] {
+    border-radius: 10px;
 }
 
 /* ===== شريط التقدم ===== */
@@ -242,192 +222,34 @@ div[data-baseweb="notification"] {
 st.markdown(CSS_THEME, unsafe_allow_html=True)
 
 
-def render_waveform(n_bars: int = 28):
-    """موجة صوتية متحركة بسيطة — العنصر البصري المميز للتطبيق."""
-    bars = ""
-    heights = [14, 22, 30, 18, 26, 34, 20, 28, 16, 24] * (n_bars // 10 + 1)
-    for i in range(n_bars):
-        delay = (i % 10) * 0.09
-        bars += f'<span style="height:{heights[i]}px; animation-delay:{delay}s;"></span>'
-    st.markdown(f'<div class="waveform">{bars}</div>', unsafe_allow_html=True)
-
-
 # ==========================================================
-# الهيدر
+# تعريف الصفحات والتنقل — كل صفحة بتظهر كزرار في السايدبار
 # ==========================================================
 
-st.markdown(
-    """
-    <div class="hero-wrap">
-        <div class="hero-eyebrow">CALL QUALITY CLASSIFIER</div>
-        <p class="hero-title">تصنيف إفادات المكالمات</p>
-        <p class="hero-subtitle">ارفع ملف Excel أو CSV، وهيتصنّف كل صف تلقائيًا لـ 1 (ناجحة) أو 0 (غير ناجحة)</p>
-    </div>
-    """,
-    unsafe_allow_html=True,
+nashat_page = st.Page(
+    "pages/nashat.py",
+    title="النشاط",
+    icon="📡",
+    default=True,
 )
-render_waveform()
+waeed_qaema_page = st.Page(
+    "pages/waeed_qaema.py",
+    title="الوعود القائمة",
+    icon="🕒",
+)
+maksora_page = st.Page(
+    "pages/maksora.py",
+    title="الوعود المكسورة",
+    icon="⚠️",
+)
+ihmali_page = st.Page(
+    "pages/ihmali.py",
+    title="الإهمالي",
+    icon="🗂️",
+)
 
-
-# ==========================================================
-# الشريط الجانبي — الهوية + الإعدادات
-# ==========================================================
-
-with st.sidebar:
-    st.markdown(
-        """
-        <div class="brand-block">
-            <div class="brand-logo">📡</div>
-            <div>
-                <div class="brand-name">النشاط</div>
-                <div class="brand-sub">Call Activity</div>
-            </div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-    st.markdown("### ⚙️ الإعدادات")
-    text_column_input = st.text_input("اسم عمود النص (الإفادة)", value="الافادة")
-    st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
-    st.markdown("**الموديل المستخدم**")
-    st.code(MODEL_REPO, language=None)
-    st.markdown(f"[عرض الموديل على Hugging Face ↗](https://huggingface.co/{MODEL_REPO})")
-
-
-# ==========================================================
-# منطق الموديل
-# ==========================================================
-
-@st.cache_resource(show_spinner="جاري تحميل الموديل من Hugging Face...")
-def load_model():
-    tokenizer = AutoTokenizer.from_pretrained(MODEL_REPO)
-    model = AutoModelForSequenceClassification.from_pretrained(MODEL_REPO)
-    device = "cuda" if torch.cuda.is_available() else "cpu"
-    model.to(device)
-    model.eval()
-    return tokenizer, model, device
-
-
-def predict_batch(texts, tokenizer, model, device, batch_size=16):
-    """بيصنف قائمة نصوص على دفعات (batches) عشان الأداء يبقى أسرع."""
-    all_preds, all_confidences = [], []
-    progress_bar = st.progress(0, text="جاري التصنيف...")
-    total = len(texts)
-
-    for i in range(0, total, batch_size):
-        batch = texts[i : i + batch_size]
-        batch = [str(t) if pd.notna(t) and str(t).strip() != "" else "" for t in batch]
-
-        inputs = tokenizer(
-            batch, return_tensors="pt", truncation=True, padding=True, max_length=MAX_LENGTH
-        ).to(device)
-
-        with torch.no_grad():
-            logits = model(**inputs).logits
-            probs = torch.softmax(logits, dim=1)
-            preds = torch.argmax(probs, dim=1)
-            confidences = torch.max(probs, dim=1).values
-
-        all_preds.extend(preds.cpu().tolist())
-        all_confidences.extend(confidences.cpu().tolist())
-
-        progress_bar.progress(
-            min((i + batch_size) / total, 1.0),
-            text=f"جاري التصنيف... ({min(i + batch_size, total)}/{total})",
-        )
-
-    progress_bar.empty()
-    return all_preds, all_confidences
-
-
-# ==========================================================
-# رفع الملف
-# ==========================================================
-
-uploaded_file = st.file_uploader("ارفع ملف البيانات (CSV أو Excel)", type=["csv", "xlsx", "xls"])
-
-if uploaded_file is not None:
-    try:
-        if uploaded_file.name.endswith(".csv"):
-            df = pd.read_csv(uploaded_file)
-        else:
-            df = pd.read_excel(uploaded_file)
-    except Exception as e:
-        st.error(f"مش قادر أقرأ الملف: {e}")
-        st.stop()
-
-    # ------------------------------------------------------
-    # معالجة تلقائية للملف بعد رفعه مباشرة:
-    #   1) تغيير اسم عمود "Note" لـ "الافادة" (لو موجود)
-    #   2) حذف أول صف بيانات بعد صف العناوين (index 0)
-    # ------------------------------------------------------
-    if "Note" in df.columns:
-        df = df.rename(columns={"Note": "الافادة"})
-
-    if len(df) > 0:
-        df = df.iloc[1:].reset_index(drop=True)
-
-    st.markdown(
-        f'<div class="card">✅ تم تحميل الملف بنجاح — عدد الصفوف: <b>{len(df)}</b></div>',
-        unsafe_allow_html=True,
-    )
-    st.dataframe(df.head(10), use_container_width=True)
-
-    if text_column_input not in df.columns:
-        st.error(
-            f"عمود '{text_column_input}' مش موجود في الملف. "
-            f"الأعمدة الموجودة فعلاً: {', '.join(df.columns.astype(str))}"
-        )
-        st.stop()
-
-    st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
-
-    if st.button("🚀 ابدأ التصنيف", type="primary", use_container_width=True):
-        tokenizer, model, device = load_model()
-
-        texts = df[text_column_input].tolist()
-        preds, confidences = predict_batch(texts, tokenizer, model, device)
-
-        result_df = df.copy()
-        result_df["التصنيف_المتوقع"] = [LABEL_MAP[p] for p in preds]
-        result_df["نسبة_الثقة"] = [round(c * 100, 1) for c in confidences]
-
-        # بعد ما التصنيف يخلص، رجّع اسم عمود النص لـ "Note" في ملف النتيجة
-        result_df = result_df.rename(columns={text_column_input: "Note"})
-
-        st.success("تم التصنيف بنجاح ✅")
-        st.dataframe(result_df, use_container_width=True)
-
-        counts = result_df["التصنيف_المتوقع"].value_counts()
-        col1, col2 = st.columns(2)
-        col1.metric("✅ إفادات ناجحة (1)", int(counts.get(1, 0)))
-        col2.metric("⛔ إفادات غير ناجحة (0)", int(counts.get(0, 0)))
-
-        st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
-
-        if uploaded_file.name.endswith(".csv"):
-            output = result_df.to_csv(index=False).encode("utf-8-sig")
-            file_name = "نتائج_التصنيف.csv"
-            mime = "text/csv"
-        else:
-            buffer = io.BytesIO()
-            with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
-                result_df.to_excel(writer, index=False, sheet_name="النتائج")
-            output = buffer.getvalue()
-            file_name = "نتائج_التصنيف.xlsx"
-            mime = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-
-        st.download_button(
-            label="⬇️ تحميل الملف مع التصنيف",
-            data=output,
-            file_name=file_name,
-            mime=mime,
-            use_container_width=True,
-        )
-else:
-    st.markdown(
-        '<div class="card" style="text-align:center; color: var(--text-dim);">'
-        "📂 ارفع ملف عشان تبدأ — لازم يحتوي على عمود بالنص المراد تصنيفه."
-        "</div>",
-        unsafe_allow_html=True,
-    )
+pg = st.navigation(
+    [nashat_page, waeed_qaema_page, maksora_page, ihmali_page],
+    position="sidebar",
+)
+pg.run()

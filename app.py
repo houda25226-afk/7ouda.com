@@ -502,7 +502,7 @@ def render_pie_chart(df, class_col):
     chart_card("🎯 توزيع نتائج التصنيف", _pie)
 
 
-def render_wasted_bar(df, sales_col):
+def render_wasted_bar(df, sales_col, top_n=10):
     has_wasted = WASTED_TIME_COL in df.columns
     has_sales = sales_col and sales_col in df.columns
 
@@ -510,21 +510,24 @@ def render_wasted_bar(df, sales_col):
         if not (has_wasted and has_sales):
             st.info("محتاجين عمود المحصّل + الوقت المهدر عشان نعرض الرسم ده.")
             return
-        wasted_by_agent = (
-            df.groupby(sales_col)[WASTED_TIME_COL].sum().sort_values(ascending=False).head(10).reset_index()
-        )
+        wasted_by_agent = df.groupby(sales_col)[WASTED_TIME_COL].sum().sort_values(ascending=False)
+        if top_n:
+            wasted_by_agent = wasted_by_agent.head(top_n)
+        wasted_by_agent = wasted_by_agent.reset_index()
+        chart_height = max(300, 28 * len(wasted_by_agent))
         fig2 = px.bar(
             wasted_by_agent, x=WASTED_TIME_COL, y=sales_col, orientation="h",
             color=WASTED_TIME_COL, color_continuous_scale=[COLOR_ACCENT, COLOR_WARN, COLOR_FAIL],
         )
         fig2.update_layout(
             **PLOTLY_LAYOUT, yaxis={"categoryorder": "total ascending", "title": ""},
-            xaxis_title="الوقت المهدر (دقيقة)", coloraxis_showscale=False,
+            xaxis_title="الوقت المهدر (دقيقة)", coloraxis_showscale=False, height=chart_height,
         )
         fig2.update_traces(marker_line_width=0)
         st.plotly_chart(fig2, use_container_width=True, config=PLOTLY_CONFIG)
 
-    chart_card("🏆 أعلى 10 محصّلين في الوقت المهدر", _wasted_bar)
+    title = f"🏆 أعلى {top_n} محصّلين في الوقت المهدر" if top_n else "🏆 كل المحصّلين حسب الوقت المهدر"
+    chart_card(title, _wasted_bar)
 
 
 def render_agent_perf_chart(df, class_col, sales_col, with_table=True):
@@ -651,6 +654,57 @@ def render_highlights(df, class_col, sales_col, time_col):
                 st.markdown('<div class="highlight-sub">محتاجين عمود التاريخ</div>', unsafe_allow_html=True)
 
 
+def render_comparison_matrix(df, class_col, sales_col):
+    """جدول مقارنة شامل لكل المحصّلين + خريطة أداء (نسبة النجاح مقابل الوقت المهدر)."""
+    has_class = class_col and class_col in df.columns
+    has_sales = sales_col and sales_col in df.columns
+    has_wasted = WASTED_TIME_COL in df.columns
+
+    if not (has_class and has_sales):
+        st.info("محتاجين عمود التصنيف وعمود المحصّل عشان نبني جدول المقارنة.")
+        return
+
+    perf = _compute_agent_perf(df, class_col, sales_col)
+
+    if has_wasted:
+        wasted_agg = df.groupby(sales_col)[WASTED_TIME_COL].agg(["sum", "mean"]).round(1)
+        wasted_agg.columns = ["إجمالي الوقت المهدر", "متوسط الوقت المهدر"]
+        perf = perf.merge(wasted_agg, left_on=sales_col, right_index=True, how="left")
+
+    def _table():
+        st.dataframe(
+            perf.rename(columns={sales_col: "المحصّل"}),
+            use_container_width=True,
+            hide_index=True,
+        )
+
+    chart_card(f"📋 جدول المقارنة الشامل — كل المحصّلين ({len(perf)})", _table)
+
+    if has_wasted:
+        def _scatter():
+            fig = px.scatter(
+                perf, x="نسبة النجاح %", y="إجمالي الوقت المهدر", size="إجمالي المكالمات",
+                text=sales_col, color="نسبة النجاح %",
+                color_continuous_scale=[COLOR_FAIL, COLOR_WARN, COLOR_SUCCESS],
+            )
+            avg_success = perf["نسبة النجاح %"].mean()
+            avg_wasted = perf["إجمالي الوقت المهدر"].mean()
+            fig.add_vline(x=avg_success, line_dash="dot", line_color="#8B96AC", opacity=0.5)
+            fig.add_hline(y=avg_wasted, line_dash="dot", line_color="#8B96AC", opacity=0.5)
+            fig.update_traces(textposition="top center", textfont_size=10, marker=dict(line=dict(color="#0E1420", width=1)))
+            fig.update_layout(
+                **PLOTLY_LAYOUT, coloraxis_showscale=False,
+                xaxis_title="نسبة النجاح %", yaxis_title="إجمالي الوقت المهدر (دقيقة)",
+            )
+            st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG)
+            st.caption(
+                "🔵 حجم الفقاعة = عدد المكالمات · الخطوط المنقّطة = المتوسط العام. "
+                "أعلى يمين = أداء ممتاز، أسفل يمين = ممتاز بس وقته بيتهدر، أعلى يسار = نجاح قليل بجهد وقت أقل، أسفل يسار = محتاج متابعة."
+            )
+
+        chart_card("🧭 خريطة الأداء: نسبة النجاح مقابل الوقت المهدر", _scatter)
+
+
 def render_full_dashboard(df, class_col=None, sales_col=None, time_col=None):
     """النسخة الكاملة — تويب «الداشبورد» بس، منظّمة في تبويبات فرعية."""
     render_metric_cards(df, class_col, sales_col, time_col)
@@ -658,7 +712,9 @@ def render_full_dashboard(df, class_col=None, sales_col=None, time_col=None):
     render_highlights(df, class_col, sales_col, time_col)
     st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
 
-    sub_tab1, sub_tab2, sub_tab3 = st.tabs(["📈 نظرة عامة", "👥 أداء المحصّلين", "⏱️ الوقت المهدر"])
+    sub_tab1, sub_tab2, sub_tab3, sub_tab4 = st.tabs(
+        ["📈 نظرة عامة", "👥 أداء المحصّلين", "⏱️ الوقت المهدر", "🔍 مقارنة شاملة"]
+    )
 
     with sub_tab1:
         col_a, col_b = st.columns(2)
@@ -668,14 +724,17 @@ def render_full_dashboard(df, class_col=None, sales_col=None, time_col=None):
             render_trend_chart(df, class_col, time_col)
 
     with sub_tab2:
-        render_agent_perf_chart(df, class_col, sales_col, with_table=True)
+        render_agent_perf_chart(df, class_col, sales_col, with_table=False)
 
     with sub_tab3:
         col_c, col_d = st.columns(2)
         with col_c:
-            render_wasted_bar(df, sales_col)
+            render_wasted_bar(df, sales_col, top_n=None)
         with col_d:
             render_wasted_hist(df)
+
+    with sub_tab4:
+        render_comparison_matrix(df, class_col, sales_col)
 
 
 # ==========================================================
@@ -703,8 +762,9 @@ def page_classification():
 
     # ------------------------------------------------------
     # بمجرد ما ملف يترفع، نخزّن البايتات بتاعته في الذاكرة (session_state)
-    # بدل ما نعتمد على قيمة الـ uploader نفسه في كل Rerun — عشان ده
-    # اللي كان بيسبب اختفاء الملف والنتيجة لما تتنقل بين التبويبات.
+    # بدل ما نعتمد على قيمة الـ uploader نفسه في كل Rerun — عشان كده
+    # الملف والنتيجة بيفضلوا موجودين حتى لو اتنقلت بين التبويبات.
+    # لو رفعت ملف تاني، هو ده اللي بيبدّل الملف المخزّن تلقائي.
     # ------------------------------------------------------
     if uploaded_file is not None:
         st.session_state["raw_file_bytes"] = uploaded_file.getvalue()
@@ -712,21 +772,6 @@ def page_classification():
         st.session_state["raw_file_size"] = uploaded_file.size
 
     has_cached_file = "raw_file_bytes" in st.session_state
-
-    if has_cached_file:
-        cached_name = st.session_state["raw_file_name"]
-        col_info, col_clear = st.columns([5, 1])
-        col_info.markdown(
-            f'<div class="card">📄 الملف الحالي: <b>{cached_name}</b></div>',
-            unsafe_allow_html=True,
-        )
-        if col_clear.button("🗑️ إلغاء الملف", use_container_width=True):
-            for key in [
-                "raw_file_bytes", "raw_file_name", "raw_file_size",
-                "last_result_df", "last_sales_col", "last_time_col", "last_file_token",
-            ]:
-                st.session_state.pop(key, None)
-            st.rerun()
 
     if not has_cached_file:
         st.markdown(
@@ -894,17 +939,6 @@ def page_dashboard():
         st.session_state["dash_raw_name"] = dash_file.name
 
     has_cached = "dash_raw_bytes" in st.session_state
-
-    if has_cached:
-        col_info, col_clear = st.columns([5, 1])
-        col_info.markdown(
-            f'<div class="card">📄 الملف الحالي: <b>{st.session_state["dash_raw_name"]}</b></div>',
-            unsafe_allow_html=True,
-        )
-        if col_clear.button("🗑️ إلغاء الملف", use_container_width=True, key="dash_clear"):
-            st.session_state.pop("dash_raw_bytes", None)
-            st.session_state.pop("dash_raw_name", None)
-            st.rerun()
 
     if not has_cached:
         st.markdown(

@@ -10,7 +10,7 @@
 دليل التخصيص السريع:
 - الألوان والخطوط في CSS_THEME تحت.
 - كل تويب (صفحة) في دالة منفصلة اسمها page_xxx() — سهل تلاقي مكانك.
-- أسماء الأعمدة المتوقعة في الملف (Sales Person, Created On, Note)
+- أسماء الأعمدة المتوقعة في الملف (Create By, Created On, Notes)
   متعرّفة في قسم "إعدادات وأسماء الأعمدة" تحت — لو الأسماء اتغيرت غيّرها من هناك.
 - التبويبات الأربعة (الوعود القائمة / المكسورة / الإهمال / أخطاء الحالات)
   لسه فاضية (Placeholder) لحد ما نحدد منطق كل واحدة فيها.
@@ -33,12 +33,12 @@ from transformers import AutoTokenizer, AutoModelForSequenceClassification
 MODEL_REPO = "Mahmoud252002/7oudaModel"
 MAX_LENGTH = 256
 
-ORIGINAL_TEXT_COL = "Note"          # اسم العمود الأصلي في الملف
+ORIGINAL_TEXT_COL = "Notes"         # اسم العمود الأصلي في الملف
 MODEL_TEXT_COL = "الافادة"          # الاسم اللي بيتحول له مؤقتًا عشان الموديل
 CLASSIFICATION_COL = "التصنيف"      # عمود النتيجة: 1 = ناجحة / 0 = غير ناجحة
 WASTED_TIME_COL = "الوقت_المهدر_دقيقة"
 
-SALES_PERSON_CANDIDATES = ["Sales Person", "sales person", "SalesPerson", "المحصل"]
+SALES_PERSON_CANDIDATES = ["Create By", "create by", "CreateBy", "Created By", "created by", "Sales Person", "sales person", "المحصل"]
 CREATED_ON_CANDIDATES = ["Created On", "created on", "CreatedOn", "تاريخ الافادة"]
 
 st.set_page_config(
@@ -94,9 +94,6 @@ html, body, [class*="css"] {
 
 #MainMenu {visibility: hidden;}
 footer {visibility: hidden;}
-[data-testid="stToolbar"] {visibility: hidden;}
-/* الزرار اللي بيفتح/يقفل الشريط الجانبي لازم يفضل ظاهر */
-[data-testid="collapsedControl"] {visibility: visible !important;}
 
 /* ===== الشريط الجانبي (ثابت على الشمال) ===== */
 section[data-testid="stSidebar"] {
@@ -381,10 +378,11 @@ def highlight_wasted(val):
 # داشبورد مشترك (يُستخدم بعد التصنيف مباشرة، وكمان في تويب الداشبورد)
 # ==========================================================
 
-def render_dashboard(df: pd.DataFrame, class_col: str = None, sales_col: str = None):
+def render_dashboard(df: pd.DataFrame, class_col: str = None, sales_col: str = None, time_col: str = None):
     has_class = class_col and class_col in df.columns
     has_wasted = WASTED_TIME_COL in df.columns
     has_sales = sales_col and sales_col in df.columns
+    has_time = time_col and time_col in df.columns
 
     # ----- بطاقات (Metrics) -----
     metric_cols = st.columns(4)
@@ -393,21 +391,25 @@ def render_dashboard(df: pd.DataFrame, class_col: str = None, sales_col: str = N
     if has_class:
         success_count = int((df[class_col] == 1).sum())
         fail_count = int((df[class_col] == 0).sum())
-        metric_cols[1].metric("✅ ناجحة", success_count)
+        success_rate = round(success_count / len(df) * 100, 1) if len(df) else 0
+        metric_cols[1].metric("✅ ناجحة", success_count, f"{success_rate}%")
         metric_cols[2].metric("⛔ غير ناجحة", fail_count)
     else:
         metric_cols[1].metric("✅ ناجحة", "—")
         metric_cols[2].metric("⛔ غير ناجحة", "—")
 
     if has_wasted:
-        metric_cols[3].metric("⏱️ إجمالي الوقت المهدر (دقيقة)", round(df[WASTED_TIME_COL].sum(), 1))
+        avg_wasted = round(df[WASTED_TIME_COL].mean(), 1) if len(df) else 0
+        metric_cols[3].metric("⏱️ إجمالي الوقت المهدر (دقيقة)", round(df[WASTED_TIME_COL].sum(), 1), f"متوسط {avg_wasted} د/مكالمة")
     else:
         metric_cols[3].metric("⏱️ إجمالي الوقت المهدر", "—")
 
     st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
 
     chart_colors = {"ناجحة": "#34D399", "غير ناجحة": "#FB7185"}
+    layout_kwargs = dict(paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", font_color="#E7ECF3")
 
+    # ----- الصف الأول: توزيع النتائج + أعلى المحصّلين في الوقت المهدر -----
     col_a, col_b = st.columns(2)
 
     with col_a:
@@ -420,10 +422,7 @@ def render_dashboard(df: pd.DataFrame, class_col: str = None, sales_col: str = N
                 color="التصنيف", color_discrete_map=chart_colors,
                 title="توزيع نتائج التصنيف",
             )
-            fig.update_layout(
-                paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
-                font_color="#E7ECF3", legend_title_text="",
-            )
+            fig.update_layout(**layout_kwargs, legend_title_text="")
             st.plotly_chart(fig, use_container_width=True)
         else:
             st.info("مفيش عمود تصنيف في الملف عشان نعرض توزيع النتائج.")
@@ -438,15 +437,12 @@ def render_dashboard(df: pd.DataFrame, class_col: str = None, sales_col: str = N
                 title="أعلى 10 محصّلين في الوقت المهدر (دقيقة)",
                 color=WASTED_TIME_COL, color_continuous_scale=["#5EEAD4", "#FB7185"],
             )
-            fig2.update_layout(
-                paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
-                font_color="#E7ECF3", yaxis={"categoryorder": "total ascending"},
-                coloraxis_showscale=False,
-            )
+            fig2.update_layout(**layout_kwargs, yaxis={"categoryorder": "total ascending"}, coloraxis_showscale=False)
             st.plotly_chart(fig2, use_container_width=True)
         else:
             st.info("محتاجين عمود المحصّل + الوقت المهدر عشان نعرض الرسم ده.")
 
+    # ----- الصف الثاني: أداء كل محصّل -----
     if has_class and has_sales:
         st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
         agent_perf = (
@@ -463,11 +459,53 @@ def render_dashboard(df: pd.DataFrame, class_col: str = None, sales_col: str = N
             title="أداء كل محصّل (عدد المكالمات الناجحة/غير الناجحة)",
             color_discrete_sequence=["#34D399", "#FB7185"], barmode="stack",
         )
-        fig3.update_layout(
-            paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
-            font_color="#E7ECF3", legend_title_text="",
-        )
+        fig3.update_layout(**layout_kwargs, legend_title_text="")
         st.plotly_chart(fig3, use_container_width=True)
+
+        with st.expander("📋 جدول ترتيب المحصّلين حسب نسبة النجاح"):
+            st.dataframe(agent_perf, use_container_width=True)
+
+    # ----- الصف الثالث: توزيع الوقت المهدر + الاتجاه الزمني للمكالمات -----
+    if has_wasted or has_time:
+        st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
+        col_c, col_d = st.columns(2)
+
+        with col_c:
+            if has_wasted:
+                fig4 = px.histogram(
+                    df, x=WASTED_TIME_COL, nbins=20,
+                    title="توزيع الوقت المهدر بين المكالمات (دقيقة)",
+                    color_discrete_sequence=["#5EEAD4"],
+                )
+                fig4.update_layout(**layout_kwargs, bargap=0.05)
+                st.plotly_chart(fig4, use_container_width=True)
+            else:
+                st.info("محتاجين عمود الوقت المهدر عشان نعرض التوزيع ده.")
+
+        with col_d:
+            if has_time:
+                trend_df = df.copy()
+                trend_df[time_col] = pd.to_datetime(trend_df[time_col], errors="coerce")
+                trend_df["اليوم"] = trend_df[time_col].dt.date
+                if has_class:
+                    trend_df["الحالة"] = trend_df[class_col].map({1: "ناجحة", 0: "غير ناجحة"})
+                    daily = trend_df.groupby(["اليوم", "الحالة"]).size().reset_index(name="عدد المكالمات")
+                    fig5 = px.area(
+                        daily, x="اليوم", y="عدد المكالمات", color="الحالة",
+                        title="عدد المكالمات يوميًا (ناجحة/غير ناجحة)",
+                        color_discrete_map=chart_colors,
+                    )
+                else:
+                    daily = trend_df.groupby("اليوم").size().reset_index(name="عدد المكالمات")
+                    fig5 = px.area(
+                        daily, x="اليوم", y="عدد المكالمات",
+                        title="عدد المكالمات يوميًا",
+                        color_discrete_sequence=["#5EEAD4"],
+                    )
+                fig5.update_layout(**layout_kwargs, legend_title_text="")
+                st.plotly_chart(fig5, use_container_width=True)
+            else:
+                st.info("محتاجين عمود التاريخ عشان نعرض اتجاه المكالمات بمرور الوقت.")
 
 
 # ==========================================================
@@ -508,7 +546,7 @@ def page_classification():
     # ------------------------------------------------------
     # معالجة تلقائية بعد الرفع مباشرة:
     #   1) حذف أول صف بيانات بعد صف العناوين
-    #   2) تغيير اسم عمود Note لـ الافادة (عشان الموديل)
+    #   2) تغيير اسم عمود Notes لـ الافادة (عشان الموديل)
     # ------------------------------------------------------
     if len(df) > 0:
         df = df.iloc[1:].reset_index(drop=True)
@@ -549,11 +587,11 @@ def page_classification():
             result_df = calculate_wasted_time(result_df, sales_col, time_col, break_start, break_end)
         else:
             st.warning(
-                "مش لاقي عمود المحصّل (Sales Person) أو عمود التاريخ (Created On) بنفس الاسم المتوقع، "
+                "مش لاقي عمود المحصّل (Create By) أو عمود التاريخ (Created On) بنفس الاسم المتوقع، "
                 "فمش هينحسب الوقت المهدر. الأعمدة الموجودة: " + ", ".join(result_df.columns.astype(str))
             )
 
-        # ---- رجّع اسم العمود لـ Note قبل العرض والتحميل ----
+        # ---- رجّع اسم العمود لـ Notes قبل العرض والتحميل ----
         result_df = result_df.rename(columns={MODEL_TEXT_COL: ORIGINAL_TEXT_COL})
 
         st.session_state["last_result_df"] = result_df
@@ -571,7 +609,7 @@ def page_classification():
         st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
 
         # ---- الداشبورد السريع بعد التصنيف ----
-        render_dashboard(result_df, class_col=CLASSIFICATION_COL, sales_col=sales_col)
+        render_dashboard(result_df, class_col=CLASSIFICATION_COL, sales_col=sales_col, time_col=time_col)
 
         st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
 
@@ -652,6 +690,7 @@ def page_dashboard():
     # اختيار الأعمدة (بيحاول يتعرف عليها لوحده، وتقدر تعدّل لو عايز)
     class_col_guess = CLASSIFICATION_COL if CLASSIFICATION_COL in df.columns else None
     sales_col_guess = find_column(df, SALES_PERSON_CANDIDATES)
+    time_col_guess = find_column(df, CREATED_ON_CANDIDATES)
 
     with st.expander("⚙️ تأكيد الأعمدة", expanded=(class_col_guess is None or sales_col_guess is None)):
         cols = ["— بدون —"] + list(df.columns.astype(str))
@@ -661,12 +700,16 @@ def page_dashboard():
         sales_col_sel = st.selectbox(
             "عمود المحصّل", cols, index=cols.index(sales_col_guess) if sales_col_guess in cols else 0
         )
+        time_col_sel = st.selectbox(
+            "عمود التاريخ/الوقت", cols, index=cols.index(time_col_guess) if time_col_guess in cols else 0
+        )
 
     class_col = None if class_col_sel == "— بدون —" else class_col_sel
     sales_col = None if sales_col_sel == "— بدون —" else sales_col_sel
+    time_col = None if time_col_sel == "— بدون —" else time_col_sel
 
     st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
-    render_dashboard(df, class_col=class_col, sales_col=sales_col)
+    render_dashboard(df, class_col=class_col, sales_col=sales_col, time_col=time_col)
 
 
 # ==========================================================

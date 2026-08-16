@@ -568,11 +568,6 @@ def render_dashboard(df: pd.DataFrame, class_col: str = None, sales_col: str = N
 # تويب 1: التصنيف
 # ==========================================================
 
-
-# ==========================================================
-# تويب 1: التصنيف
-# ==========================================================
-
 def page_classification():
     page_header(
         "CALL QUALITY CLASSIFIER",
@@ -623,12 +618,18 @@ def page_classification():
 
     if MODEL_TEXT_COL not in df.columns:
         st.error(
-            f"عمود النص ('{ORIGINAL_TEXT_COL}' أو '{MODEL_TEXT_COL}') مش موجود في الملف. "
+            f"عمود النص (\'{ORIGINAL_TEXT_COL}\' أو \'{MODEL_TEXT_COL}\') مش موجود في الملف. "
             f"الأعمدة الموجودة: {', '.join(df.columns.astype(str))}"
         )
         return
 
     st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
+
+    # ------------------------------------------------------
+    # معرّف فريد للملف الحالي — نستخدمه عشان نعرف هل النتيجة
+    # المخزّنة في الذاكرة تخص نفس الملف ده ولا لأ
+    # ------------------------------------------------------
+    file_token = f"{uploaded_file.name}_{uploaded_file.size}"
 
     if st.button("🚀 ابدأ التصنيف", type="primary", use_container_width=True):
         tokenizer, model, device = load_model()
@@ -655,8 +656,22 @@ def page_classification():
         # ---- رجّع اسم العمود لـ Notes قبل العرض والتحميل ----
         result_df = result_df.rename(columns={MODEL_TEXT_COL: ORIGINAL_TEXT_COL})
 
+        # ---- تخزين النتيجة في الذاكرة عشان متختفيش لما تتنقل بين التبويبات ----
         st.session_state["last_result_df"] = result_df
         st.session_state["last_sales_col"] = sales_col
+        st.session_state["last_time_col"] = time_col
+        st.session_state["last_file_token"] = file_token
+        st.session_state["last_file_name"] = uploaded_file.name
+
+    # ------------------------------------------------------
+    # العرض بيعتمد على الذاكرة (session_state) مش على حالة الزرار،
+    # عشان يفضل ظاهر حتى لو رجعت للتويب دي بعد ما تتنقل لتويب تانية.
+    # لو الملف اتغيّر (token مختلف)، مش هيعرض نتيجة قديمة تخص ملف تاني.
+    # ------------------------------------------------------
+    if st.session_state.get("last_file_token") == file_token and "last_result_df" in st.session_state:
+        result_df = st.session_state["last_result_df"]
+        sales_col = st.session_state.get("last_sales_col")
+        time_col = st.session_state.get("last_time_col")
 
         st.success("تم التصنيف وحساب الوقت المهدر بنجاح ✅")
 
@@ -806,9 +821,5 @@ with st.sidebar:
         unsafe_allow_html=True,
     )
     selected_page = st.radio("التنقل", list(PAGES.keys()), label_visibility="collapsed")
-    st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
-    st.markdown("**الموديل المستخدم**")
-    st.code(MODEL_REPO, language=None)
-    st.markdown(f"[عرض الموديل على Hugging Face ↗](https://huggingface.co/{MODEL_REPO})")
 
 PAGES[selected_page]()

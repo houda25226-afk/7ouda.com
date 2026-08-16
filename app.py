@@ -3,7 +3,7 @@
 هنبني عليها بعدين قسم قسم حسب المطلوب.
 
 طريقة التشغيل محليًا:
-    pip install streamlit pandas --break-system-packages
+    pip install streamlit pandas openpyxl plotly --break-system-packages
     streamlit run app.py
 
 ============================================================
@@ -11,10 +11,16 @@
 - الألوان والخطوط كلها في متغير CSS_THEME تحت — عدّل من هناك بس.
 - كل قسم من أقسام السايدبار له دالة render_* منفصلة تحت — سهل تضيف/تعدّل قسم من غير ما تلخبط الباقي.
 - قائمة الأقسام نفسها في NAV_ITEMS تحت — ضيف أو شيل منها وهيتحدث السايدبار تلقائيًا.
+- قسم "النشاط" فيه: رفع ملف -> حذف أول صف بعد الهيدر -> اختيار عمود التصنيف
+  -> زرار "ابدأ التصنيف" (يحول ناجحة/غير ناجحة لـ 1/0) -> تشارتات -> تحميل الملف.
+- قسم "لوحة النشاط" بيعرض نفس البيانات بعد التصنيف كداشبورد مستقل.
 ============================================================
 """
 
+import io
+
 import pandas as pd
+import plotly.graph_objects as go
 import streamlit as st
 
 # ==========================================================
@@ -37,6 +43,13 @@ st.set_page_config(
 #   لون أساسي أخضر-زمردي (#34D399) — إحساس نشاط وحيوية
 #   لون تكميلي كهرماني دافئ (#FBBF24) للتباين والتنبيهات
 #   نص أساسي فاتح (#F1F5F9) ونص ثانوي رمادي مزرق (#8A93A6)
+
+ACCENT = "#34D399"
+ACCENT_2 = "#FBBF24"
+DANGER = "#F87171"
+TEXT = "#F1F5F9"
+TEXT_DIM = "#8A93A6"
+SURFACE = "#131C2E"
 
 CSS_THEME = """
 <style>
@@ -212,6 +225,7 @@ section[data-testid="stSidebar"] div[role="radiogroup"] label div[data-testid="s
     border-radius: 16px;
     padding: 1rem 1.2rem;
     text-align: center;
+    height: 100%;
 }
 .stat-card .stat-value {
     font-family: 'JetBrains Mono', monospace;
@@ -219,10 +233,22 @@ section[data-testid="stSidebar"] div[role="radiogroup"] label div[data-testid="s
     font-weight: 700;
     color: var(--accent);
 }
+.stat-card .stat-value.danger { color: var(--danger); }
+.stat-card .stat-value.warn { color: var(--accent-2); }
 .stat-card .stat-label {
     color: var(--text-dim);
     font-size: 0.82rem;
     margin-top: 0.3rem;
+}
+
+.section-title {
+    font-weight: 900;
+    font-size: 1.05rem;
+    color: var(--text);
+    margin: 1.4rem 0 0.6rem 0;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
 }
 
 /* ===== منطقة رفع الملفات ===== */
@@ -261,6 +287,7 @@ section[data-testid="stSidebar"] div[role="radiogroup"] label div[data-testid="s
     border-radius: 11px;
     padding: 0.65rem 1.2rem;
     transition: transform 0.15s ease, box-shadow 0.15s ease;
+    width: 100%;
 }
 .stButton > button:hover, .stDownloadButton > button:hover {
     transform: translateY(-1px);
@@ -311,18 +338,243 @@ st.markdown(CSS_THEME, unsafe_allow_html=True)
 
 
 # ==========================================================
+# دوال مساعدة عامة (قراءة الملف - التصنيف - التشارتات - التحميل)
+# ==========================================================
+
+SUCCESS_LABEL = "ناجحة"
+FAIL_LABEL = "غير ناجحة"
+
+
+def read_and_clean_file(uploaded_file) -> pd.DataFrame:
+    """يقرأ الملف (CSV/Excel) وبيشيل أول صف بعد صف العواوين
+    (اللي بيكون فيه بيانات زيادة زي أسامي بدل ما يبدأ البيانات الحقيقية)."""
+    if uploaded_file.name.lower().endswith(".csv"):
+        df = pd.read_csv(uploaded_file)
+    else:
+        df = pd.read_excel(uploaded_file)
+
+    # حذف أول صف بعد العواميد (الهيدر) لو موجود
+    if len(df) > 0:
+        df = df.iloc[1:].reset_index(drop=True)
+
+    return df
+
+
+def detect_classification_column(df: pd.DataFrame):
+    """بيحاول يلاقي عمود التصنيف تلقائيًا (اللي فيه كلمة تصنيف أو نتيجة أو حالة)."""
+    keywords = ["تصنيف", "التصنيف", "نتيجة", "النتيجة", "حالة", "الحالة"]
+    for col in df.columns:
+        col_str = str(col)
+        if any(k in col_str for k in keywords):
+            return col
+    return df.columns[0] if len(df.columns) else None
+
+
+def detect_date_column(df: pd.DataFrame):
+    """بيحاول يلاقي عمود تاريخ تلقائيًا."""
+    keywords = ["تاريخ", "التاريخ", "وقت", "الوقت", "date", "Date", "DATE"]
+    for col in df.columns:
+        col_str = str(col)
+        if any(k in col_str for k in keywords):
+            try:
+                converted = pd.to_datetime(df[col], errors="coerce")
+                if converted.notna().sum() > 0:
+                    return col
+            except Exception:
+                continue
+    return None
+
+
+def classify_dataframe(df: pd.DataFrame, col: str) -> pd.DataFrame:
+    """بيحول عمود التصنيف: ناجحة -> 1 وأي حاجة تانية (غير ناجحة/فاضية) -> 0.
+    بيحتفظ بعمود نصي 'الحالة' عشان نستخدمه في التشارتات."""
+    out = df.copy()
+
+    def norm(v):
+        s = str(v).strip()
+        return SUCCESS_LABEL if s == SUCCESS_LABEL else FAIL_LABEL
+
+    out["الحالة"] = out[col].apply(norm)
+    out[col] = out["الحالة"].map({SUCCESS_LABEL: 1, FAIL_LABEL: 0})
+    return out
+
+
+def to_excel_bytes(df: pd.DataFrame) -> bytes:
+    buffer = io.BytesIO()
+    with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
+        df.to_excel(writer, index=False, sheet_name="النشاط")
+    buffer.seek(0)
+    return buffer.getvalue()
+
+
+def _plotly_dark_layout(fig, title=""):
+    fig.update_layout(
+        title=dict(text=title, font=dict(color=TEXT, size=15, family="Cairo")),
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)",
+        font=dict(color=TEXT, family="Cairo"),
+        legend=dict(font=dict(color=TEXT)),
+        margin=dict(t=50, b=30, l=20, r=20),
+        height=320,
+    )
+    return fig
+
+
+def build_gauge_chart(success_rate: float):
+    fig = go.Figure(
+        go.Indicator(
+            mode="gauge+number",
+            value=success_rate,
+            number={"suffix": "%", "font": {"color": ACCENT, "size": 36}},
+            gauge={
+                "axis": {"range": [0, 100], "tickcolor": TEXT_DIM},
+                "bar": {"color": ACCENT},
+                "bgcolor": "rgba(255,255,255,0.04)",
+                "borderwidth": 0,
+                "steps": [
+                    {"range": [0, 50], "color": "rgba(248,113,113,0.18)"},
+                    {"range": [50, 80], "color": "rgba(251,191,36,0.18)"},
+                    {"range": [80, 100], "color": "rgba(52,211,153,0.18)"},
+                ],
+            },
+        )
+    )
+    return _plotly_dark_layout(fig, "نسبة النجاح")
+
+
+def build_donut_chart(success_count: int, fail_count: int):
+    fig = go.Figure(
+        go.Pie(
+            labels=[SUCCESS_LABEL, FAIL_LABEL],
+            values=[success_count, fail_count],
+            hole=0.62,
+            marker=dict(colors=[ACCENT, DANGER]),
+            textinfo="percent",
+            textfont=dict(color="#05170F", size=13),
+        )
+    )
+    return _plotly_dark_layout(fig, "توزيع نتائج النشاط")
+
+
+def build_trend_or_group_chart(df: pd.DataFrame, date_col, group_col):
+    if date_col:
+        tmp = df.copy()
+        tmp[date_col] = pd.to_datetime(tmp[date_col], errors="coerce")
+        tmp = tmp.dropna(subset=[date_col])
+        tmp["الشهر"] = tmp[date_col].dt.to_period("M").astype(str)
+        grouped = tmp.groupby(["الشهر", "الحالة"]).size().unstack(fill_value=0)
+        fig = go.Figure()
+        if SUCCESS_LABEL in grouped:
+            fig.add_bar(x=grouped.index, y=grouped[SUCCESS_LABEL], name=SUCCESS_LABEL, marker_color=ACCENT)
+        if FAIL_LABEL in grouped:
+            fig.add_bar(x=grouped.index, y=grouped[FAIL_LABEL], name=FAIL_LABEL, marker_color=DANGER)
+        fig.update_layout(barmode="stack")
+        return _plotly_dark_layout(fig, "الاتجاه الشهري للنشاط")
+
+    if group_col:
+        tmp = df.copy()
+        top_values = tmp[group_col].astype(str).value_counts().head(10).index
+        tmp = tmp[tmp[group_col].astype(str).isin(top_values)]
+        grouped = tmp.groupby([group_col, "الحالة"]).size().unstack(fill_value=0)
+        fig = go.Figure()
+        if SUCCESS_LABEL in grouped:
+            fig.add_bar(x=grouped.index.astype(str), y=grouped[SUCCESS_LABEL], name=SUCCESS_LABEL, marker_color=ACCENT)
+        if FAIL_LABEL in grouped:
+            fig.add_bar(x=grouped.index.astype(str), y=grouped[FAIL_LABEL], name=FAIL_LABEL, marker_color=DANGER)
+        fig.update_layout(barmode="stack")
+        return _plotly_dark_layout(fig, f"النشاط حسب {group_col}")
+
+    counts = df["الحالة"].value_counts()
+    fig = go.Figure(
+        go.Bar(
+            x=[SUCCESS_LABEL, FAIL_LABEL],
+            y=[counts.get(SUCCESS_LABEL, 0), counts.get(FAIL_LABEL, 0)],
+            marker_color=[ACCENT, DANGER],
+        )
+    )
+    return _plotly_dark_layout(fig, "أعداد النتائج")
+
+
+def render_kpi_row(classified_df: pd.DataFrame):
+    total = len(classified_df)
+    success_count = int((classified_df["الحالة"] == SUCCESS_LABEL).sum())
+    fail_count = total - success_count
+    success_rate = round((success_count / total) * 100, 1) if total else 0.0
+
+    c1, c2, c3, c4 = st.columns(4)
+    with c1:
+        st.markdown(
+            f'<div class="stat-card"><div class="stat-value">{total}</div>'
+            f'<div class="stat-label">إجمالي السجلات</div></div>',
+            unsafe_allow_html=True,
+        )
+    with c2:
+        st.markdown(
+            f'<div class="stat-card"><div class="stat-value">{success_count}</div>'
+            f'<div class="stat-label">ناجحة</div></div>',
+            unsafe_allow_html=True,
+        )
+    with c3:
+        st.markdown(
+            f'<div class="stat-card"><div class="stat-value danger">{fail_count}</div>'
+            f'<div class="stat-label">غير ناجحة</div></div>',
+            unsafe_allow_html=True,
+        )
+    with c4:
+        st.markdown(
+            f'<div class="stat-card"><div class="stat-value warn">{success_rate}%</div>'
+            f'<div class="stat-label">نسبة النجاح</div></div>',
+            unsafe_allow_html=True,
+        )
+
+    return total, success_count, fail_count, success_rate
+
+
+def render_charts_block(classified_df: pd.DataFrame, key_prefix: str, allow_group_pick: bool = True):
+    total, success_count, fail_count, success_rate = render_kpi_row(classified_df)
+
+    st.markdown('<hr class="divider" />', unsafe_allow_html=True)
+
+    col1, col2 = st.columns(2)
+    with col1:
+        st.plotly_chart(build_gauge_chart(success_rate), use_container_width=True, key=f"{key_prefix}_gauge")
+    with col2:
+        st.plotly_chart(build_donut_chart(success_count, fail_count), use_container_width=True, key=f"{key_prefix}_donut")
+
+    date_col = detect_date_column(classified_df)
+    group_col = None
+    if not date_col and allow_group_pick:
+        other_cols = [c for c in classified_df.columns if c not in ["الحالة"]]
+        group_options = ["بدون تقسيم إضافي"] + other_cols
+        chosen = st.selectbox(
+            "تحليل النتائج حسب عمود إضافي (اختياري)",
+            group_options,
+            key=f"{key_prefix}_group_col",
+        )
+        if chosen != "بدون تقسيم إضافي":
+            group_col = chosen
+
+    st.plotly_chart(
+        build_trend_or_group_chart(classified_df, date_col, group_col),
+        use_container_width=True,
+        key=f"{key_prefix}_trend",
+    )
+
+
+# ==========================================================
 # تعريف أقسام السايدبار — ضيف/شيل من هنا وهيتحدث التنقل تلقائيًا
 # ==========================================================
 
 NAV_ITEMS = {
     "النشاط": "📡",
+    "لوحة النشاط": "📊",
     "الوعود": "🤝",
     "الاهمال": "🗂️",
 }
 
 
 def render_nashat():
-    """قسم النشاط — فيه خيار رفع الملف."""
+    """قسم النشاط — رفع الملف، تنضيفه، التصنيف، التشارتات، والتحميل."""
     st.markdown(
         """
         <div class="hero-wrap">
@@ -339,21 +591,62 @@ def render_nashat():
     )
 
     if uploaded_file is not None:
-        try:
-            if uploaded_file.name.endswith(".csv"):
-                df = pd.read_csv(uploaded_file)
-            else:
-                df = pd.read_excel(uploaded_file)
-        except Exception as e:
-            st.error(f"مش قادر أقرأ الملف: {e}")
-            st.stop()
+        file_key = (uploaded_file.name, uploaded_file.size)
+        if st.session_state.get("nashat_file_key") != file_key:
+            try:
+                df = read_and_clean_file(uploaded_file)
+            except Exception as e:
+                st.error(f"مش قادر أقرأ الملف: {e}")
+                st.stop()
+            st.session_state["nashat_file_key"] = file_key
+            st.session_state["nashat_raw_df"] = df
+            st.session_state.pop("nashat_classified_df", None)
+
+        df = st.session_state["nashat_raw_df"]
 
         st.markdown(
-            f'<div class="card">✅ تم تحميل الملف بنجاح — عدد الصفوف: <b>{len(df)}</b>'
-            f' | عدد الأعمدة: <b>{len(df.columns)}</b></div>',
+            f'<div class="card">✅ تم تحميل الملف وحذف أول صف بعد العواوين — '
+            f'عدد الصفوف: <b>{len(df)}</b> | عدد الأعمدة: <b>{len(df.columns)}</b></div>',
             unsafe_allow_html=True,
         )
         st.dataframe(df.head(20), use_container_width=True)
+
+        st.markdown('<div class="section-title">🎯 التصنيف</div>', unsafe_allow_html=True)
+
+        default_col = detect_classification_column(df)
+        default_index = list(df.columns).index(default_col) if default_col in df.columns else 0
+        classification_col = st.selectbox(
+            "اختار عمود التصنيف (اللي فيه ناجحة / غير ناجحة)",
+            list(df.columns),
+            index=default_index,
+            key="nashat_class_col_select",
+        )
+
+        if st.button("🚀 ابدأ التصنيف", key="nashat_classify_btn"):
+            classified = classify_dataframe(df, classification_col)
+            st.session_state["nashat_classified_df"] = classified
+            st.session_state["nashat_classification_col"] = classification_col
+
+        classified_df = st.session_state.get("nashat_classified_df")
+        if classified_df is not None:
+            st.markdown(
+                '<div class="card">✅ تم التصنيف بنجاح — العمود اتحول لـ 1 (ناجحة) و 0 (غير ناجحة)</div>',
+                unsafe_allow_html=True,
+            )
+
+            st.markdown('<div class="section-title">📊 نظرة سريعة</div>', unsafe_allow_html=True)
+            render_charts_block(classified_df, key_prefix="nashat")
+
+            st.markdown('<div class="section-title">📄 البيانات بعد التصنيف</div>', unsafe_allow_html=True)
+            st.dataframe(classified_df.head(50), use_container_width=True)
+
+            st.download_button(
+                "⬇️ تحميل الملف بعد التصنيف",
+                data=to_excel_bytes(classified_df),
+                file_name="النشاط_بعد_التصنيف.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                key="nashat_download_btn",
+            )
     else:
         st.markdown(
             '<div class="card" style="text-align:center; color: var(--text-dim);">'
@@ -361,6 +654,45 @@ def render_nashat():
             "</div>",
             unsafe_allow_html=True,
         )
+
+
+def render_nashat_dashboard():
+    """لوحة النشاط — داشبورد مستقل بيعرض بيانات النشاط بعد التصنيف."""
+    st.markdown(
+        """
+        <div class="hero-wrap">
+            <div class="hero-eyebrow">ACTIVITY DASHBOARD</div>
+            <p class="hero-title">لوحة النشاط</p>
+            <p class="hero-subtitle">نظرة شاملة على أداء النشاط بعد التصنيف</p>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    classified_df = st.session_state.get("nashat_classified_df")
+
+    if classified_df is None:
+        st.markdown(
+            '<div class="card" style="text-align:center; color: var(--text-dim);">'
+            "📭 لسه مفيش بيانات مصنّفة. روح تبويب <b>النشاط</b> الأول، "
+            "ارفع الملف واعمل تصنيف، وهتلاقي الداشبورد هنا اتملى أوتوماتيك."
+            "</div>",
+            unsafe_allow_html=True,
+        )
+        return
+
+    render_charts_block(classified_df, key_prefix="nashat_dashboard", allow_group_pick=True)
+
+    st.markdown('<div class="section-title">📄 كل البيانات</div>', unsafe_allow_html=True)
+    st.dataframe(classified_df, use_container_width=True)
+
+    st.download_button(
+        "⬇️ تحميل الملف بعد التصنيف",
+        data=to_excel_bytes(classified_df),
+        file_name="النشاط_بعد_التصنيف.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        key="nashat_dashboard_download_btn",
+    )
 
 
 def render_waeed():
@@ -434,6 +766,8 @@ with st.sidebar:
 
 if selected_section == "النشاط":
     render_nashat()
+elif selected_section == "لوحة النشاط":
+    render_nashat_dashboard()
 elif selected_section == "الوعود":
     render_waeed()
 elif selected_section == "الاهمال":

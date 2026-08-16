@@ -1,283 +1,177 @@
 """
-تطبيق Streamlit — قاعدة أساسية (Base) بسايدبار وتنقل بين أقسام.
-هنبني عليها بعدين قسم قسم حسب المطلوب.
+تطبيق Streamlit لتصنيف إفادات المكالمات (ناجحة / غير ناجحة)
+باستخدام الموديل المرفوع على Hugging Face: Mahmoud252002/7oudaModel
 
 طريقة التشغيل محليًا:
-    pip install streamlit pandas --break-system-packages
+    pip install streamlit transformers torch pandas openpyxl --break-system-packages
     streamlit run app.py
 
 ============================================================
-دليل التخصيص السريع:
+دليل التخصيص السريع (لو عايز تضيف/تعدّل حاجة بعدين):
 - الألوان والخطوط كلها في متغير CSS_THEME تحت — عدّل من هناك بس.
-- كل قسم من أقسام السايدبار له دالة render_* منفصلة تحت — سهل تضيف/تعدّل قسم من غير ما تلخبط الباقي.
-- قائمة الأقسام نفسها في NAV_ITEMS تحت — ضيف أو شيل منها وهيتحدث السايدبار تلقائيًا.
+- منطق التصنيف كله في قسم "منطق الموديل" — منفصل عن الواجهة.
+- كل قسم في الواجهة متعلّم بعنوان تعليقي واضح عشان تلاقي مكانك بسرعة.
 ============================================================
 """
 
+import io
 import pandas as pd
 import streamlit as st
+import torch
+from transformers import AutoTokenizer, AutoModelForSequenceClassification
 
 # ==========================================================
-# إعداد الصفحة
+# إعدادات عامة
 # ==========================================================
+
+MODEL_REPO = "Mahmoud252002/7oudaModel"
+MAX_LENGTH = 256
+LABEL_MAP = {0: "غير ناجحة", 1: "ناجحة"}
 
 st.set_page_config(
-    page_title="النشاط",
-    page_icon="🧭",
+    page_title="تصنيف المكالمات | 7oudaModel",
+    page_icon="🎙️",
     layout="centered",
-    initial_sidebar_state="expanded",
 )
 
 # ==========================================================
 # الهوية البصرية (Theme)
 # ==========================================================
 # لوحة الألوان:
-#   خلفية كحلي غامق جدًا (#0B1220) هادية ومريحة
-#   سطوح البطاقات (#131C2E) بحواف ناعمة وظل خفيف
-#   لون أساسي أخضر-زمردي (#34D399) — إحساس نشاط وحيوية
-#   لون تكميلي كهرماني دافئ (#FBBF24) للتباين والتنبيهات
-#   نص أساسي فاتح (#F1F5F9) ونص ثانوي رمادي مزرق (#8A93A6)
+#   خلفية داكنة (#0E1420) تحاكي لوحة تحكم مركز اتصالات ليلي
+#   سطوح البطاقات (#151F30) بدرجة أفتح شوية من الخلفية
+#   لون أساسي تركواز (#5EEAD4) — يرمز للصوت/الموجة الصوتية
+#   أخضر للنجاح (#34D399) ووردي-أحمر لعدم النجاح (#FB7185)
+#   نص أساسي فاتح (#E7ECF3) ونص ثانوي رمادي مزرق (#8B96AC)
 
 CSS_THEME = """
 <style>
-@import url('https://fonts.googleapis.com/css2?family=Cairo:wght@400;500;700;900&family=JetBrains+Mono:wght@500;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Tajawal:wght@400;500;700;900&family=JetBrains+Mono:wght@500;700&display=swap');
 
 :root {
-    --bg: #0B1220;
-    --surface: #131C2E;
-    --surface-2: #1A2740;
-    --accent: #34D399;
-    --accent-2: #FBBF24;
-    --danger: #F87171;
-    --text: #F1F5F9;
-    --text-dim: #8A93A6;
+    --bg: #0E1420;
+    --surface: #151F30;
+    --surface-2: #1B2A42;
+    --accent: #5EEAD4;
+    --success: #34D399;
+    --danger: #FB7185;
+    --text: #E7ECF3;
+    --text-dim: #8B96AC;
 }
 
-html, body, [class*="css"] {
-    font-family: 'Cairo', sans-serif;
-}
-
-/* الحاوية الكبيرة LTR عشان السايدبار يفضل شمال، والنص جواه RTL */
-[data-testid="stAppViewContainer"] {
-    direction: ltr;
-}
-.main .block-container,
-[data-testid="stMain"] {
+html, body, [class*="css"]  {
+    font-family: 'Tajawal', sans-serif;
     direction: rtl;
 }
 
 .stApp {
-    background:
-        radial-gradient(circle at 90% -10%, rgba(52,211,153,0.08) 0%, transparent 45%),
-        radial-gradient(circle at 5% 105%, rgba(251,191,36,0.06) 0%, transparent 45%),
-        var(--bg);
+    background: radial-gradient(circle at 20% 0%, #10192C 0%, var(--bg) 55%);
     color: var(--text);
 }
 
-/* نضمن إن كل نصوص المتن (مش بس الكروت المخصصة) واضحة فوق الخلفية الغامقة */
-.stApp, .stApp p, .stApp span, .stApp label, .stApp li,
-.stApp h1, .stApp h2, .stApp h3, .stApp h4, .stApp h5, .stApp h6,
-.stMarkdown, .stMarkdown p, .stText, .stCaption,
-[data-testid="stFileUploaderDropzoneInstructions"],
-[data-testid="stFileUploaderDropzoneInstructions"] span,
-[data-testid="stFileUploaderDropzoneInstructions"] small,
-[data-testid="stWidgetLabel"] p,
-[data-testid="stMetricLabel"] {
-    color: var(--text) !important;
-}
-.stApp small, [data-testid="stCaptionContainer"] {
-    color: var(--text-dim) !important;
-}
-
-#MainMenu, footer {visibility: hidden;}
-header[data-testid="stHeader"] {
-    background: transparent;
-}
-/* زرار فتح/قفل السايدبار — نضمن إنه دايمًا ظاهر وبلون واضح */
-[data-testid="collapsedControl"] {
-    visibility: visible !important;
-    color: var(--text) !important;
-}
-[data-testid="collapsedControl"] svg {
-    fill: var(--text) !important;
-}
-
-/* ===== السايدبار ===== */
-section[data-testid="stSidebar"] {
-    direction: rtl;
-    background: #080C16;
-    border-left: 1px solid rgba(255,255,255,0.06);
-}
-section[data-testid="stSidebar"] * { color: var(--text) !important; }
-
-.brand-block {
-    display: flex;
-    align-items: center;
-    gap: 0.7rem;
-    padding: 1rem 0.2rem 1.1rem 0.2rem;
-    margin-bottom: 0.6rem;
-    border-bottom: 1px solid rgba(255,255,255,0.08);
-}
-.brand-logo {
-    width: 44px;
-    height: 44px;
-    border-radius: 13px;
-    background: linear-gradient(135deg, var(--accent), var(--accent-2));
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-size: 1.35rem;
-    flex-shrink: 0;
-    box-shadow: 0 4px 16px rgba(52, 211, 153, 0.25);
-}
-.brand-name {
-    font-weight: 900;
-    font-size: 1.15rem;
-    color: var(--text) !important;
-    line-height: 1.2;
-}
-.brand-sub {
-    font-family: 'JetBrains Mono', monospace;
-    font-size: 0.65rem;
-    letter-spacing: 0.12em;
-    color: var(--text-dim) !important;
-    text-transform: uppercase;
-}
-
-/* قائمة التنقل في السايدبار (radio نخليها تبان كأزرار كبيرة) */
-section[data-testid="stSidebar"] div[role="radiogroup"] {
-    gap: 0.5rem;
-}
-section[data-testid="stSidebar"] div[role="radiogroup"] label {
-    background: var(--surface);
-    border: 1px solid rgba(255,255,255,0.06);
-    border-radius: 12px;
-    padding: 0.95rem 1.1rem;
-    width: 100%;
-    min-height: 3.2rem;
-    display: flex;
-    align-items: center;
-    transition: background 0.15s ease, border-color 0.15s ease;
-}
-section[data-testid="stSidebar"] div[role="radiogroup"] label:hover {
-    background: var(--surface-2);
-    border-color: rgba(52, 211, 153, 0.35);
-}
-section[data-testid="stSidebar"] div[role="radiogroup"] label[data-baseweb="radio"] > div:first-child {
-    display: none;
-}
-section[data-testid="stSidebar"] div[role="radiogroup"] label div[data-testid="stMarkdownContainer"] p {
-    font-size: 1.15rem !important;
-    font-weight: 700 !important;
-}
+/* إخفاء العناصر الافتراضية الزيادة */
+#MainMenu, footer, header {visibility: hidden;}
 
 /* ===== الهيدر / Hero ===== */
 .hero-wrap {
     text-align: center;
-    padding: 1rem 0 0.3rem 0;
+    padding: 1.2rem 0 0.4rem 0;
 }
 .hero-eyebrow {
     font-family: 'JetBrains Mono', monospace;
-    font-size: 0.7rem;
-    letter-spacing: 0.18em;
+    font-size: 0.75rem;
+    letter-spacing: 0.15em;
     color: var(--accent);
     text-transform: uppercase;
-    margin-bottom: 0.5rem;
+    margin-bottom: 0.4rem;
 }
 .hero-title {
     font-weight: 900;
-    font-size: 1.9rem;
+    font-size: 2.1rem;
     color: var(--text);
     margin: 0;
-    line-height: 1.35;
+    line-height: 1.3;
 }
 .hero-subtitle {
     color: var(--text-dim);
-    font-size: 0.95rem;
-    margin-top: 0.55rem;
+    font-size: 0.98rem;
+    margin-top: 0.5rem;
+}
+
+/* الموجة الصوتية — العنصر المميز */
+.waveform {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+    height: 34px;
+    margin: 1.1rem 0 1.6rem 0;
+}
+.waveform span {
+    display: inline-block;
+    width: 3px;
+    border-radius: 3px;
+    background: linear-gradient(180deg, var(--accent), var(--surface-2));
+    animation: wave 1.6s ease-in-out infinite;
+}
+@keyframes wave {
+    0%, 100% { transform: scaleY(0.35); opacity: 0.55; }
+    50% { transform: scaleY(1); opacity: 1; }
 }
 
 /* ===== البطاقات العامة ===== */
 .card {
     background: var(--surface);
     border: 1px solid rgba(255,255,255,0.06);
-    border-radius: 16px;
-    padding: 1.15rem 1.35rem;
+    border-radius: 14px;
+    padding: 1.1rem 1.3rem;
     margin-bottom: 1rem;
 }
 
-.stat-card {
-    background: var(--surface);
-    border: 1px solid rgba(255,255,255,0.06);
-    border-radius: 16px;
-    padding: 1rem 1.2rem;
-    text-align: center;
+/* ===== الشريط الجانبي ===== */
+section[data-testid="stSidebar"] {
+    background: #0B111C;
+    border-left: 1px solid rgba(255,255,255,0.06);
 }
-.stat-card .stat-value {
-    font-family: 'JetBrains Mono', monospace;
-    font-size: 1.6rem;
-    font-weight: 700;
-    color: var(--accent);
-}
-.stat-card .stat-label {
-    color: var(--text-dim);
-    font-size: 0.82rem;
-    margin-top: 0.3rem;
-}
+section[data-testid="stSidebar"] * { color: var(--text) !important; }
 
 /* ===== منطقة رفع الملفات ===== */
 [data-testid="stFileUploader"] {
     background: var(--surface);
-    border: 1.5px dashed rgba(52, 211, 153, 0.4);
-    border-radius: 16px;
-    padding: 0.7rem;
+    border: 1.5px dashed rgba(94, 234, 212, 0.35);
+    border-radius: 14px;
+    padding: 0.6rem;
 }
 [data-testid="stFileUploader"] section {
     background: transparent;
 }
-/* زرار "Browse files" جوه صندوق الرفع — نديله نفس ستايل باقي الأزرار عشان يبان */
-[data-testid="stFileUploader"] button {
-    background: linear-gradient(90deg, var(--accent), #22B888) !important;
-    color: #05170F !important;
-    font-weight: 700 !important;
-    border: none !important;
-    border-radius: 10px !important;
-    opacity: 1 !important;
-}
-[data-testid="stFileUploader"] button p,
-[data-testid="stFileUploader"] button span {
-    color: #05170F !important;
-}
-[data-testid="stFileUploader"] button:hover {
-    box-shadow: 0 6px 16px rgba(52, 211, 153, 0.3);
-}
 
 /* ===== الأزرار ===== */
 .stButton > button, .stDownloadButton > button {
-    background: linear-gradient(90deg, var(--accent), #22B888);
-    color: #05170F;
+    background: linear-gradient(90deg, var(--accent), #3FD9C7);
+    color: #06251F;
     font-weight: 700;
     border: none;
-    border-radius: 11px;
-    padding: 0.65rem 1.2rem;
+    border-radius: 10px;
+    padding: 0.6rem 1.2rem;
     transition: transform 0.15s ease, box-shadow 0.15s ease;
 }
 .stButton > button:hover, .stDownloadButton > button:hover {
     transform: translateY(-1px);
-    box-shadow: 0 8px 20px rgba(52, 211, 153, 0.3);
-    color: #05170F;
+    box-shadow: 0 6px 18px rgba(94, 234, 212, 0.25);
+    color: #06251F;
 }
 
 /* ===== شريط التقدم ===== */
 [data-testid="stProgress"] > div > div {
-    background: linear-gradient(90deg, var(--accent), var(--accent-2));
+    background: var(--accent);
 }
 
 /* ===== المؤشرات (Metrics) ===== */
 [data-testid="stMetric"] {
     background: var(--surface);
-    border-radius: 14px;
-    padding: 0.85rem 1rem;
+    border-radius: 12px;
+    padding: 0.8rem 1rem;
     border: 1px solid rgba(255,255,255,0.06);
 }
 [data-testid="stMetricValue"] {
@@ -287,20 +181,20 @@ section[data-testid="stSidebar"] div[role="radiogroup"] label div[data-testid="s
 
 /* ===== الجداول ===== */
 [data-testid="stDataFrame"] {
-    border-radius: 14px;
+    border-radius: 12px;
     overflow: hidden;
     border: 1px solid rgba(255,255,255,0.06);
 }
 
 /* ===== تنبيهات النجاح/الخطأ ===== */
 div[data-baseweb="notification"] {
-    border-radius: 12px;
+    border-radius: 10px;
 }
 
 /* فاصل بسيط بدل الخط الافتراضي */
 .divider {
     height: 1px;
-    background: linear-gradient(90deg, transparent, rgba(52,211,153,0.35), transparent);
+    background: linear-gradient(90deg, transparent, rgba(94,234,212,0.35), transparent);
     margin: 1.4rem 0;
     border: none;
 }
@@ -310,131 +204,177 @@ div[data-baseweb="notification"] {
 st.markdown(CSS_THEME, unsafe_allow_html=True)
 
 
-# ==========================================================
-# تعريف أقسام السايدبار — ضيف/شيل من هنا وهيتحدث التنقل تلقائيًا
-# ==========================================================
-
-NAV_ITEMS = {
-    "النشاط": "📡",
-    "الوعود": "🤝",
-    "الاهمال": "🗂️",
-}
-
-
-def render_nashat():
-    """قسم النشاط — فيه خيار رفع الملف."""
-    st.markdown(
-        """
-        <div class="hero-wrap">
-            <div class="hero-eyebrow">ACTIVITY</div>
-            <p class="hero-title">النشاط</p>
-            <p class="hero-subtitle">ارفع ملف Excel أو CSV عشان تبدأ</p>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-
-    uploaded_file = st.file_uploader(
-        "ارفع ملف البيانات (CSV أو Excel)", type=["csv", "xlsx", "xls"]
-    )
-
-    if uploaded_file is not None:
-        try:
-            if uploaded_file.name.endswith(".csv"):
-                df = pd.read_csv(uploaded_file)
-            else:
-                df = pd.read_excel(uploaded_file)
-        except Exception as e:
-            st.error(f"مش قادر أقرأ الملف: {e}")
-            st.stop()
-
-        st.markdown(
-            f'<div class="card">✅ تم تحميل الملف بنجاح — عدد الصفوف: <b>{len(df)}</b>'
-            f' | عدد الأعمدة: <b>{len(df.columns)}</b></div>',
-            unsafe_allow_html=True,
-        )
-        st.dataframe(df.head(20), use_container_width=True)
-    else:
-        st.markdown(
-            '<div class="card" style="text-align:center; color: var(--text-dim);">'
-            "📂 ارفع ملف عشان تبدأ."
-            "</div>",
-            unsafe_allow_html=True,
-        )
-
-
-def render_waeed():
-    """قسم الوعود — لسه تحت الإنشاء."""
-    st.markdown(
-        """
-        <div class="hero-wrap">
-            <div class="hero-eyebrow">PROMISES</div>
-            <p class="hero-title">الوعود</p>
-            <p class="hero-subtitle">القسم ده لسه تحت الإنشاء</p>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-    st.markdown(
-        '<div class="card" style="text-align:center; color: var(--text-dim);">'
-        "🤝 قريبًا — قولّي المطلوب هنا بالظبط ونبنيه."
-        "</div>",
-        unsafe_allow_html=True,
-    )
-
-
-def render_ihmal():
-    """قسم الاهمال — لسه تحت الإنشاء."""
-    st.markdown(
-        """
-        <div class="hero-wrap">
-            <div class="hero-eyebrow">NEGLECT</div>
-            <p class="hero-title">الاهمال</p>
-            <p class="hero-subtitle">القسم ده لسه تحت الإنشاء</p>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-    st.markdown(
-        '<div class="card" style="text-align:center; color: var(--text-dim);">'
-        "🗂️ قريبًا — قولّي المطلوب هنا بالظبط ونبنيه."
-        "</div>",
-        unsafe_allow_html=True,
-    )
+def render_waveform(n_bars: int = 28):
+    """موجة صوتية متحركة بسيطة — العنصر البصري المميز للتطبيق."""
+    bars = ""
+    heights = [14, 22, 30, 18, 26, 34, 20, 28, 16, 24] * (n_bars // 10 + 1)
+    for i in range(n_bars):
+        delay = (i % 10) * 0.09
+        bars += f'<span style="height:{heights[i]}px; animation-delay:{delay}s;"></span>'
+    st.markdown(f'<div class="waveform">{bars}</div>', unsafe_allow_html=True)
 
 
 # ==========================================================
-# الشريط الجانبي — الهوية + التنقل
+# الهيدر
+# ==========================================================
+
+st.markdown(
+    """
+    <div class="hero-wrap">
+        <div class="hero-eyebrow">CALL QUALITY CLASSIFIER</div>
+        <p class="hero-title">🎙️ تصنيف إفادات المكالمات</p>
+        <p class="hero-subtitle">ارفع ملف Excel أو CSV، وهيتصنّف كل صف تلقائيًا لـ «ناجحة» أو «غير ناجحة»</p>
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
+render_waveform()
+
+
+# ==========================================================
+# الشريط الجانبي — الإعدادات
 # ==========================================================
 
 with st.sidebar:
+    st.markdown("### ⚙️ الإعدادات")
+    text_column_input = st.text_input("اسم عمود النص (الإفادة)", value="الافادة")
+    st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
+    st.markdown("**الموديل المستخدم**")
+    st.code(MODEL_REPO, language=None)
+    st.markdown(f"[عرض الموديل على Hugging Face ↗](https://huggingface.co/{MODEL_REPO})")
+
+
+# ==========================================================
+# منطق الموديل
+# ==========================================================
+
+@st.cache_resource(show_spinner="جاري تحميل الموديل من Hugging Face...")
+def load_model():
+    tokenizer = AutoTokenizer.from_pretrained(MODEL_REPO)
+    model = AutoModelForSequenceClassification.from_pretrained(MODEL_REPO)
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    model.to(device)
+    model.eval()
+    return tokenizer, model, device
+
+
+def predict_batch(texts, tokenizer, model, device, batch_size=16):
+    """بيصنف قائمة نصوص على دفعات (batches) عشان الأداء يبقى أسرع."""
+    all_preds, all_confidences = [], []
+    progress_bar = st.progress(0, text="جاري التصنيف...")
+    total = len(texts)
+
+    for i in range(0, total, batch_size):
+        batch = texts[i : i + batch_size]
+        batch = [str(t) if pd.notna(t) and str(t).strip() != "" else "" for t in batch]
+
+        inputs = tokenizer(
+            batch, return_tensors="pt", truncation=True, padding=True, max_length=MAX_LENGTH
+        ).to(device)
+
+        with torch.no_grad():
+            logits = model(**inputs).logits
+            probs = torch.softmax(logits, dim=1)
+            preds = torch.argmax(probs, dim=1)
+            confidences = torch.max(probs, dim=1).values
+
+        all_preds.extend(preds.cpu().tolist())
+        all_confidences.extend(confidences.cpu().tolist())
+
+        progress_bar.progress(
+            min((i + batch_size) / total, 1.0),
+            text=f"جاري التصنيف... ({min(i + batch_size, total)}/{total})",
+        )
+
+    progress_bar.empty()
+    return all_preds, all_confidences
+
+
+# ==========================================================
+# رفع الملف
+# ==========================================================
+
+uploaded_file = st.file_uploader("ارفع ملف البيانات (CSV أو Excel)", type=["csv", "xlsx", "xls"])
+
+if uploaded_file is not None:
+    try:
+        if uploaded_file.name.endswith(".csv"):
+            df = pd.read_csv(uploaded_file)
+        else:
+            df = pd.read_excel(uploaded_file)
+    except Exception as e:
+        st.error(f"مش قادر أقرأ الملف: {e}")
+        st.stop()
+
+    # ------------------------------------------------------
+    # معالجة تلقائية للملف بعد رفعه مباشرة:
+    #   1) تغيير اسم عمود "Note" لـ "الافادة" (لو موجود)
+    #   2) حذف أول صف بيانات بعد صف العناوين (index 0)
+    # ------------------------------------------------------
+    if "Note" in df.columns:
+        df = df.rename(columns={"Note": "الافادة"})
+
+    if len(df) > 0:
+        df = df.iloc[1:].reset_index(drop=True)
+
     st.markdown(
-        """
-        <div class="brand-block">
-            <div class="brand-logo">🧭</div>
-            <div>
-                <div class="brand-name">النشاط</div>
-                <div class="brand-sub">Dashboard</div>
-            </div>
-        </div>
-        """,
+        f'<div class="card">✅ تم تحميل الملف بنجاح — عدد الصفوف: <b>{len(df)}</b></div>',
         unsafe_allow_html=True,
     )
+    st.dataframe(df.head(10), use_container_width=True)
 
-    labels = [f"{icon}  {name}" for name, icon in NAV_ITEMS.items()]
-    selected_label = st.radio(
-        "التنقل", labels, label_visibility="collapsed"
+    if text_column_input not in df.columns:
+        st.error(
+            f"عمود '{text_column_input}' مش موجود في الملف. "
+            f"الأعمدة الموجودة فعلاً: {', '.join(df.columns.astype(str))}"
+        )
+        st.stop()
+
+    st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
+
+    if st.button("🚀 ابدأ التصنيف", type="primary", use_container_width=True):
+        tokenizer, model, device = load_model()
+
+        texts = df[text_column_input].tolist()
+        preds, confidences = predict_batch(texts, tokenizer, model, device)
+
+        result_df = df.copy()
+        result_df["التصنيف_المتوقع"] = [LABEL_MAP[p] for p in preds]
+        result_df["نسبة_الثقة"] = [round(c * 100, 1) for c in confidences]
+
+        st.success("تم التصنيف بنجاح ✅")
+        st.dataframe(result_df, use_container_width=True)
+
+        counts = result_df["التصنيف_المتوقع"].value_counts()
+        col1, col2 = st.columns(2)
+        col1.metric("✅ إفادات ناجحة", int(counts.get("ناجحة", 0)))
+        col2.metric("⛔ إفادات غير ناجحة", int(counts.get("غير ناجحة", 0)))
+
+        st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
+
+        if uploaded_file.name.endswith(".csv"):
+            output = result_df.to_csv(index=False).encode("utf-8-sig")
+            file_name = "نتائج_التصنيف.csv"
+            mime = "text/csv"
+        else:
+            buffer = io.BytesIO()
+            with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
+                result_df.to_excel(writer, index=False, sheet_name="النتائج")
+            output = buffer.getvalue()
+            file_name = "نتائج_التصنيف.xlsx"
+            mime = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+
+        st.download_button(
+            label="⬇️ تحميل الملف مع التصنيف",
+            data=output,
+            file_name=file_name,
+            mime=mime,
+            use_container_width=True,
+        )
+else:
+    st.markdown(
+        '<div class="card" style="text-align:center; color: var(--text-dim);">'
+        "📂 ارفع ملف عشان تبدأ — لازم يحتوي على عمود بالنص المراد تصنيفه."
+        "</div>",
+        unsafe_allow_html=True,
     )
-    selected_section = selected_label.split("  ", 1)[1]
-
-
-# ==========================================================
-# عرض القسم المختار
-# ==========================================================
-
-if selected_section == "النشاط":
-    render_nashat()
-elif selected_section == "الوعود":
-    render_waeed()
-elif selected_section == "الاهمال":
-    render_ihmal()

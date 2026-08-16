@@ -341,6 +341,8 @@ if uploaded_file is not None:
         result_df = df.copy()
         result_df["التصنيف_المتوقع"] = [LABEL_MAP[p] for p in preds]
         result_df["نسبة_الثقة"] = [round(c * 100, 1) for c in confidences]
+        # بعد ما التصنيف يخلص، رجّع اسم عمود النص لـ "Note" في ملف النتيجة
+        result_df = result_df.rename(columns={text_column_input: "Note"})
 
         st.success("تم التصنيف بنجاح ✅")
         st.dataframe(result_df, use_container_width=True)

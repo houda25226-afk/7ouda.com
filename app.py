@@ -45,6 +45,7 @@ st.set_page_config(
     page_title="لوحة تحليل المكالمات | 7oudaModel",
     page_icon="🎙️",
     layout="wide",
+    initial_sidebar_state="expanded",
 )
 
 # ==========================================================
@@ -91,7 +92,11 @@ html, body, [class*="css"] {
     text-align: right;
 }
 
-#MainMenu, footer, header {visibility: hidden;}
+#MainMenu {visibility: hidden;}
+footer {visibility: hidden;}
+[data-testid="stToolbar"] {visibility: hidden;}
+/* الزرار اللي بيفتح/يقفل الشريط الجانبي لازم يفضل ظاهر */
+[data-testid="collapsedControl"] {visibility: visible !important;}
 
 /* ===== الشريط الجانبي (ثابت على الشمال) ===== */
 section[data-testid="stSidebar"] {

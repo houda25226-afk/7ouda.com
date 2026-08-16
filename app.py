@@ -26,11 +26,13 @@ from transformers import AutoTokenizer, AutoModelForSequenceClassification
 
 MODEL_REPO = "Mahmoud252002/7oudaModel"
 MAX_LENGTH = 256
-LABEL_MAP = {0: "غير ناجحة", 1: "ناجحة"}
+# التصنيف بقى رقمي: 1 = ناجحة، 0 = غير ناجحة
+LABEL_MAP = {0: 0, 1: 1}
+LABEL_NAMES = {0: "غير ناجحة", 1: "ناجحة"}
 
 st.set_page_config(
-    page_title="تصنيف المكالمات | 7oudaModel",
-    page_icon="🎙️",
+    page_title="النشاط",
+    page_icon="📡",
     layout="centered",
 )
 
@@ -38,25 +40,26 @@ st.set_page_config(
 # الهوية البصرية (Theme)
 # ==========================================================
 # لوحة الألوان:
-#   خلفية داكنة (#0E1420) تحاكي لوحة تحكم مركز اتصالات ليلي
-#   سطوح البطاقات (#151F30) بدرجة أفتح شوية من الخلفية
-#   لون أساسي تركواز (#5EEAD4) — يرمز للصوت/الموجة الصوتية
+#   خلفية داكنة رمادية-بنفسجي (#0D0F1A) بإحساس لوحة تحكم عصرية
+#   سطوح البطاقات (#161927) بدرجة أفتح شوية من الخلفية
+#   لون أساسي بنفسجي-إندجو (#7C5CFC) مع تركواز مكمّل (#22D3C5)
 #   أخضر للنجاح (#34D399) ووردي-أحمر لعدم النجاح (#FB7185)
-#   نص أساسي فاتح (#E7ECF3) ونص ثانوي رمادي مزرق (#8B96AC)
+#   نص أساسي فاتح (#EDEFF7) ونص ثانوي رمادي مزرق (#8B90A8)
 
 CSS_THEME = """
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Tajawal:wght@400;500;700;900&family=JetBrains+Mono:wght@500;700&display=swap');
 
 :root {
-    --bg: #0E1420;
-    --surface: #151F30;
-    --surface-2: #1B2A42;
-    --accent: #5EEAD4;
+    --bg: #0D0F1A;
+    --surface: #161927;
+    --surface-2: #1F2436;
+    --accent: #7C5CFC;
+    --accent-2: #22D3C5;
     --success: #34D399;
     --danger: #FB7185;
-    --text: #E7ECF3;
-    --text-dim: #8B96AC;
+    --text: #EDEFF7;
+    --text-dim: #8B90A8;
 }
 
 html, body, [class*="css"]  {
@@ -65,7 +68,7 @@ html, body, [class*="css"]  {
 }
 
 .stApp {
-    background: radial-gradient(circle at 20% 0%, #10192C 0%, var(--bg) 55%);
+    background: radial-gradient(circle at 15% -5%, #1B1F35 0%, var(--bg) 55%);
     color: var(--text);
 }
 
@@ -75,26 +78,26 @@ html, body, [class*="css"]  {
 /* ===== الهيدر / Hero ===== */
 .hero-wrap {
     text-align: center;
-    padding: 1.2rem 0 0.4rem 0;
+    padding: 1rem 0 0.4rem 0;
 }
 .hero-eyebrow {
     font-family: 'JetBrains Mono', monospace;
-    font-size: 0.75rem;
-    letter-spacing: 0.15em;
-    color: var(--accent);
+    font-size: 0.72rem;
+    letter-spacing: 0.16em;
+    color: var(--accent-2);
     text-transform: uppercase;
     margin-bottom: 0.4rem;
 }
 .hero-title {
     font-weight: 900;
-    font-size: 2.1rem;
+    font-size: 1.9rem;
     color: var(--text);
     margin: 0;
-    line-height: 1.3;
+    line-height: 1.35;
 }
 .hero-subtitle {
     color: var(--text-dim);
-    font-size: 0.98rem;
+    font-size: 0.95rem;
     margin-top: 0.5rem;
 }
 
@@ -104,14 +107,14 @@ html, body, [class*="css"]  {
     align-items: center;
     justify-content: center;
     gap: 4px;
-    height: 34px;
-    margin: 1.1rem 0 1.6rem 0;
+    height: 32px;
+    margin: 1rem 0 1.5rem 0;
 }
 .waveform span {
     display: inline-block;
     width: 3px;
     border-radius: 3px;
-    background: linear-gradient(180deg, var(--accent), var(--surface-2));
+    background: linear-gradient(180deg, var(--accent-2), var(--accent));
     animation: wave 1.6s ease-in-out infinite;
 }
 @keyframes wave {
@@ -130,15 +133,50 @@ html, body, [class*="css"]  {
 
 /* ===== الشريط الجانبي ===== */
 section[data-testid="stSidebar"] {
-    background: #0B111C;
+    background: #0A0C16;
     border-left: 1px solid rgba(255,255,255,0.06);
 }
 section[data-testid="stSidebar"] * { color: var(--text) !important; }
 
+/* بلوك الهوية أعلى السايدبار */
+.brand-block {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    padding: 0.9rem 0.2rem 1rem 0.2rem;
+    margin-bottom: 0.6rem;
+    border-bottom: 1px solid rgba(255,255,255,0.08);
+}
+.brand-logo {
+    width: 42px;
+    height: 42px;
+    border-radius: 12px;
+    background: linear-gradient(135deg, var(--accent), var(--accent-2));
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 1.3rem;
+    flex-shrink: 0;
+    box-shadow: 0 4px 14px rgba(124, 92, 252, 0.35);
+}
+.brand-name {
+    font-weight: 900;
+    font-size: 1.25rem;
+    color: var(--text) !important;
+    line-height: 1.2;
+}
+.brand-sub {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.68rem;
+    letter-spacing: 0.1em;
+    color: var(--text-dim) !important;
+    text-transform: uppercase;
+}
+
 /* ===== منطقة رفع الملفات ===== */
 [data-testid="stFileUploader"] {
     background: var(--surface);
-    border: 1.5px dashed rgba(94, 234, 212, 0.35);
+    border: 1.5px dashed rgba(124, 92, 252, 0.4);
     border-radius: 14px;
     padding: 0.6rem;
 }
@@ -148,8 +186,8 @@ section[data-testid="stSidebar"] * { color: var(--text) !important; }
 
 /* ===== الأزرار ===== */
 .stButton > button, .stDownloadButton > button {
-    background: linear-gradient(90deg, var(--accent), #3FD9C7);
-    color: #06251F;
+    background: linear-gradient(90deg, var(--accent), var(--accent-2));
+    color: #0A0C16;
     font-weight: 700;
     border: none;
     border-radius: 10px;
@@ -158,13 +196,13 @@ section[data-testid="stSidebar"] * { color: var(--text) !important; }
 }
 .stButton > button:hover, .stDownloadButton > button:hover {
     transform: translateY(-1px);
-    box-shadow: 0 6px 18px rgba(94, 234, 212, 0.25);
-    color: #06251F;
+    box-shadow: 0 6px 18px rgba(124, 92, 252, 0.3);
+    color: #0A0C16;
 }
 
 /* ===== شريط التقدم ===== */
 [data-testid="stProgress"] > div > div {
-    background: var(--accent);
+    background: linear-gradient(90deg, var(--accent), var(--accent-2));
 }
 
 /* ===== المؤشرات (Metrics) ===== */
@@ -176,7 +214,7 @@ section[data-testid="stSidebar"] * { color: var(--text) !important; }
 }
 [data-testid="stMetricValue"] {
     font-family: 'JetBrains Mono', monospace;
-    color: var(--accent);
+    color: var(--accent-2);
 }
 
 /* ===== الجداول ===== */
@@ -194,7 +232,7 @@ div[data-baseweb="notification"] {
 /* فاصل بسيط بدل الخط الافتراضي */
 .divider {
     height: 1px;
-    background: linear-gradient(90deg, transparent, rgba(94,234,212,0.35), transparent);
+    background: linear-gradient(90deg, transparent, rgba(124,92,252,0.4), transparent);
     margin: 1.4rem 0;
     border: none;
 }
@@ -222,8 +260,8 @@ st.markdown(
     """
     <div class="hero-wrap">
         <div class="hero-eyebrow">CALL QUALITY CLASSIFIER</div>
-        <p class="hero-title">🎙️ تصنيف إفادات المكالمات</p>
-        <p class="hero-subtitle">ارفع ملف Excel أو CSV، وهيتصنّف كل صف تلقائيًا لـ «ناجحة» أو «غير ناجحة»</p>
+        <p class="hero-title">تصنيف إفادات المكالمات</p>
+        <p class="hero-subtitle">ارفع ملف Excel أو CSV، وهيتصنّف كل صف تلقائيًا لـ 1 (ناجحة) أو 0 (غير ناجحة)</p>
     </div>
     """,
     unsafe_allow_html=True,
@@ -232,10 +270,22 @@ render_waveform()
 
 
 # ==========================================================
-# الشريط الجانبي — الإعدادات
+# الشريط الجانبي — الهوية + الإعدادات
 # ==========================================================
 
 with st.sidebar:
+    st.markdown(
+        """
+        <div class="brand-block">
+            <div class="brand-logo">📡</div>
+            <div>
+                <div class="brand-name">النشاط</div>
+                <div class="brand-sub">Call Activity</div>
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
     st.markdown("### ⚙️ الإعدادات")
     text_column_input = st.text_input("اسم عمود النص (الإفادة)", value="الافادة")
     st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
@@ -341,6 +391,7 @@ if uploaded_file is not None:
         result_df = df.copy()
         result_df["التصنيف_المتوقع"] = [LABEL_MAP[p] for p in preds]
         result_df["نسبة_الثقة"] = [round(c * 100, 1) for c in confidences]
+
         # بعد ما التصنيف يخلص، رجّع اسم عمود النص لـ "Note" في ملف النتيجة
         result_df = result_df.rename(columns={text_column_input: "Note"})
 
@@ -349,8 +400,8 @@ if uploaded_file is not None:
 
         counts = result_df["التصنيف_المتوقع"].value_counts()
         col1, col2 = st.columns(2)
-        col1.metric("✅ إفادات ناجحة", int(counts.get("ناجحة", 0)))
-        col2.metric("⛔ إفادات غير ناجحة", int(counts.get("غير ناجحة", 0)))
+        col1.metric("✅ إفادات ناجحة (1)", int(counts.get(1, 0)))
+        col2.metric("⛔ إفادات غير ناجحة (0)", int(counts.get(0, 0)))
 
         st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
 

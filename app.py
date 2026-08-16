@@ -144,16 +144,19 @@ section[data-testid="stSidebar"] * { color: var(--text) !important; }
     text-transform: uppercase;
 }
 
-/* قائمة التنقل في السايدبار (radio نخليها تبان كأزرار) */
+/* قائمة التنقل في السايدبار (radio نخليها تبان كأزرار كبيرة) */
 section[data-testid="stSidebar"] div[role="radiogroup"] {
-    gap: 0.35rem;
+    gap: 0.5rem;
 }
 section[data-testid="stSidebar"] div[role="radiogroup"] label {
     background: var(--surface);
     border: 1px solid rgba(255,255,255,0.06);
-    border-radius: 11px;
-    padding: 0.55rem 0.8rem;
+    border-radius: 12px;
+    padding: 0.95rem 1.1rem;
     width: 100%;
+    min-height: 3.2rem;
+    display: flex;
+    align-items: center;
     transition: background 0.15s ease, border-color 0.15s ease;
 }
 section[data-testid="stSidebar"] div[role="radiogroup"] label:hover {
@@ -162,6 +165,10 @@ section[data-testid="stSidebar"] div[role="radiogroup"] label:hover {
 }
 section[data-testid="stSidebar"] div[role="radiogroup"] label[data-baseweb="radio"] > div:first-child {
     display: none;
+}
+section[data-testid="stSidebar"] div[role="radiogroup"] label div[data-testid="stMarkdownContainer"] p {
+    font-size: 1.15rem !important;
+    font-weight: 700 !important;
 }
 
 /* ===== الهيدر / Hero ===== */
@@ -227,6 +234,22 @@ section[data-testid="stSidebar"] div[role="radiogroup"] label[data-baseweb="radi
 }
 [data-testid="stFileUploader"] section {
     background: transparent;
+}
+/* زرار "Browse files" جوه صندوق الرفع — نديله نفس ستايل باقي الأزرار عشان يبان */
+[data-testid="stFileUploader"] button {
+    background: linear-gradient(90deg, var(--accent), #22B888) !important;
+    color: #05170F !important;
+    font-weight: 700 !important;
+    border: none !important;
+    border-radius: 10px !important;
+    opacity: 1 !important;
+}
+[data-testid="stFileUploader"] button p,
+[data-testid="stFileUploader"] button span {
+    color: #05170F !important;
+}
+[data-testid="stFileUploader"] button:hover {
+    box-shadow: 0 6px 16px rgba(52, 211, 153, 0.3);
 }
 
 /* ===== الأزرار ===== */

@@ -241,6 +241,21 @@ section[data-testid="stSidebar"] .stRadio input:checked + div {
     margin: 1.4rem 0;
     border: none;
 }
+
+/* ===== كروت الشارتس (st.container(border=True)) ===== */
+div[data-testid="stVerticalBlockBorderWrapper"] {
+    background: var(--surface) !important;
+    border-radius: 14px !important;
+    border: 1px solid rgba(255,255,255,0.07) !important;
+}
+.chart-card-title {
+    font-weight: 700;
+    font-size: 0.95rem;
+    color: var(--text);
+    margin-bottom: 0.4rem;
+    padding-bottom: 0.5rem;
+    border-bottom: 1px solid rgba(255,255,255,0.06);
+}
 </style>
 """
 
@@ -378,69 +393,110 @@ def highlight_wasted(val):
 # داشبورد مشترك (يُستخدم بعد التصنيف مباشرة، وكمان في تويب الداشبورد)
 # ==========================================================
 
+# لوحة ألوان موحّدة للداشبورد كله
+COLOR_SUCCESS = "#34D399"   # أخضر زمردي — ناجحة
+COLOR_FAIL = "#FB7185"      # وردي-أحمر — غير ناجحة
+COLOR_ACCENT = "#5EEAD4"    # تركواز — لوني أساسي
+COLOR_WARN = "#FBBF24"      # كهرماني — تحذيري/متوسط
+CHART_COLORS = {"ناجحة": COLOR_SUCCESS, "غير ناجحة": COLOR_FAIL}
+PLOTLY_LAYOUT = dict(
+    paper_bgcolor="rgba(0,0,0,0)",
+    plot_bgcolor="rgba(0,0,0,0)",
+    font_color="#E7ECF3",
+    font_family="Tajawal, sans-serif",
+    margin=dict(t=42, b=10, l=10, r=10),
+)
+PLOTLY_CONFIG = {"displayModeBar": False}
+
+
+def chart_card(title: str, render_fn):
+    """كارد موحّد لأي رسم بياني — عنوان صغير + حدود + خلفية متناسقة."""
+    with st.container(border=True):
+        st.markdown(f'<div class="chart-card-title">{title}</div>', unsafe_allow_html=True)
+        render_fn()
+
+
 def render_dashboard(df: pd.DataFrame, class_col: str = None, sales_col: str = None, time_col: str = None):
     has_class = class_col and class_col in df.columns
     has_wasted = WASTED_TIME_COL in df.columns
     has_sales = sales_col and sales_col in df.columns
     has_time = time_col and time_col in df.columns
 
-    # ----- بطاقات (Metrics) -----
-    metric_cols = st.columns(4)
-    metric_cols[0].metric("📞 إجمالي المكالمات", len(df))
+    # ----- بطاقات (Metrics) داخل كارد واحد موحّد -----
+    with st.container(border=True):
+        st.markdown('<div class="chart-card-title">📌 نظرة عامة</div>', unsafe_allow_html=True)
+        metric_cols = st.columns(4)
+        metric_cols[0].metric("📞 إجمالي المكالمات", len(df))
 
-    if has_class:
-        success_count = int((df[class_col] == 1).sum())
-        fail_count = int((df[class_col] == 0).sum())
-        success_rate = round(success_count / len(df) * 100, 1) if len(df) else 0
-        metric_cols[1].metric("✅ ناجحة", success_count, f"{success_rate}%")
-        metric_cols[2].metric("⛔ غير ناجحة", fail_count)
-    else:
-        metric_cols[1].metric("✅ ناجحة", "—")
-        metric_cols[2].metric("⛔ غير ناجحة", "—")
+        if has_class:
+            success_count = int((df[class_col] == 1).sum())
+            fail_count = int((df[class_col] == 0).sum())
+            success_rate = round(success_count / len(df) * 100, 1) if len(df) else 0
+            metric_cols[1].metric("✅ ناجحة", success_count, f"{success_rate}%")
+            metric_cols[2].metric("⛔ غير ناجحة", fail_count)
+        else:
+            metric_cols[1].metric("✅ ناجحة", "—")
+            metric_cols[2].metric("⛔ غير ناجحة", "—")
 
-    if has_wasted:
-        avg_wasted = round(df[WASTED_TIME_COL].mean(), 1) if len(df) else 0
-        metric_cols[3].metric("⏱️ إجمالي الوقت المهدر (دقيقة)", round(df[WASTED_TIME_COL].sum(), 1), f"متوسط {avg_wasted} د/مكالمة")
-    else:
-        metric_cols[3].metric("⏱️ إجمالي الوقت المهدر", "—")
+        if has_wasted:
+            avg_wasted = round(df[WASTED_TIME_COL].mean(), 1) if len(df) else 0
+            metric_cols[3].metric(
+                "⏱️ إجمالي الوقت المهدر (دقيقة)",
+                round(df[WASTED_TIME_COL].sum(), 1),
+                f"متوسط {avg_wasted} د/مكالمة",
+            )
+        else:
+            metric_cols[3].metric("⏱️ إجمالي الوقت المهدر", "—")
 
     st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
-
-    chart_colors = {"ناجحة": "#34D399", "غير ناجحة": "#FB7185"}
-    layout_kwargs = dict(paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", font_color="#E7ECF3")
 
     # ----- الصف الأول: توزيع النتائج + أعلى المحصّلين في الوقت المهدر -----
     col_a, col_b = st.columns(2)
 
     with col_a:
-        if has_class:
+        def _pie():
+            if not has_class:
+                st.info("مفيش عمود تصنيف عشان نعرض توزيع النتائج.")
+                return
             labels_series = df[class_col].map({1: "ناجحة", 0: "غير ناجحة"})
             pie_df = labels_series.value_counts().reset_index()
             pie_df.columns = ["التصنيف", "العدد"]
+            success_rate = round((df[class_col] == 1).mean() * 100, 1) if len(df) else 0
             fig = px.pie(
-                pie_df, names="التصنيف", values="العدد", hole=0.55,
-                color="التصنيف", color_discrete_map=chart_colors,
-                title="توزيع نتائج التصنيف",
+                pie_df, names="التصنيف", values="العدد", hole=0.62,
+                color="التصنيف", color_discrete_map=CHART_COLORS,
             )
-            fig.update_layout(**layout_kwargs, legend_title_text="")
-            st.plotly_chart(fig, use_container_width=True)
-        else:
-            st.info("مفيش عمود تصنيف في الملف عشان نعرض توزيع النتائج.")
+            fig.update_traces(textinfo="percent", textfont_size=13, marker=dict(line=dict(color="#0E1420", width=3)))
+            fig.update_layout(
+                **PLOTLY_LAYOUT, showlegend=True,
+                legend=dict(orientation="h", yanchor="bottom", y=-0.15, x=0.5, xanchor="center"),
+                annotations=[dict(text=f"{success_rate}%<br><span style=\'font-size:11px;color:#8B96AC\'>نجاح</span>",
+                                   x=0.5, y=0.5, font_size=22, font_color=COLOR_SUCCESS, showarrow=False)],
+            )
+            st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG)
+
+        chart_card("🎯 توزيع نتائج التصنيف", _pie)
 
     with col_b:
-        if has_wasted and has_sales:
+        def _wasted_bar():
+            if not (has_wasted and has_sales):
+                st.info("محتاجين عمود المحصّل + الوقت المهدر عشان نعرض الرسم ده.")
+                return
             wasted_by_agent = (
                 df.groupby(sales_col)[WASTED_TIME_COL].sum().sort_values(ascending=False).head(10).reset_index()
             )
             fig2 = px.bar(
                 wasted_by_agent, x=WASTED_TIME_COL, y=sales_col, orientation="h",
-                title="أعلى 10 محصّلين في الوقت المهدر (دقيقة)",
-                color=WASTED_TIME_COL, color_continuous_scale=["#5EEAD4", "#FB7185"],
+                color=WASTED_TIME_COL, color_continuous_scale=[COLOR_ACCENT, COLOR_WARN, COLOR_FAIL],
             )
-            fig2.update_layout(**layout_kwargs, yaxis={"categoryorder": "total ascending"}, coloraxis_showscale=False)
-            st.plotly_chart(fig2, use_container_width=True)
-        else:
-            st.info("محتاجين عمود المحصّل + الوقت المهدر عشان نعرض الرسم ده.")
+            fig2.update_layout(
+                **PLOTLY_LAYOUT, yaxis={"categoryorder": "total ascending", "title": ""},
+                xaxis_title="الوقت المهدر (دقيقة)", coloraxis_showscale=False,
+            )
+            fig2.update_traces(marker_line_width=0)
+            st.plotly_chart(fig2, use_container_width=True, config=PLOTLY_CONFIG)
+
+        chart_card("🏆 أعلى 10 محصّلين في الوقت المهدر", _wasted_bar)
 
     # ----- الصف الثاني: أداء كل محصّل -----
     if has_class and has_sales:
@@ -454,16 +510,18 @@ def render_dashboard(df: pd.DataFrame, class_col: str = None, sales_col: str = N
         agent_perf["نسبة النجاح %"] = (agent_perf["ناجحة"] / agent_perf["إجمالي المكالمات"] * 100).round(1)
         agent_perf = agent_perf.sort_values("نسبة النجاح %", ascending=False).reset_index()
 
-        fig3 = px.bar(
-            agent_perf, x=sales_col, y=["ناجحة", "غير ناجحة"],
-            title="أداء كل محصّل (عدد المكالمات الناجحة/غير الناجحة)",
-            color_discrete_sequence=["#34D399", "#FB7185"], barmode="stack",
-        )
-        fig3.update_layout(**layout_kwargs, legend_title_text="")
-        st.plotly_chart(fig3, use_container_width=True)
+        def _agent_perf():
+            fig3 = px.bar(
+                agent_perf, x=sales_col, y=["ناجحة", "غير ناجحة"],
+                color_discrete_sequence=[COLOR_SUCCESS, COLOR_FAIL], barmode="stack",
+            )
+            fig3.update_layout(**PLOTLY_LAYOUT, legend_title_text="", xaxis_title="", yaxis_title="عدد المكالمات")
+            fig3.update_traces(marker_line_width=0)
+            st.plotly_chart(fig3, use_container_width=True, config=PLOTLY_CONFIG)
+            with st.expander("📋 جدول ترتيب المحصّلين حسب نسبة النجاح"):
+                st.dataframe(agent_perf, use_container_width=True)
 
-        with st.expander("📋 جدول ترتيب المحصّلين حسب نسبة النجاح"):
-            st.dataframe(agent_perf, use_container_width=True)
+        chart_card("📊 أداء كل محصّل (ناجحة مقابل غير ناجحة)", _agent_perf)
 
     # ----- الصف الثالث: توزيع الوقت المهدر + الاتجاه الزمني للمكالمات -----
     if has_wasted or has_time:
@@ -471,19 +529,21 @@ def render_dashboard(df: pd.DataFrame, class_col: str = None, sales_col: str = N
         col_c, col_d = st.columns(2)
 
         with col_c:
-            if has_wasted:
-                fig4 = px.histogram(
-                    df, x=WASTED_TIME_COL, nbins=20,
-                    title="توزيع الوقت المهدر بين المكالمات (دقيقة)",
-                    color_discrete_sequence=["#5EEAD4"],
-                )
-                fig4.update_layout(**layout_kwargs, bargap=0.05)
-                st.plotly_chart(fig4, use_container_width=True)
-            else:
-                st.info("محتاجين عمود الوقت المهدر عشان نعرض التوزيع ده.")
+            def _hist():
+                if not has_wasted:
+                    st.info("محتاجين عمود الوقت المهدر عشان نعرض التوزيع ده.")
+                    return
+                fig4 = px.histogram(df, x=WASTED_TIME_COL, nbins=20, color_discrete_sequence=[COLOR_ACCENT])
+                fig4.update_layout(**PLOTLY_LAYOUT, bargap=0.08, xaxis_title="الوقت المهدر (دقيقة)", yaxis_title="عدد المرات")
+                st.plotly_chart(fig4, use_container_width=True, config=PLOTLY_CONFIG)
+
+            chart_card("⏱️ توزيع الوقت المهدر بين المكالمات", _hist)
 
         with col_d:
-            if has_time:
+            def _trend():
+                if not has_time:
+                    st.info("محتاجين عمود التاريخ عشان نعرض اتجاه المكالمات بمرور الوقت.")
+                    return
                 trend_df = df.copy()
                 trend_df[time_col] = pd.to_datetime(trend_df[time_col], errors="coerce")
                 trend_df["اليوم"] = trend_df[time_col].dt.date
@@ -492,20 +552,21 @@ def render_dashboard(df: pd.DataFrame, class_col: str = None, sales_col: str = N
                     daily = trend_df.groupby(["اليوم", "الحالة"]).size().reset_index(name="عدد المكالمات")
                     fig5 = px.area(
                         daily, x="اليوم", y="عدد المكالمات", color="الحالة",
-                        title="عدد المكالمات يوميًا (ناجحة/غير ناجحة)",
-                        color_discrete_map=chart_colors,
+                        color_discrete_map=CHART_COLORS,
                     )
                 else:
                     daily = trend_df.groupby("اليوم").size().reset_index(name="عدد المكالمات")
-                    fig5 = px.area(
-                        daily, x="اليوم", y="عدد المكالمات",
-                        title="عدد المكالمات يوميًا",
-                        color_discrete_sequence=["#5EEAD4"],
-                    )
-                fig5.update_layout(**layout_kwargs, legend_title_text="")
-                st.plotly_chart(fig5, use_container_width=True)
-            else:
-                st.info("محتاجين عمود التاريخ عشان نعرض اتجاه المكالمات بمرور الوقت.")
+                    fig5 = px.area(daily, x="اليوم", y="عدد المكالمات", color_discrete_sequence=[COLOR_ACCENT])
+                fig5.update_traces(line_width=2)
+                fig5.update_layout(**PLOTLY_LAYOUT, legend_title_text="", xaxis_title="", yaxis_title="عدد المكالمات")
+                st.plotly_chart(fig5, use_container_width=True, config=PLOTLY_CONFIG)
+
+            chart_card("📅 اتجاه عدد المكالمات يوميًا", _trend)
+
+
+# ==========================================================
+# تويب 1: التصنيف
+# ==========================================================
 
 
 # ==========================================================
@@ -680,9 +741,6 @@ def page_dashboard():
         except Exception as e:
             st.error(f"مش قادر أقرأ الملف: {e}")
             return
-    elif "last_result_df" in st.session_state:
-        st.info("مفيش ملف مرفوع دلوقتي — ده الداشبورد بتاع آخر تصنيف عملته في تويب «التصنيف».")
-        df = st.session_state["last_result_df"]
 
     if df is None:
         st.markdown(

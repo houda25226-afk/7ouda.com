@@ -74,7 +74,33 @@ html, body, [class*="css"] {
     color: var(--text);
 }
 
-#MainMenu, footer, header {visibility: hidden;}
+/* نضمن إن كل نصوص المتن (مش بس الكروت المخصصة) واضحة فوق الخلفية الغامقة */
+.stApp, .stApp p, .stApp span, .stApp label, .stApp li,
+.stApp h1, .stApp h2, .stApp h3, .stApp h4, .stApp h5, .stApp h6,
+.stMarkdown, .stMarkdown p, .stText, .stCaption,
+[data-testid="stFileUploaderDropzoneInstructions"],
+[data-testid="stFileUploaderDropzoneInstructions"] span,
+[data-testid="stFileUploaderDropzoneInstructions"] small,
+[data-testid="stWidgetLabel"] p,
+[data-testid="stMetricLabel"] {
+    color: var(--text) !important;
+}
+.stApp small, [data-testid="stCaptionContainer"] {
+    color: var(--text-dim) !important;
+}
+
+#MainMenu, footer {visibility: hidden;}
+header[data-testid="stHeader"] {
+    background: transparent;
+}
+/* زرار فتح/قفل السايدبار — نضمن إنه دايمًا ظاهر وبلون واضح */
+[data-testid="collapsedControl"] {
+    visibility: visible !important;
+    color: var(--text) !important;
+}
+[data-testid="collapsedControl"] svg {
+    fill: var(--text) !important;
+}
 
 /* ===== السايدبار ===== */
 section[data-testid="stSidebar"] {

@@ -601,7 +601,11 @@ def page_classification():
 
         # ---- عرض الجدول مع تلوين الوقت المهدر ----
         if WASTED_TIME_COL in result_df.columns:
-            styled = result_df.style.applymap(highlight_wasted, subset=[WASTED_TIME_COL])
+            try:
+                # pandas >= 2.1 يستخدم .map بدل .applymap (اللي اتشال من النسخ الأحدث)
+                styled = result_df.style.map(highlight_wasted, subset=[WASTED_TIME_COL])
+            except AttributeError:
+                styled = result_df.style.applymap(highlight_wasted, subset=[WASTED_TIME_COL])
             st.dataframe(styled, use_container_width=True)
         else:
             st.dataframe(result_df, use_container_width=True)

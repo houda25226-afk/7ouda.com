@@ -14,6 +14,7 @@
 ============================================================
 """
 
+import pandas as pd
 import streamlit as st
 
 # ==========================================================
@@ -265,50 +266,89 @@ st.markdown(CSS_THEME, unsafe_allow_html=True)
 # ==========================================================
 
 NAV_ITEMS = {
-    "الرئيسية": "🏠",
-    # هنضيف هنا أقسام تانية بعدين (زي: النشاط، الوعود القائمة... إلخ)
+    "النشاط": "📡",
+    "الوعود": "🤝",
+    "الاهمال": "🗂️",
 }
 
 
-def render_home():
-    """القسم الرئيسي — نقطة بداية بسيطة، هنستبدلها بمحتوى فعلي بعدين."""
+def render_nashat():
+    """قسم النشاط — فيه خيار رفع الملف."""
     st.markdown(
         """
         <div class="hero-wrap">
-            <div class="hero-eyebrow">DASHBOARD</div>
-            <p class="hero-title">أهلاً بيك 👋</p>
-            <p class="hero-subtitle">دي نقطة البداية للتطبيق — هنضيف الأقسام واحد واحد من هنا</p>
+            <div class="hero-eyebrow">ACTIVITY</div>
+            <p class="hero-title">النشاط</p>
+            <p class="hero-subtitle">ارفع ملف Excel أو CSV عشان تبدأ</p>
         </div>
         """,
         unsafe_allow_html=True,
     )
 
-    col1, col2, col3 = st.columns(3)
-    with col1:
+    uploaded_file = st.file_uploader(
+        "ارفع ملف البيانات (CSV أو Excel)", type=["csv", "xlsx", "xls"]
+    )
+
+    if uploaded_file is not None:
+        try:
+            if uploaded_file.name.endswith(".csv"):
+                df = pd.read_csv(uploaded_file)
+            else:
+                df = pd.read_excel(uploaded_file)
+        except Exception as e:
+            st.error(f"مش قادر أقرأ الملف: {e}")
+            st.stop()
+
         st.markdown(
-            '<div class="stat-card"><div class="stat-value">0</div>'
-            '<div class="stat-label">قسم شغال</div></div>',
+            f'<div class="card">✅ تم تحميل الملف بنجاح — عدد الصفوف: <b>{len(df)}</b>'
+            f' | عدد الأعمدة: <b>{len(df.columns)}</b></div>',
             unsafe_allow_html=True,
         )
-    with col2:
+        st.dataframe(df.head(20), use_container_width=True)
+    else:
         st.markdown(
-            '<div class="stat-card"><div class="stat-value">—</div>'
-            '<div class="stat-label">آخر تحديث</div></div>',
-            unsafe_allow_html=True,
-        )
-    with col3:
-        st.markdown(
-            '<div class="stat-card"><div class="stat-value">✓</div>'
-            '<div class="stat-label">الحالة</div></div>',
+            '<div class="card" style="text-align:center; color: var(--text-dim);">'
+            "📂 ارفع ملف عشان تبدأ."
+            "</div>",
             unsafe_allow_html=True,
         )
 
-    st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
 
+def render_waeed():
+    """قسم الوعود — لسه تحت الإنشاء."""
     st.markdown(
-        '<div class="card">'
-        "🧭 قولّي إيه القسم اللي عايز نضيفه بعدين (زي صفحة تصنيف المكالمات، "
-        "أو أي قسم تاني) ونبنيه هنا خطوة خطوة."
+        """
+        <div class="hero-wrap">
+            <div class="hero-eyebrow">PROMISES</div>
+            <p class="hero-title">الوعود</p>
+            <p class="hero-subtitle">القسم ده لسه تحت الإنشاء</p>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+    st.markdown(
+        '<div class="card" style="text-align:center; color: var(--text-dim);">'
+        "🤝 قريبًا — قولّي المطلوب هنا بالظبط ونبنيه."
+        "</div>",
+        unsafe_allow_html=True,
+    )
+
+
+def render_ihmal():
+    """قسم الاهمال — لسه تحت الإنشاء."""
+    st.markdown(
+        """
+        <div class="hero-wrap">
+            <div class="hero-eyebrow">NEGLECT</div>
+            <p class="hero-title">الاهمال</p>
+            <p class="hero-subtitle">القسم ده لسه تحت الإنشاء</p>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+    st.markdown(
+        '<div class="card" style="text-align:center; color: var(--text-dim);">'
+        "🗂️ قريبًا — قولّي المطلوب هنا بالظبط ونبنيه."
         "</div>",
         unsafe_allow_html=True,
     )
@@ -343,5 +383,9 @@ with st.sidebar:
 # عرض القسم المختار
 # ==========================================================
 
-if selected_section == "الرئيسية":
-    render_home()
+if selected_section == "النشاط":
+    render_nashat()
+elif selected_section == "الوعود":
+    render_waeed()
+elif selected_section == "الاهمال":
+    render_ihmal()

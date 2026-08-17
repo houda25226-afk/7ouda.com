@@ -19,9 +19,11 @@
 
 import io
 from datetime import time as dt_time
+from datetime import datetime
 
 import pandas as pd
 import plotly.express as px
+import plotly.io as pio
 import streamlit as st
 import torch
 from transformers import AutoTokenizer, AutoModelForSequenceClassification
@@ -274,6 +276,71 @@ div[data-testid="stVerticalBlockBorderWrapper"] {
     color: var(--text-dim);
     margin-top: 0.2rem;
 }
+
+/* ===== تظليم كامل لباقي عناصر الواجهة (Selectbox / Expander / Tabs / Alerts / Inputs) ===== */
+[data-testid="stExpander"] {
+    background: var(--surface);
+    border: 1px solid rgba(255,255,255,0.07);
+    border-radius: 12px;
+    overflow: hidden;
+}
+[data-testid="stExpander"] summary {
+    background: var(--surface-2);
+    color: var(--text) !important;
+}
+
+div[data-baseweb="select"] > div {
+    background: var(--surface-2) !important;
+    border-color: rgba(255,255,255,0.1) !important;
+    color: var(--text) !important;
+    border-radius: 10px !important;
+}
+div[data-baseweb="popover"] ul {
+    background: var(--surface-2) !important;
+}
+li[role="option"] { color: var(--text) !important; }
+li[role="option"]:hover, li[aria-selected="true"] { background: var(--surface) !important; }
+
+[data-testid="stTextInput"] input,
+[data-testid="stTimeInput"] input,
+[data-testid="stNumberInput"] input {
+    background: var(--surface-2) !important;
+    color: var(--text) !important;
+    border-color: rgba(255,255,255,0.1) !important;
+    border-radius: 10px !important;
+}
+
+.stTabs [data-baseweb="tab-list"] {
+    gap: 4px;
+    border-bottom: 1px solid rgba(255,255,255,0.08);
+}
+.stTabs [data-baseweb="tab"] {
+    background: var(--surface);
+    border-radius: 10px 10px 0 0;
+    color: var(--text-dim);
+    padding: 0.5rem 1rem;
+}
+.stTabs [aria-selected="true"] {
+    background: var(--surface-2) !important;
+    color: var(--accent) !important;
+    font-weight: 700;
+}
+
+div[data-testid="stAlert"] {
+    background: var(--surface) !important;
+    border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 12px;
+    color: var(--text) !important;
+}
+div[data-testid="stAlert"] p { color: var(--text) !important; }
+
+[data-testid="stCaptionContainer"] { color: var(--text-dim) !important; }
+
+/* Scrollbar متناسق مع الثيم */
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: var(--bg); }
+::-webkit-scrollbar-thumb { background: var(--surface-2); border-radius: 8px; }
+::-webkit-scrollbar-thumb:hover { background: var(--accent); }
 </style>
 """
 
@@ -592,13 +659,23 @@ def render_trend_chart(df, class_col, time_col):
 
 
 def render_quick_summary(df, class_col=None, sales_col=None, time_col=None):
-    """نسخة مختصرة — بتتعرض في تويب «التصنيف» فور ما التصنيف يخلص، لمحة سريعة بس."""
+    """لمحة سريعة بتتعرض في تويب «التصنيف» فور ما التصنيف يخلص — دلوقتي فيها 4 شارتس
+    + كروت أبرز النقاط، عشان تديك صورة كاملة من غير ما تحتاج تروح تويب الداشبورد."""
     render_metric_cards(df, class_col, sales_col, time_col)
     st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
+    render_highlights(df, class_col, sales_col, time_col)
+    st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
+
     col_a, col_b = st.columns(2)
     with col_a:
         render_pie_chart(df, class_col)
     with col_b:
+        render_trend_chart(df, class_col, time_col)
+
+    col_c, col_d = st.columns(2)
+    with col_c:
+        render_agent_perf_chart(df, class_col, sales_col, with_table=False)
+    with col_d:
         render_wasted_bar(df, sales_col)
 
 
@@ -738,8 +815,268 @@ def render_full_dashboard(df, class_col=None, sales_col=None, time_col=None):
 
 
 # ==========================================================
-# تويب 1: التصنيف
+# تصدير الداشبورد كصفحة ويب (HTML) مستقلة — نفس الشكل والألوان
 # ==========================================================
+
+def _fig_to_div(fig, div_id):
+    fig.update_layout(**PLOTLY_LAYOUT)
+    return pio.to_html(
+        fig, full_html=False, include_plotlyjs=False,
+        config=PLOTLY_CONFIG, div_id=div_id,
+    )
+
+
+def build_dashboard_html(df, class_col, sales_col, time_col, source_name="") -> str:
+    """بيبني صفحة HTML مستقلة (تفتح في أي متصفح، تفاعلية زي الأصل)
+    فيها نفس تصميم وألوان الداشبورد جوه التطبيق، عشان تتبعت أو تتحفظ كصفحة ويب."""
+
+    has_class = bool(class_col and class_col in df.columns)
+    has_sales = bool(sales_col and sales_col in df.columns)
+    has_time = bool(time_col and time_col in df.columns)
+    has_wasted = WASTED_TIME_COL in df.columns
+
+    total_calls = len(df)
+    success_count = int((df[class_col] == 1).sum()) if has_class else None
+    fail_count = int((df[class_col] == 0).sum()) if has_class else None
+    success_rate = round(success_count / total_calls * 100, 1) if has_class and total_calls else None
+    total_wasted = round(df[WASTED_TIME_COL].sum(), 1) if has_wasted else None
+    avg_wasted = round(df[WASTED_TIME_COL].mean(), 1) if has_wasted and total_calls else None
+
+    # ---- كروت أبرز النقاط ----
+    top_agent_html = '<div class="highlight-sub">محتاجين عمود التصنيف والمحصّل</div>'
+    if has_class and has_sales:
+        perf_all = _compute_agent_perf(df, class_col, sales_col)
+        perf_qualified = perf_all[perf_all["إجمالي المكالمات"] >= 3]
+        if len(perf_qualified):
+            top = perf_qualified.iloc[0]
+            top_agent_html = (
+                f'<div class="highlight-value">{top[sales_col]}</div>'
+                f'<div class="highlight-sub">{top["نسبة النجاح %"]}% نجاح '
+                f'({int(top["إجمالي المكالمات"])} مكالمة)</div>'
+            )
+        else:
+            top_agent_html = '<div class="highlight-sub">مفيش بيانات كافية</div>'
+
+    slow_agent_html = '<div class="highlight-sub">محتاجين عمود المحصّل والوقت المهدر</div>'
+    if has_wasted and has_sales:
+        wasted_totals = df.groupby(sales_col)[WASTED_TIME_COL].sum().sort_values(ascending=False)
+        if len(wasted_totals):
+            slow_agent_html = (
+                f'<div class="highlight-value">{wasted_totals.index[0]}</div>'
+                f'<div class="highlight-sub">{round(wasted_totals.iloc[0], 1)} دقيقة مهدرة</div>'
+            )
+        else:
+            slow_agent_html = '<div class="highlight-sub">مفيش بيانات كافية</div>'
+
+    busiest_day_html = '<div class="highlight-sub">محتاجين عمود التاريخ</div>'
+    if has_time:
+        t = pd.to_datetime(df[time_col], errors="coerce")
+        if t.notna().any():
+            daily_counts = t.dt.date.value_counts()
+            busiest_day_html = (
+                f'<div class="highlight-value">{daily_counts.index[0]}</div>'
+                f'<div class="highlight-sub">{int(daily_counts.iloc[0])} مكالمة</div>'
+            )
+        else:
+            busiest_day_html = '<div class="highlight-sub">مفيش تواريخ صالحة</div>'
+
+    # ---- الشارتس ----
+    charts_html = []
+
+    if has_class:
+        labels_series = df[class_col].map({1: "ناجحة", 0: "غير ناجحة"})
+        pie_df = labels_series.value_counts().reset_index()
+        pie_df.columns = ["التصنيف", "العدد"]
+        fig_pie = px.pie(pie_df, names="التصنيف", values="العدد", hole=0.62,
+                          color="التصنيف", color_discrete_map=CHART_COLORS)
+        fig_pie.update_traces(textinfo="percent", textfont_size=13,
+                               marker=dict(line=dict(color="#0E1420", width=3)))
+        fig_pie.update_layout(showlegend=True,
+                               legend=dict(orientation="h", yanchor="bottom", y=-0.15, x=0.5, xanchor="center"),
+                               annotations=[dict(text=f"{success_rate}%<br><span style='font-size:11px;color:#8B96AC'>نجاح</span>",
+                                                  x=0.5, y=0.5, font_size=22, font_color=COLOR_SUCCESS, showarrow=False)])
+        charts_html.append(("🎯 توزيع نتائج التصنيف", _fig_to_div(fig_pie, "fig_pie")))
+
+    if has_time:
+        trend_df = df.copy()
+        trend_df[time_col] = pd.to_datetime(trend_df[time_col], errors="coerce")
+        trend_df["اليوم"] = trend_df[time_col].dt.date
+        if has_class:
+            trend_df["الحالة"] = trend_df[class_col].map({1: "ناجحة", 0: "غير ناجحة"})
+            daily = trend_df.groupby(["اليوم", "الحالة"]).size().reset_index(name="عدد المكالمات")
+            fig_trend = px.area(daily, x="اليوم", y="عدد المكالمات", color="الحالة", color_discrete_map=CHART_COLORS)
+        else:
+            daily = trend_df.groupby("اليوم").size().reset_index(name="عدد المكالمات")
+            fig_trend = px.area(daily, x="اليوم", y="عدد المكالمات", color_discrete_sequence=[COLOR_ACCENT])
+        fig_trend.update_traces(line_width=2)
+        fig_trend.update_layout(legend_title_text="", xaxis_title="", yaxis_title="عدد المكالمات")
+        charts_html.append(("📅 اتجاه عدد المكالمات يوميًا", _fig_to_div(fig_trend, "fig_trend")))
+
+    if has_class and has_sales:
+        agent_perf = _compute_agent_perf(df, class_col, sales_col)
+        fig_agents = px.bar(agent_perf, x=sales_col, y=["ناجحة", "غير ناجحة"],
+                             color_discrete_sequence=[COLOR_SUCCESS, COLOR_FAIL], barmode="stack")
+        fig_agents.update_traces(marker_line_width=0)
+        fig_agents.update_layout(legend_title_text="", xaxis_title="", yaxis_title="عدد المكالمات")
+        charts_html.append(("📊 أداء كل محصّل (ناجحة مقابل غير ناجحة)", _fig_to_div(fig_agents, "fig_agents")))
+
+    if has_wasted and has_sales:
+        wasted_by_agent = df.groupby(sales_col)[WASTED_TIME_COL].sum().sort_values(ascending=False).reset_index()
+        chart_height = max(300, 28 * len(wasted_by_agent))
+        fig_wasted = px.bar(wasted_by_agent, x=WASTED_TIME_COL, y=sales_col, orientation="h",
+                             color=WASTED_TIME_COL, color_continuous_scale=[COLOR_ACCENT, COLOR_WARN, COLOR_FAIL])
+        fig_wasted.update_traces(marker_line_width=0)
+        fig_wasted.update_layout(yaxis={"categoryorder": "total ascending", "title": ""},
+                                  xaxis_title="الوقت المهدر (دقيقة)", coloraxis_showscale=False, height=chart_height)
+        charts_html.append(("🏆 كل المحصّلين حسب الوقت المهدر", _fig_to_div(fig_wasted, "fig_wasted")))
+
+    if has_wasted:
+        fig_hist = px.histogram(df, x=WASTED_TIME_COL, nbins=20, color_discrete_sequence=[COLOR_ACCENT])
+        fig_hist.update_layout(bargap=0.08, xaxis_title="الوقت المهدر (دقيقة)", yaxis_title="عدد المرات")
+        charts_html.append(("⏱️ توزيع الوقت المهدر بين المكالمات", _fig_to_div(fig_hist, "fig_hist")))
+
+    comparison_table_html = ""
+    if has_class and has_sales:
+        perf = _compute_agent_perf(df, class_col, sales_col)
+        if has_wasted:
+            wasted_agg = df.groupby(sales_col)[WASTED_TIME_COL].agg(["sum", "mean"]).round(1)
+            wasted_agg.columns = ["إجمالي الوقت المهدر", "متوسط الوقت المهدر"]
+            perf = perf.merge(wasted_agg, left_on=sales_col, right_index=True, how="left")
+
+            fig_scatter = px.scatter(perf, x="نسبة النجاح %", y="إجمالي الوقت المهدر", size="إجمالي المكالمات",
+                                      text=sales_col, color="نسبة النجاح %",
+                                      color_continuous_scale=[COLOR_FAIL, COLOR_WARN, COLOR_SUCCESS])
+            fig_scatter.add_vline(x=perf["نسبة النجاح %"].mean(), line_dash="dot", line_color="#8B96AC", opacity=0.5)
+            fig_scatter.add_hline(y=perf["إجمالي الوقت المهدر"].mean(), line_dash="dot", line_color="#8B96AC", opacity=0.5)
+            fig_scatter.update_traces(textposition="top center", textfont_size=10,
+                                       marker=dict(line=dict(color="#0E1420", width=1)))
+            fig_scatter.update_layout(coloraxis_showscale=False, xaxis_title="نسبة النجاح %",
+                                       yaxis_title="إجمالي الوقت المهدر (دقيقة)")
+            charts_html.append(("🧭 خريطة الأداء: نسبة النجاح مقابل الوقت المهدر", _fig_to_div(fig_scatter, "fig_scatter")))
+
+        comparison_table_html = perf.rename(columns={sales_col: "المحصّل"}).to_html(
+            index=False, classes="comp-table", border=0, justify="right"
+        )
+
+    def metric_card(label, value, sub=""):
+        return f'''<div class="metric-box">
+            <div class="metric-label">{label}</div>
+            <div class="metric-value">{value}</div>
+            <div class="metric-sub">{sub}</div>
+        </div>'''
+
+    metrics_html = "".join([
+        metric_card("📞 إجمالي المكالمات", total_calls),
+        metric_card("✅ ناجحة", success_count if has_class else "—", f"{success_rate}%" if has_class else ""),
+        metric_card("⛔ غير ناجحة", fail_count if has_class else "—"),
+        metric_card("⏱️ إجمالي الوقت المهدر (دقيقة)", total_wasted if has_wasted else "—",
+                     f"متوسط {avg_wasted} د/مكالمة" if has_wasted else ""),
+    ])
+
+    charts_grid_html = "".join(
+        f'''<div class="chart-box">
+            <div class="chart-box-title">{title}</div>
+            {div}
+        </div>''' for title, div in charts_html
+    )
+
+    generated_at = datetime.now().strftime("%Y-%m-%d %H:%M")
+
+    return f"""<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>داشبورد نشاط المحصّلين | 7oudaModel</title>
+<script src="https://cdn.plot.ly/plotly-2.32.0.min.js"></script>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Tajawal:wght@400;500;700;900&family=JetBrains+Mono:wght@500;700&display=swap');
+:root {{
+    --bg: #0E1420; --surface: #151F30; --surface-2: #1B2A42;
+    --accent: #5EEAD4; --success: #34D399; --danger: #FB7185; --warn: #FBBF24;
+    --text: #E7ECF3; --text-dim: #8B96AC;
+}}
+* {{ box-sizing: border-box; }}
+body {{
+    margin: 0; font-family: 'Tajawal', sans-serif; color: var(--text);
+    background: radial-gradient(circle at 20% 0%, #10192C 0%, var(--bg) 55%);
+    min-height: 100vh;
+}}
+.wrap {{ max-width: 1280px; margin: 0 auto; padding: 2rem 1.5rem 4rem; }}
+.header {{ margin-bottom: 1.5rem; }}
+.eyebrow {{
+    font-family: 'JetBrains Mono', monospace; font-size: 0.72rem; letter-spacing: 0.14em;
+    color: var(--accent); text-transform: uppercase; margin-bottom: 0.3rem;
+}}
+h1 {{ font-weight: 900; font-size: 1.9rem; margin: 0; }}
+.subtitle {{ color: var(--text-dim); font-size: 0.95rem; margin-top: 0.4rem; }}
+.divider {{
+    height: 1px; background: linear-gradient(90deg, transparent, rgba(94,234,212,0.35), transparent);
+    margin: 1.6rem 0; border: none;
+}}
+.metrics-grid {{ display: grid; grid-template-columns: repeat(4, 1fr); gap: 1rem; }}
+.metric-box {{
+    background: var(--surface); border: 1px solid rgba(255,255,255,0.06); border-radius: 14px;
+    padding: 1rem 1.1rem;
+}}
+.metric-label {{ font-size: 0.82rem; color: var(--text-dim); margin-bottom: 0.4rem; }}
+.metric-value {{ font-family: 'JetBrains Mono', monospace; font-weight: 700; font-size: 1.5rem; color: var(--accent); }}
+.metric-sub {{ font-size: 0.78rem; color: var(--text-dim); margin-top: 0.3rem; }}
+.highlights-grid {{ display: grid; grid-template-columns: repeat(3, 1fr); gap: 1rem; }}
+.highlight-box {{
+    background: var(--surface); border: 1px solid rgba(255,255,255,0.06); border-radius: 14px; padding: 1rem 1.1rem;
+}}
+.highlight-label {{ font-size: 0.82rem; color: var(--text-dim); margin-bottom: 0.5rem; }}
+.highlight-value {{ font-weight: 900; font-size: 1.2rem; color: var(--accent); line-height: 1.3; }}
+.highlight-sub {{ font-size: 0.8rem; color: var(--text-dim); margin-top: 0.2rem; }}
+.charts-grid {{ display: grid; grid-template-columns: repeat(2, 1fr); gap: 1rem; }}
+.chart-box {{
+    background: var(--surface); border: 1px solid rgba(255,255,255,0.07); border-radius: 14px; padding: 1rem 1.1rem;
+}}
+.chart-box-title {{
+    font-weight: 700; font-size: 0.95rem; margin-bottom: 0.5rem; padding-bottom: 0.5rem;
+    border-bottom: 1px solid rgba(255,255,255,0.06);
+}}
+.table-box {{
+    background: var(--surface); border: 1px solid rgba(255,255,255,0.07); border-radius: 14px;
+    padding: 1rem 1.1rem; margin-top: 1rem; overflow-x: auto;
+}}
+.comp-table {{ width: 100%; border-collapse: collapse; font-size: 0.85rem; }}
+.comp-table th {{
+    background: var(--surface-2); color: var(--accent); padding: 0.55rem 0.7rem; text-align: right;
+    position: sticky; top: 0;
+}}
+.comp-table td {{ padding: 0.5rem 0.7rem; border-bottom: 1px solid rgba(255,255,255,0.05); }}
+.comp-table tr:hover td {{ background: rgba(94,234,212,0.05); }}
+.footer {{ text-align: center; color: var(--text-dim); font-size: 0.78rem; margin-top: 2.5rem; }}
+@media (max-width: 900px) {{
+    .metrics-grid, .highlights-grid, .charts-grid {{ grid-template-columns: 1fr; }}
+}}
+</style>
+</head>
+<body>
+<div class="wrap">
+    <div class="header">
+        <div class="eyebrow">ACTIVITY DASHBOARD · SNAPSHOT</div>
+        <h1>📊 داشبورد نشاط المحصّلين</h1>
+        <div class="subtitle">{('مصدر البيانات: ' + source_name) if source_name else ''} · تم إنشاؤه في {generated_at}</div>
+    </div>
+    <div class="divider"></div>
+    <div class="metrics-grid">{metrics_html}</div>
+    <div class="divider"></div>
+    <div class="highlights-grid">
+        <div class="highlight-box"><div class="highlight-label">🏅 أفضل محصّل (نسبة نجاح)</div>{top_agent_html}</div>
+        <div class="highlight-box"><div class="highlight-label">🐌 الأكثر إهدارًا للوقت</div>{slow_agent_html}</div>
+        <div class="highlight-box"><div class="highlight-label">📅 أكثر يوم نشاطًا</div>{busiest_day_html}</div>
+    </div>
+    <div class="divider"></div>
+    <div class="charts-grid">{charts_grid_html}</div>
+    {f'<div class="table-box"><div class="chart-box-title">📋 جدول المقارنة الشامل — كل المحصّلين</div>{comparison_table_html}</div>' if comparison_table_html else ''}
+    <div class="footer">تم إنشاء هذه الصفحة تلقائيًا من لوحة تحليل المكالمات · 7oudaModel</div>
+</div>
+</body>
+</html>"""
+
 
 # ==========================================================
 # تويب 1: التصنيف
@@ -760,12 +1097,6 @@ def page_classification():
 
     uploaded_file = st.file_uploader("ارفع ملف البيانات (CSV أو Excel)", type=["csv", "xlsx", "xls"])
 
-    # ------------------------------------------------------
-    # بمجرد ما ملف يترفع، نخزّن البايتات بتاعته في الذاكرة (session_state)
-    # بدل ما نعتمد على قيمة الـ uploader نفسه في كل Rerun — عشان كده
-    # الملف والنتيجة بيفضلوا موجودين حتى لو اتنقلت بين التبويبات.
-    # لو رفعت ملف تاني، هو ده اللي بيبدّل الملف المخزّن تلقائي.
-    # ------------------------------------------------------
     if uploaded_file is not None:
         st.session_state["raw_file_bytes"] = uploaded_file.getvalue()
         st.session_state["raw_file_name"] = uploaded_file.name
@@ -793,11 +1124,6 @@ def page_classification():
         st.error(f"مش قادر أقرأ الملف: {e}")
         return
 
-    # ------------------------------------------------------
-    # معالجة تلقائية بعد الرفع مباشرة:
-    #   1) حذف أول صف بيانات بعد صف العناوين
-    #   2) تغيير اسم عمود Notes لـ الافادة (عشان الموديل)
-    # ------------------------------------------------------
     if len(df) > 0:
         df = df.iloc[1:].reset_index(drop=True)
 
@@ -815,7 +1141,6 @@ def page_classification():
 
     st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
 
-    # معرّف فريد للملف الحالي — نستخدمه عشان نعرف هل النتيجة المخزّنة تخص نفس الملف
     file_token = f"{file_name}_{file_size}"
 
     if st.button("🚀 ابدأ التصنيف", type="primary", use_container_width=True):
@@ -825,10 +1150,9 @@ def page_classification():
         preds, confidences = predict_batch(texts, tokenizer, model, device)
 
         result_df = df.copy()
-        result_df[CLASSIFICATION_COL] = preds  # 1 = ناجحة / 0 = غير ناجحة
+        result_df[CLASSIFICATION_COL] = preds
         result_df["نسبة_الثقة"] = [round(c * 100, 1) for c in confidences]
 
-        # ---- حساب الوقت المهدر ----
         sales_col = find_column(result_df, SALES_PERSON_CANDIDATES)
         time_col = find_column(result_df, CREATED_ON_CANDIDATES)
 
@@ -840,20 +1164,13 @@ def page_classification():
                 "فمش هينحسب الوقت المهدر. الأعمدة الموجودة: " + ", ".join(result_df.columns.astype(str))
             )
 
-        # ---- رجّع اسم العمود لـ Notes قبل العرض والتحميل ----
         result_df = result_df.rename(columns={MODEL_TEXT_COL: ORIGINAL_TEXT_COL})
 
-        # ---- تخزين النتيجة في الذاكرة عشان تفضل موجودة لحد ما تُلغى أو تُعاد تحميل الصفحة ----
         st.session_state["last_result_df"] = result_df
         st.session_state["last_sales_col"] = sales_col
         st.session_state["last_time_col"] = time_col
         st.session_state["last_file_token"] = file_token
 
-    # ------------------------------------------------------
-    # العرض بيعتمد على الذاكرة (session_state) مش على حالة الزرار،
-    # فيفضل ظاهر طول ما الملف نفسه لسه محمّل، لحد ما تدوس «إلغاء الملف»
-    # أو تعمل Reload للصفحة (اللي بيصفّر الذاكرة تلقائيًا).
-    # ------------------------------------------------------
     if st.session_state.get("last_file_token") == file_token and "last_result_df" in st.session_state:
         result_df = st.session_state["last_result_df"]
         sales_col = st.session_state.get("last_sales_col")
@@ -872,7 +1189,6 @@ def page_classification():
 
         st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
 
-        # ---- لمحة سريعة بس هنا — الداشبورد الكاملة في تويب «الداشبورد» ----
         render_quick_summary(result_df, class_col=CLASSIFICATION_COL, sales_col=sales_col, time_col=time_col)
 
         st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
@@ -893,11 +1209,6 @@ def page_classification():
             "⬇️ تحميل الملف مع التصنيف والوقت المهدر",
             data=output, file_name=out_name, mime=mime, use_container_width=True,
         )
-
-
-# ==========================================================
-# تويبات 2-5: هنبنيها واحدة واحدة لما نحدد منطق كل واحدة
-# ==========================================================
 
 
 # ==========================================================
@@ -959,7 +1270,6 @@ def page_dashboard():
         st.error(f"مش قادر أقرأ الملف: {e}")
         return
 
-    # اختيار الأعمدة (بيحاول يتعرف عليها لوحده، وتقدر تعدّل لو عايز)
     class_col_guess = CLASSIFICATION_COL if CLASSIFICATION_COL in df.columns else None
     sales_col_guess = find_column(df, SALES_PERSON_CANDIDATES)
     time_col_guess = find_column(df, CREATED_ON_CANDIDATES)
@@ -985,22 +1295,38 @@ def page_dashboard():
 
     st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
 
-    if file_name.endswith(".csv"):
-        output = df.to_csv(index=False).encode("utf-8-sig")
-        out_name = "بيانات_الداشبورد.csv"
-        mime = "text/csv"
-    else:
-        buffer = io.BytesIO()
-        with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
-            df.to_excel(writer, index=False, sheet_name="البيانات")
-        output = buffer.getvalue()
-        out_name = "بيانات_الداشبورد.xlsx"
-        mime = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-
-    st.download_button(
-        "⬇️ تحميل بيانات الداشبورد",
-        data=output, file_name=out_name, mime=mime, use_container_width=True, key="dash_download",
+    # ---- تحميل الداشبورد نفسه كصفحة ويب مستقلة (HTML تفاعلية بنفس الشكل) ----
+    dashboard_html = build_dashboard_html(
+        df, class_col=class_col, sales_col=sales_col, time_col=time_col, source_name=file_name
     )
+    st.download_button(
+        "🌐 تحميل الداشبورد كصفحة ويب (HTML)",
+        data=dashboard_html.encode("utf-8"),
+        file_name="داشبورد_النشاط.html",
+        mime="text/html",
+        use_container_width=True,
+        key="dash_html_download",
+        type="primary",
+    )
+    st.caption("الملف ده صفحة ويب مستقلة فيها نفس الكروت والشارتس بتفاعليتها — تقدر تفتحها في أي متصفح أو تبعتها لحد تاني من غير ما يحتاج يشغّل التطبيق.")
+
+    with st.expander("⬇️ تحميل البيانات الخام بدل الداشبورد", expanded=False):
+        if file_name.endswith(".csv"):
+            output = df.to_csv(index=False).encode("utf-8-sig")
+            out_name = "بيانات_الداشبورد.csv"
+            mime = "text/csv"
+        else:
+            buffer = io.BytesIO()
+            with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
+                df.to_excel(writer, index=False, sheet_name="البيانات")
+            output = buffer.getvalue()
+            out_name = "بيانات_الداشبورد.xlsx"
+            mime = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+
+        st.download_button(
+            "⬇️ تحميل بيانات الداشبورد",
+            data=output, file_name=out_name, mime=mime, use_container_width=True, key="dash_download",
+        )
 
 
 # ==========================================================

@@ -1,25 +1,5 @@
-"""
-تطبيق Streamlit لتصنيف إفادات المكالمات + حساب الوقت المهدر + داشبورد
-باستخدام الموديل المرفوع على Hugging Face: Mahmoud252002/7oudaModel
-
-طريقة التشغيل محليًا:
-    pip install -r requirements.txt --break-system-packages
-    streamlit run app.py
-
-============================================================
-دليل التخصيص السريع:
-- الألوان والخطوط في CSS_THEME تحت.
-- كل تويب (صفحة) في دالة منفصلة اسمها page_xxx() — سهل تلاقي مكانك.
-- أسماء الأعمدة المتوقعة في الملف (Create By, Created On, Notes)
-  متعرّفة في قسم "إعدادات وأسماء الأعمدة" تحت — لو الأسماء اتغيرت غيّرها من هناك.
-- التبويبات الأربعة (الوعود القائمة / المكسورة / الإهمال / أخطاء الحالات)
-  لسه فاضية (Placeholder) لحد ما نحدد منطق كل واحدة فيها.
-============================================================
-"""
-
 import io
-from datetime import time as dt_time
-from datetime import datetime
+from datetime import time as dt_time, datetime, date
 
 import pandas as pd
 import plotly.express as px
@@ -29,402 +9,350 @@ import torch
 from transformers import AutoTokenizer, AutoModelForSequenceClassification
 
 # ==========================================================
-# إعدادات وأسماء الأعمدة
+# إعدادات
 # ==========================================================
-
 MODEL_REPO = "Mahmoud252002/7oudaModel"
 MAX_LENGTH = 256
 
-ORIGINAL_TEXT_COL = "Notes"         # اسم العمود الأصلي في الملف
-MODEL_TEXT_COL = "الافادة"          # الاسم اللي بيتحول له مؤقتًا عشان الموديل
-CLASSIFICATION_COL = "التصنيف"      # عمود النتيجة: 1 = ناجحة / 0 = غير ناجحة
+ORIGINAL_TEXT_COL = "Notes"
+MODEL_TEXT_COL = "الافادة"
+CLASSIFICATION_COL = "التصنيف"
 WASTED_TIME_COL = "الوقت_المهدر_دقيقة"
 
-SALES_PERSON_CANDIDATES = ["Create By", "create by", "CreateBy", "Created By", "created by", "Sales Person", "sales person", "المحصل"]
-CREATED_ON_CANDIDATES = ["Created On", "created on", "CreatedOn", "تاريخ الافادة"]
+SALES_PERSON_CANDIDATES = [
+    "Create By", "create by", "CreateBy", "Created By", "created by",
+    "Sales Person", "sales person", "Salesperson", "Salesperson Name", "المحصل"
+]
+CREATED_ON_CANDIDATES = [
+    "Created On", "created on", "CreatedOn", "Created Date", "تاريخ الافادة",
+    "Date", "date"
+]
+SUB_STATE_CANDIDATES = ["Sub State", "SubState", "sub state", "الحالة الفرعية"]
+FOLLOW_UP_CANDIDATES = [
+    "Follow up Due Date", "Follow Up Due Date", "Followup Due Date",
+    "Follow Up Due", "Follow up due date", "تاريخ المتابعة"
+]
+ACCOUNT_CANDIDATES = ["Account Number", "Account No", "Account", "رقم الحساب"]
+NET_AMOUNT_CANDIDATES = ["Net Amount", "NetAmount", "صافي المبلغ", "المبلغ الصافي"]
+
+EXCLUDED_SALESPERSONS = {
+    "Archive Companies  II Anas",
+    "Closed payments  II Anas",
+    "Hold Companies  II Anas",
+    "Op II Ibrahim Qassem",
+    "قانونى -الوطنية",
+}
+
+COLOR_SUCCESS = "#34D399"
+COLOR_FAIL = "#FB7185"
+COLOR_ACCENT = "#5EEAD4"
+COLOR_WARN = "#FBBF24"
+COLOR_PURPLE = "#A78BFA"
+COLOR_BLUE = "#60A5FA"
+
+PLOTLY_LAYOUT = dict(
+    paper_bgcolor="rgba(0,0,0,0)",
+    plot_bgcolor="rgba(0,0,0,0)",
+    font_color="#E7ECF3",
+    font_family="Tajawal, sans-serif",
+    margin=dict(t=45, b=35, l=20, r=20),
+)
+PLOTLY_CONFIG = {"displayModeBar": False, "responsive": True}
 
 st.set_page_config(
-    page_title="لوحة تحليل المكالمات | 7oudaModel",
+    page_title="7ouda Model | لوحة تحليل المكالمات",
     page_icon="🎙️",
     layout="wide",
     initial_sidebar_state="expanded",
 )
 
 # ==========================================================
-# الهوية البصرية (Theme)
+# Dark Theme
 # ==========================================================
-# ملحوظة مهمة: الـ direction: rtl متطبق بس على محتوى النص
-# (الـ block-container والـ sidebar content) مش على هيكل الصفحة كله،
-# عشان الـ Sidebar يفضل ثابت فعليًا على الشمال زي ما اتطلب،
-# بدل ما ينقلب يمين بسبب انعكاس اتجاه الـ flex layout.
-
 CSS_THEME = """
 <style>
-@import url('https://fonts.googleapis.com/css2?family=Tajawal:wght@400;500;700;900&family=JetBrains+Mono:wght@500;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Tajawal:wght@400;500;700;800;900&family=JetBrains+Mono:wght@500;700&display=swap');
 
-:root {
-    --bg: #0E1420;
-    --surface: #151F30;
-    --surface-2: #1B2A42;
-    --accent: #5EEAD4;
-    --success: #34D399;
-    --danger: #FB7185;
-    --warn: #FBBF24;
-    --text: #E7ECF3;
-    --text-dim: #8B96AC;
-}
-
-html, body, [class*="css"] {
-    font-family: 'Tajawal', sans-serif;
-}
-
-.stApp {
-    background: radial-gradient(circle at 20% 0%, #10192C 0%, var(--bg) 55%);
-    color: var(--text);
+:root{
+    --bg:#080D17;
+    --surface:#111A2A;
+    --surface2:#19263D;
+    --surface3:#202F49;
+    --accent:#5EEAD4;
+    --success:#34D399;
+    --danger:#FB7185;
+    --warn:#FBBF24;
+    --purple:#A78BFA;
+    --blue:#60A5FA;
+    --text:#F1F5F9;
+    --muted:#94A3B8;
+    --border:rgba(255,255,255,.075);
 }
 
-/* الاتجاه RTL على محتوى الصفحة الرئيسي والسايدبار بس — مش على الهيكل العام */
-.main .block-container {
-    direction: rtl;
-    text-align: right;
-    max-width: 1200px;
+html,body,[class*="css"]{font-family:'Tajawal',sans-serif;}
+.stApp{
+    background:
+        radial-gradient(circle at 80% 0%, rgba(94,234,212,.055), transparent 28%),
+        radial-gradient(circle at 10% 20%, rgba(96,165,250,.04), transparent 25%),
+        var(--bg);
+    color:var(--text);
 }
-[data-testid="stSidebarContent"], [data-testid="stSidebarUserContent"] {
-    direction: rtl;
-    text-align: right;
+header[data-testid="stHeader"]{
+    background:var(--bg)!important;
+    border-bottom:1px solid rgba(255,255,255,.045);
+}
+div[data-testid="stDecoration"]{background:var(--bg)!important;}
+.main .block-container{
+    direction:rtl;
+    text-align:right;
+    max-width:1500px;
+    padding-top:2rem;
+    padding-bottom:4rem;
+}
+[data-testid="stSidebar"]{
+    background:#090F1A!important;
+    border-right:1px solid rgba(255,255,255,.07)!important;
+}
+[data-testid="stSidebarContent"],[data-testid="stSidebarUserContent"]{
+    direction:rtl;
+    text-align:right;
+}
+[data-testid="stSidebar"] *{color:var(--text)!important;}
+[data-testid="stSidebar"] .stRadio label{
+    background:var(--surface);
+    border:1px solid var(--border);
+    border-radius:11px;
+    padding:.55rem .8rem!important;
+    margin-bottom:4px;
+}
+[data-testid="stSidebar"] .stRadio label:hover{background:var(--surface2);}
+[data-testid="stSidebar"] .stRadio div[role="radiogroup"]{gap:4px;}
+
+.sidebar-brand{
+    text-align:center;
+    padding:.5rem 0 1.2rem;
+}
+.sidebar-brand .mini{
+    font-family:'JetBrains Mono',monospace;
+    font-size:.68rem;
+    letter-spacing:.14em;
+    color:var(--accent);
+}
+.sidebar-brand .big{
+    font-weight:900;
+    font-size:1.05rem;
+    margin-top:.25rem;
 }
 
-#MainMenu {visibility: hidden;}
-footer {visibility: hidden;}
-
-/* ===== الشريط الجانبي (ثابت على الشمال) ===== */
-section[data-testid="stSidebar"] {
-    background: #0B111C;
-    border-left: none;
-    border-right: 1px solid rgba(255,255,255,0.06);
+.page-eyebrow{
+    color:var(--accent);
+    font-family:'JetBrains Mono',monospace;
+    letter-spacing:.14em;
+    font-size:.7rem;
+    text-transform:uppercase;
 }
-section[data-testid="stSidebar"] * { color: var(--text) !important; }
-
-.sidebar-brand {
-    text-align: center;
-    padding: 0.6rem 0 1rem 0;
+.page-title{
+    font-size:1.85rem;
+    font-weight:900;
+    margin:.15rem 0;
 }
-.sidebar-brand .title {
-    font-weight: 900;
-    font-size: 1.15rem;
-    color: var(--text);
-}
-.sidebar-brand .subtitle {
-    font-family: 'JetBrains Mono', monospace;
-    font-size: 0.68rem;
-    letter-spacing: 0.12em;
-    color: var(--accent);
-    text-transform: uppercase;
+.page-subtitle{color:var(--muted);font-size:.92rem;}
+.divider{
+    height:1px;
+    margin:1.2rem 0;
+    background:linear-gradient(90deg,transparent,rgba(94,234,212,.35),transparent);
 }
 
-/* قائمة التنقل — نخلي الـ radio يبان زي عناصر قائمة جانبية */
-section[data-testid="stSidebar"] .stRadio > div {
-    gap: 4px;
+.card{
+    background:linear-gradient(145deg,var(--surface),#0F1726);
+    border:1px solid var(--border);
+    border-radius:16px;
+    padding:1rem 1.15rem;
 }
-section[data-testid="stSidebar"] .stRadio label {
-    background: var(--surface);
-    border-radius: 10px;
-    padding: 0.55rem 0.8rem !important;
-    margin-bottom: 2px;
-    width: 100%;
-    border: 1px solid rgba(255,255,255,0.05);
-    transition: background 0.15s ease;
+.metric-card{
+    background:linear-gradient(145deg,#142239,#0F1726);
+    border:1px solid rgba(94,234,212,.10);
+    border-radius:16px;
+    padding:1rem 1.1rem;
+    min-height:125px;
+    box-shadow:0 8px 28px rgba(0,0,0,.12);
 }
-section[data-testid="stSidebar"] .stRadio label:hover {
-    background: var(--surface-2);
+.metric-label{color:var(--muted);font-size:.82rem;}
+.metric-value{
+    font-family:'JetBrains Mono',monospace;
+    font-size:1.55rem;
+    font-weight:800;
+    color:var(--accent);
+    margin-top:.35rem;
 }
-section[data-testid="stSidebar"] .stRadio input:checked + div {
-    color: var(--accent) !important;
+.metric-sub{color:var(--muted);font-size:.76rem;margin-top:.3rem;}
+
+[data-testid="stVerticalBlockBorderWrapper"]{
+    background:linear-gradient(145deg,var(--surface),#0F1726)!important;
+    border:1px solid var(--border)!important;
+    border-radius:16px!important;
+}
+.chart-title{
+    font-weight:800;
+    font-size:.95rem;
+    padding-bottom:.5rem;
+    margin-bottom:.25rem;
+    border-bottom:1px solid var(--border);
+}
+.highlight{
+    background:var(--surface);
+    border:1px solid var(--border);
+    border-radius:14px;
+    padding:1rem;
+}
+.highlight .label{color:var(--muted);font-size:.8rem;}
+.highlight .value{color:var(--accent);font-size:1.15rem;font-weight:900;margin-top:.3rem;}
+.highlight .sub{color:var(--muted);font-size:.76rem;margin-top:.15rem;}
+
+[data-testid="stFileUploader"]{
+    background:var(--surface)!important;
+    border:1.5px dashed rgba(94,234,212,.30)!important;
+    border-radius:15px!important;
+    padding:.5rem!important;
+}
+[data-testid="stFileUploader"] section{background:transparent!important;}
+[data-testid="stFileUploader"] *{color:var(--text)!important;}
+[data-testid="stFileUploader"] small{opacity:1!important;}
+[data-testid="stFileUploader"] button{
+    background:var(--surface2)!important;
+    color:var(--text)!important;
+    border:1px solid var(--border)!important;
+}
+[data-testid="stFileUploaderFile"]{background:var(--surface2)!important;}
+
+[data-testid="stWidgetLabel"] *{color:var(--text)!important;opacity:1!important;}
+div[data-baseweb="select"]>div{
+    background:var(--surface2)!important;
+    color:var(--text)!important;
+    border-color:var(--border)!important;
+    border-radius:10px!important;
+}
+div[data-baseweb="popover"],div[data-baseweb="popover"] ul{background:var(--surface2)!important;}
+li[role="option"]{color:var(--text)!important;}
+li[role="option"]:hover,li[aria-selected="true"]{background:var(--surface3)!important;}
+input,textarea{
+    background:var(--surface2)!important;
+    color:var(--text)!important;
+}
+[data-testid="stDateInput"] input,[data-testid="stTimeInput"] input{
+    background:var(--surface2)!important;
+    color:var(--text)!important;
 }
 
-/* ===== الهيدر ===== */
-.page-eyebrow {
-    font-family: 'JetBrains Mono', monospace;
-    font-size: 0.72rem;
-    letter-spacing: 0.14em;
-    color: var(--accent);
-    text-transform: uppercase;
-    margin-bottom: 0.2rem;
+.stButton>button,.stDownloadButton>button{
+    border-radius:10px!important;
+    font-weight:800!important;
+    border:1px solid rgba(94,234,212,.18)!important;
 }
-.page-title {
-    font-weight: 900;
-    font-size: 1.75rem;
-    margin: 0;
+.stButton>button[kind="primary"]{
+    background:linear-gradient(90deg,#5EEAD4,#38BFAE)!important;
+    color:#05211C!important;
 }
-.page-subtitle {
-    color: var(--text-dim);
-    font-size: 0.95rem;
-    margin-top: 0.3rem;
+.stDownloadButton>button{
+    background:var(--surface2)!important;
+    color:var(--text)!important;
 }
+.stDownloadButton>button:hover{border-color:var(--accent)!important;color:var(--accent)!important;}
 
-/* موجة صوتية بسيطة */
-.waveform {
-    display: flex; align-items: center; justify-content: center;
-    gap: 4px; height: 30px; margin: 0.8rem 0 1.3rem 0;
+[data-testid="stMetric"]{
+    background:transparent!important;
+    border:0!important;
+    padding:0!important;
 }
-.waveform span {
-    display: inline-block; width: 3px; border-radius: 3px;
-    background: linear-gradient(180deg, var(--accent), var(--surface-2));
-    animation: wave 1.6s ease-in-out infinite;
+[data-testid="stMetricValue"]{color:var(--accent)!important;font-family:'JetBrains Mono',monospace;}
+[data-testid="stDataFrame"]{
+    border:1px solid var(--border);
+    border-radius:12px;
+    overflow:hidden;
 }
-@keyframes wave {
-    0%, 100% { transform: scaleY(0.35); opacity: 0.55; }
-    50% { transform: scaleY(1); opacity: 1; }
+.stTabs [data-baseweb="tab-list"]{
+    gap:5px;
+    border-bottom:1px solid var(--border);
 }
+.stTabs [data-baseweb="tab"]{
+    color:var(--muted);
+    background:var(--surface);
+    border-radius:10px 10px 0 0;
+}
+.stTabs [aria-selected="true"]{
+    color:var(--accent)!important;
+    background:var(--surface2)!important;
+}
+[data-testid="stExpander"]{
+    background:var(--surface)!important;
+    border:1px solid var(--border)!important;
+    border-radius:12px!important;
+}
+[data-testid="stExpander"] summary{color:var(--text)!important;}
+[data-testid="stAlert"]{
+    background:var(--surface)!important;
+    border-radius:12px!important;
+}
+[data-testid="stCaptionContainer"]{color:var(--muted)!important;}
+#MainMenu,footer{visibility:hidden;}
 
-/* ===== بطاقات عامة ===== */
-.card {
-    background: var(--surface);
-    border: 1px solid rgba(255,255,255,0.06);
-    border-radius: 14px;
-    padding: 1.1rem 1.3rem;
-    margin-bottom: 1rem;
-}
-.placeholder-card {
-    background: var(--surface);
-    border: 1.5px dashed rgba(255,255,255,0.12);
-    border-radius: 14px;
-    padding: 2.4rem 1.5rem;
-    text-align: center;
-    color: var(--text-dim);
-}
-
-/* ===== منطقة رفع الملفات ===== */
-[data-testid="stFileUploader"] {
-    background: var(--surface);
-    border: 1.5px dashed rgba(94, 234, 212, 0.35);
-    border-radius: 14px;
-    padding: 0.6rem;
-}
-[data-testid="stFileUploader"] section { background: transparent; }
-
-/* نص التعليمات جوه صندوق الرفع (اسحب الملف هنا / الحد الأقصى...) كان بلون باهت جدًا فوق الخلفية الغامقة */
-[data-testid="stFileUploaderDropzoneInstructions"] div,
-[data-testid="stFileUploaderDropzoneInstructions"] span,
-[data-testid="stFileUploaderDropzoneInstructions"] small,
-[data-testid="stFileUploader"] small,
-[data-testid="stFileUploader"] p {
-    color: var(--text) !important;
-    opacity: 1 !important;
-}
-[data-testid="stFileUploaderDropzoneInstructions"] svg {
-    fill: var(--text-dim) !important;
-}
-/* زرار Browse files */
-[data-testid="stFileUploader"] button,
-[data-testid="stFileUploaderDropzone"] button {
-    background: var(--surface-2) !important;
-    color: var(--text) !important;
-    border: 1px solid rgba(255,255,255,0.18) !important;
-    font-weight: 700 !important;
-}
-[data-testid="stFileUploader"] button:hover {
-    border-color: var(--accent) !important;
-    color: var(--accent) !important;
-}
-/* اسم الملف بعد الرفع + حجمه + زرار الحذف */
-[data-testid="stFileUploaderFile"] {
-    background: var(--surface-2) !important;
-    border-radius: 10px !important;
-}
-[data-testid="stFileUploaderFile"] div, [data-testid="stFileUploaderFile"] span {
-    color: var(--text) !important;
-}
-[data-testid="stFileUploaderFileName"] { color: var(--text) !important; }
-[data-testid="stFileUploaderFileErrorMessage"] { color: var(--danger) !important; }
-
-/* عناوين كل ودجت (label) — كانت أحيانًا بلون باهت جدًا */
-[data-testid="stWidgetLabel"] p,
-[data-testid="stWidgetLabel"] label,
-[data-testid="stWidgetLabel"] span {
-    color: var(--text) !important;
-    opacity: 1 !important;
-}
-
-/* ===== الأزرار ===== */
-.stButton > button, .stDownloadButton > button {
-    background: linear-gradient(90deg, var(--accent), #3FD9C7);
-    color: #06251F;
-    font-weight: 700;
-    border: none;
-    border-radius: 10px;
-    padding: 0.6rem 1.2rem;
-    transition: transform 0.15s ease, box-shadow 0.15s ease;
-}
-.stButton > button:hover, .stDownloadButton > button:hover {
-    transform: translateY(-1px);
-    box-shadow: 0 6px 18px rgba(94, 234, 212, 0.25);
-    color: #06251F;
-}
-
-/* ===== شريط التقدم ===== */
-[data-testid="stProgress"] > div > div { background: var(--accent); }
-
-/* ===== المؤشرات (Metrics) ===== */
-[data-testid="stMetric"] {
-    background: var(--surface);
-    border-radius: 12px;
-    padding: 0.8rem 1rem;
-    border: 1px solid rgba(255,255,255,0.06);
-}
-[data-testid="stMetricValue"] { font-family: 'JetBrains Mono', monospace; color: var(--accent); }
-
-/* ===== الجداول ===== */
-[data-testid="stDataFrame"] {
-    border-radius: 12px; overflow: hidden;
-    border: 1px solid rgba(255,255,255,0.06);
-}
-
-.divider {
-    height: 1px;
-    background: linear-gradient(90deg, transparent, rgba(94,234,212,0.35), transparent);
-    margin: 1.4rem 0;
-    border: none;
-}
-
-/* ===== كروت الشارتس (st.container(border=True)) ===== */
-div[data-testid="stVerticalBlockBorderWrapper"] {
-    background: var(--surface) !important;
-    border-radius: 14px !important;
-    border: 1px solid rgba(255,255,255,0.07) !important;
-}
-.chart-card-title {
-    font-weight: 700;
-    font-size: 0.95rem;
-    color: var(--text);
-    margin-bottom: 0.4rem;
-    padding-bottom: 0.5rem;
-    border-bottom: 1px solid rgba(255,255,255,0.06);
-}
-
-/* ===== كروت أبرز النقاط (Highlights) ===== */
-.highlight-label {
-    font-size: 0.82rem;
-    color: var(--text-dim);
-    margin-bottom: 0.5rem;
-}
-.highlight-value {
-    font-weight: 900;
-    font-size: 1.25rem;
-    color: var(--accent);
-    line-height: 1.3;
-}
-.highlight-sub {
-    font-size: 0.8rem;
-    color: var(--text-dim);
-    margin-top: 0.2rem;
-}
-
-/* ===== تظليم كامل لباقي عناصر الواجهة (Selectbox / Expander / Tabs / Alerts / Inputs) ===== */
-[data-testid="stExpander"] {
-    background: var(--surface);
-    border: 1px solid rgba(255,255,255,0.07);
-    border-radius: 12px;
-    overflow: hidden;
-}
-[data-testid="stExpander"] summary {
-    background: var(--surface-2);
-    color: var(--text) !important;
-}
-
-div[data-baseweb="select"] > div {
-    background: var(--surface-2) !important;
-    border-color: rgba(255,255,255,0.1) !important;
-    color: var(--text) !important;
-    border-radius: 10px !important;
-}
-div[data-baseweb="popover"] ul {
-    background: var(--surface-2) !important;
-}
-li[role="option"] { color: var(--text) !important; }
-li[role="option"]:hover, li[aria-selected="true"] { background: var(--surface) !important; }
-
-[data-testid="stTextInput"] input,
-[data-testid="stTimeInput"] input,
-[data-testid="stNumberInput"] input {
-    background: var(--surface-2) !important;
-    color: var(--text) !important;
-    border-color: rgba(255,255,255,0.1) !important;
-    border-radius: 10px !important;
-}
-
-.stTabs [data-baseweb="tab-list"] {
-    gap: 4px;
-    border-bottom: 1px solid rgba(255,255,255,0.08);
-}
-.stTabs [data-baseweb="tab"] {
-    background: var(--surface);
-    border-radius: 10px 10px 0 0;
-    color: var(--text-dim);
-    padding: 0.5rem 1rem;
-}
-.stTabs [aria-selected="true"] {
-    background: var(--surface-2) !important;
-    color: var(--accent) !important;
-    font-weight: 700;
-}
-
-div[data-testid="stAlert"] {
-    background: var(--surface) !important;
-    border: 1px solid rgba(255,255,255,0.08);
-    border-radius: 12px;
-    color: var(--text) !important;
-}
-div[data-testid="stAlert"] p { color: var(--text) !important; }
-
-[data-testid="stCaptionContainer"] { color: var(--text-dim) !important; }
-
-/* Scrollbar متناسق مع الثيم */
-::-webkit-scrollbar { width: 10px; height: 10px; }
-::-webkit-scrollbar-track { background: var(--bg); }
-::-webkit-scrollbar-thumb { background: var(--surface-2); border-radius: 8px; }
-::-webkit-scrollbar-thumb:hover { background: var(--accent); }
+::-webkit-scrollbar{width:9px;height:9px;}
+::-webkit-scrollbar-track{background:var(--bg);}
+::-webkit-scrollbar-thumb{background:var(--surface3);border-radius:8px;}
+::-webkit-scrollbar-thumb:hover{background:var(--accent);}
 </style>
 """
-
 st.markdown(CSS_THEME, unsafe_allow_html=True)
 
-
-def render_waveform(n_bars: int = 24):
-    heights = [14, 22, 30, 18, 26, 30, 20, 26, 16, 22] * (n_bars // 10 + 1)
-    bars = "".join(
-        f'<span style="height:{heights[i]}px; animation-delay:{(i % 10) * 0.09}s;"></span>'
-        for i in range(n_bars)
-    )
-    st.markdown(f'<div class="waveform">{bars}</div>', unsafe_allow_html=True)
-
-
-def page_header(eyebrow: str, title: str, subtitle: str, show_wave: bool = False):
-    st.markdown(
-        f"""
-        <div class="page-eyebrow">{eyebrow}</div>
-        <p class="page-title">{title}</p>
-        <p class="page-subtitle">{subtitle}</p>
-        """,
-        unsafe_allow_html=True,
-    )
-    if show_wave:
-        render_waveform()
-    st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
-
-
-def find_column(df: pd.DataFrame, candidates: list):
-    cols_lower = {c.lower().strip(): c for c in df.columns}
+# ==========================================================
+# Helpers
+# ==========================================================
+def find_column(df, candidates):
+    cols_lower = {str(c).lower().strip(): c for c in df.columns}
     for cand in candidates:
         if cand.lower().strip() in cols_lower:
             return cols_lower[cand.lower().strip()]
     return None
 
 
-# ==========================================================
-# منطق الموديل
-# ==========================================================
+def normalize_text(x):
+    return str(x).strip().replace("  ", " ") if pd.notna(x) else ""
 
+
+def read_uploaded(uploaded):
+    name = uploaded.name.lower()
+    if name.endswith(".csv"):
+        return pd.read_csv(io.BytesIO(uploaded.getvalue()))
+    return pd.read_excel(io.BytesIO(uploaded.getvalue()))
+
+
+def read_bytes(data, filename):
+    if filename.lower().endswith(".csv"):
+        return pd.read_csv(io.BytesIO(data))
+    return pd.read_excel(io.BytesIO(data))
+
+
+def page_header(eyebrow, title, subtitle):
+    st.markdown(f'<div class="page-eyebrow">{eyebrow}</div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="page-title">{title}</div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="page-subtitle">{subtitle}</div>', unsafe_allow_html=True)
+    st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
+
+
+def chart_card(title, fig):
+    with st.container(border=True):
+        st.markdown(f'<div class="chart-title">{title}</div>', unsafe_allow_html=True)
+        st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG)
+
+
+def style_fig(fig, height=390):
+    fig.update_layout(**PLOTLY_LAYOUT, height=height)
+    return fig
+
+
+# ==========================================================
+# Model
+# ==========================================================
 @st.cache_resource(show_spinner="جاري تحميل الموديل من Hugging Face...")
 def load_model():
     tokenizer = AutoTokenizer.from_pretrained(MODEL_REPO)
@@ -436,972 +364,707 @@ def load_model():
 
 
 def predict_batch(texts, tokenizer, model, device, batch_size=16):
-    all_preds, all_confidences = [], []
-    progress_bar = st.progress(0, text="جاري التصنيف...")
+    preds_all, conf_all = [], []
+    progress = st.progress(0, text="جاري التصنيف...")
     total = len(texts)
+    if total == 0:
+        progress.empty()
+        return [], []
 
     for i in range(0, total, batch_size):
-        batch = texts[i : i + batch_size]
-        batch = [str(t) if pd.notna(t) and str(t).strip() != "" else "" for t in batch]
-
+        batch = [
+            str(x) if pd.notna(x) and str(x).strip() else ""
+            for x in texts[i:i + batch_size]
+        ]
         inputs = tokenizer(
-            batch, return_tensors="pt", truncation=True, padding=True, max_length=MAX_LENGTH
+            batch,
+            return_tensors="pt",
+            truncation=True,
+            padding=True,
+            max_length=MAX_LENGTH,
         ).to(device)
-
         with torch.no_grad():
-            logits = model(**inputs).logits
-            probs = torch.softmax(logits, dim=1)
+            probs = torch.softmax(model(**inputs).logits, dim=1)
             preds = torch.argmax(probs, dim=1)
-            confidences = torch.max(probs, dim=1).values
+            conf = torch.max(probs, dim=1).values
 
-        all_preds.extend(preds.cpu().tolist())
-        all_confidences.extend(confidences.cpu().tolist())
+        preds_all.extend(preds.cpu().tolist())
+        conf_all.extend(conf.cpu().tolist())
+        done = min(i + batch_size, total)
+        progress.progress(done / total, text=f"جاري التصنيف... ({done}/{total})")
 
-        progress_bar.progress(
-            min((i + batch_size) / total, 1.0),
-            text=f"جاري التصنيف... ({min(i + batch_size, total)}/{total})",
-        )
-
-    progress_bar.empty()
-    return all_preds, all_confidences
+    progress.empty()
+    return preds_all, conf_all
 
 
 # ==========================================================
-# حساب الوقت المهدر بين المكالمات لكل محصّل
+# Wasted time
 # ==========================================================
-
 def subtract_break_overlap(prev_time, curr_time, break_start, break_end, gap_minutes):
-    """بيخصم من الفجوة أي جزء واقع جوه وقت البريك المحدد."""
     if break_start is None or break_end is None or pd.isna(prev_time) or pd.isna(curr_time):
         return gap_minutes
     day = prev_time.date()
-    break_start_dt = pd.Timestamp.combine(day, break_start)
-    break_end_dt = pd.Timestamp.combine(day, break_end)
-    overlap_start = max(prev_time, break_start_dt)
-    overlap_end = min(curr_time, break_end_dt)
-    overlap_minutes = max((overlap_end - overlap_start).total_seconds() / 60, 0)
-    return max(gap_minutes - overlap_minutes, 0)
+    bs = pd.Timestamp.combine(day, break_start)
+    be = pd.Timestamp.combine(day, break_end)
+    overlap = max(
+        (min(curr_time, be) - max(prev_time, bs)).total_seconds() / 60,
+        0,
+    )
+    return max(gap_minutes - overlap, 0)
 
 
 def calculate_wasted_time(df, sales_col, time_col, break_start, break_end):
-    """
-    بتحسب الوقت المهدر (بالدقايق) بين كل مكالمة واللي قبلها لنفس المحصّل،
-    بعد استبعاد وقت البريك. أول مكالمة لكل محصّل = صفر (مفيش مكالمة قبلها نقيس منها).
-    """
     work = df.copy()
     work["_orig_idx"] = work.index
     work[time_col] = pd.to_datetime(work[time_col], errors="coerce")
     work = work.sort_values([sales_col, time_col])
     work["_prev_time"] = work.groupby(sales_col)[time_col].shift(1)
 
-    def compute_row(row):
+    def calc(row):
         if pd.isna(row["_prev_time"]) or pd.isna(row[time_col]):
             return 0.0
-        gap_min = (row[time_col] - row["_prev_time"]).total_seconds() / 60
-        gap_min = subtract_break_overlap(row["_prev_time"], row[time_col], break_start, break_end, gap_min)
-        return round(max(gap_min, 0.0), 1)
+        gap = (row[time_col] - row["_prev_time"]).total_seconds() / 60
+        gap = subtract_break_overlap(
+            row["_prev_time"], row[time_col],
+            break_start, break_end, gap
+        )
+        return round(max(gap, 0), 1)
 
-    work[WASTED_TIME_COL] = work.apply(compute_row, axis=1)
+    work[WASTED_TIME_COL] = work.apply(calc, axis=1)
     work = work.set_index("_orig_idx").sort_index()
     df[WASTED_TIME_COL] = work[WASTED_TIME_COL]
     return df
 
 
-def highlight_wasted(val):
-    if pd.isna(val):
-        return ""
-    if val > 10:
-        return "background-color: #ffb3b3; color: #3a0000;"
-    elif val < 1:
-        return "background-color: #fff59d; color: #3a3300;"
-    return ""
-
-
 # ==========================================================
-# داشبورد مشترك (يُستخدم بعد التصنيف مباشرة، وكمان في تويب الداشبورد)
+# Dashboard calculations
 # ==========================================================
-
-# لوحة ألوان موحّدة للداشبورد كله
-COLOR_SUCCESS = "#34D399"   # أخضر زمردي — ناجحة
-COLOR_FAIL = "#FB7185"      # وردي-أحمر — غير ناجحة
-COLOR_ACCENT = "#5EEAD4"    # تركواز — لوني أساسي
-COLOR_WARN = "#FBBF24"      # كهرماني — تحذيري/متوسط
-CHART_COLORS = {"ناجحة": COLOR_SUCCESS, "غير ناجحة": COLOR_FAIL}
-PLOTLY_LAYOUT = dict(
-    paper_bgcolor="rgba(0,0,0,0)",
-    plot_bgcolor="rgba(0,0,0,0)",
-    font_color="#E7ECF3",
-    font_family="Tajawal, sans-serif",
-    margin=dict(t=42, b=10, l=10, r=10),
-)
-PLOTLY_CONFIG = {"displayModeBar": False}
-
-
-def chart_card(title: str, render_fn):
-    """كارد موحّد لأي رسم بياني — عنوان صغير + حدود + خلفية متناسقة."""
-    with st.container(border=True):
-        st.markdown(f'<div class="chart-card-title">{title}</div>', unsafe_allow_html=True)
-        render_fn()
-
-
-def _compute_agent_perf(df, class_col, sales_col):
-    agent_perf = (
-        df.groupby(sales_col)[class_col]
-        .agg(["count", "sum"])
-        .rename(columns={"count": "إجمالي المكالمات", "sum": "ناجحة"})
-    )
-    agent_perf["غير ناجحة"] = agent_perf["إجمالي المكالمات"] - agent_perf["ناجحة"]
-    agent_perf["نسبة النجاح %"] = (agent_perf["ناجحة"] / agent_perf["إجمالي المكالمات"] * 100).round(1)
-    return agent_perf.sort_values("نسبة النجاح %", ascending=False).reset_index()
-
-
-def render_metric_cards(df, class_col, sales_col, time_col):
-    has_class = class_col and class_col in df.columns
-    has_wasted = WASTED_TIME_COL in df.columns
-
-    with st.container(border=True):
-        st.markdown('<div class="chart-card-title">📌 نظرة عامة</div>', unsafe_allow_html=True)
-        metric_cols = st.columns(4)
-        metric_cols[0].metric("📞 إجمالي المكالمات", len(df))
-
-        if has_class:
-            success_count = int((df[class_col] == 1).sum())
-            fail_count = int((df[class_col] == 0).sum())
-            success_rate = round(success_count / len(df) * 100, 1) if len(df) else 0
-            metric_cols[1].metric("✅ ناجحة", success_count, f"{success_rate}%")
-            metric_cols[2].metric("⛔ غير ناجحة", fail_count)
-        else:
-            metric_cols[1].metric("✅ ناجحة", "—")
-            metric_cols[2].metric("⛔ غير ناجحة", "—")
-
-        if has_wasted:
-            avg_wasted = round(df[WASTED_TIME_COL].mean(), 1) if len(df) else 0
-            metric_cols[3].metric(
-                "⏱️ إجمالي الوقت المهدر (دقيقة)",
-                round(df[WASTED_TIME_COL].sum(), 1),
-                f"متوسط {avg_wasted} د/مكالمة",
-            )
-        else:
-            metric_cols[3].metric("⏱️ إجمالي الوقت المهدر", "—")
-
-
-def render_pie_chart(df, class_col):
-    has_class = class_col and class_col in df.columns
-
-    def _pie():
-        if not has_class:
-            st.info("مفيش عمود تصنيف عشان نعرض توزيع النتائج.")
-            return
-        labels_series = df[class_col].map({1: "ناجحة", 0: "غير ناجحة"})
-        pie_df = labels_series.value_counts().reset_index()
-        pie_df.columns = ["التصنيف", "العدد"]
-        success_rate = round((df[class_col] == 1).mean() * 100, 1) if len(df) else 0
-        fig = px.pie(
-            pie_df, names="التصنيف", values="العدد", hole=0.62,
-            color="التصنيف", color_discrete_map=CHART_COLORS,
-        )
-        fig.update_traces(textinfo="percent", textfont_size=13, marker=dict(line=dict(color="#0E1420", width=3)))
-        fig.update_layout(
-            **PLOTLY_LAYOUT, showlegend=True,
-            legend=dict(orientation="h", yanchor="bottom", y=-0.15, x=0.5, xanchor="center"),
-            annotations=[dict(text=f"{success_rate}%<br><span style='font-size:11px;color:#8B96AC'>نجاح</span>",
-                               x=0.5, y=0.5, font_size=22, font_color=COLOR_SUCCESS, showarrow=False)],
-        )
-        st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG)
-
-    chart_card("🎯 توزيع نتائج التصنيف", _pie)
-
-
-def render_wasted_bar(df, sales_col, top_n=10):
-    has_wasted = WASTED_TIME_COL in df.columns
-    has_sales = sales_col and sales_col in df.columns
-
-    def _wasted_bar():
-        if not (has_wasted and has_sales):
-            st.info("محتاجين عمود المحصّل + الوقت المهدر عشان نعرض الرسم ده.")
-            return
-        wasted_by_agent = df.groupby(sales_col)[WASTED_TIME_COL].sum().sort_values(ascending=False)
-        if top_n:
-            wasted_by_agent = wasted_by_agent.head(top_n)
-        wasted_by_agent = wasted_by_agent.reset_index()
-        chart_height = max(300, 28 * len(wasted_by_agent))
-        fig2 = px.bar(
-            wasted_by_agent, x=WASTED_TIME_COL, y=sales_col, orientation="h",
-            color=WASTED_TIME_COL, color_continuous_scale=[COLOR_ACCENT, COLOR_WARN, COLOR_FAIL],
-        )
-        fig2.update_layout(
-            **PLOTLY_LAYOUT, yaxis={"categoryorder": "total ascending", "title": ""},
-            xaxis_title="الوقت المهدر (دقيقة)", coloraxis_showscale=False, height=chart_height,
-        )
-        fig2.update_traces(marker_line_width=0)
-        st.plotly_chart(fig2, use_container_width=True, config=PLOTLY_CONFIG)
-
-    title = f"🏆 أعلى {top_n} محصّلين في الوقت المهدر" if top_n else "🏆 كل المحصّلين حسب الوقت المهدر"
-    chart_card(title, _wasted_bar)
-
-
-def render_agent_perf_chart(df, class_col, sales_col, with_table=True):
-    has_class = class_col and class_col in df.columns
-    has_sales = sales_col and sales_col in df.columns
-    if not (has_class and has_sales):
-        return
-    agent_perf = _compute_agent_perf(df, class_col, sales_col)
-
-    def _agent_perf():
-        fig3 = px.bar(
-            agent_perf, x=sales_col, y=["ناجحة", "غير ناجحة"],
-            color_discrete_sequence=[COLOR_SUCCESS, COLOR_FAIL], barmode="stack",
-        )
-        fig3.update_layout(**PLOTLY_LAYOUT, legend_title_text="", xaxis_title="", yaxis_title="عدد المكالمات")
-        fig3.update_traces(marker_line_width=0)
-        st.plotly_chart(fig3, use_container_width=True, config=PLOTLY_CONFIG)
-        if with_table:
-            with st.expander("📋 جدول ترتيب المحصّلين حسب نسبة النجاح"):
-                st.dataframe(agent_perf, use_container_width=True)
-
-    chart_card("📊 أداء كل محصّل (ناجحة مقابل غير ناجحة)", _agent_perf)
-
-
-def render_wasted_hist(df):
-    has_wasted = WASTED_TIME_COL in df.columns
-
-    def _hist():
-        if not has_wasted:
-            st.info("محتاجين عمود الوقت المهدر عشان نعرض التوزيع ده.")
-            return
-        fig4 = px.histogram(df, x=WASTED_TIME_COL, nbins=20, color_discrete_sequence=[COLOR_ACCENT])
-        fig4.update_layout(**PLOTLY_LAYOUT, bargap=0.08, xaxis_title="الوقت المهدر (دقيقة)", yaxis_title="عدد المرات")
-        st.plotly_chart(fig4, use_container_width=True, config=PLOTLY_CONFIG)
-
-    chart_card("⏱️ توزيع الوقت المهدر بين المكالمات", _hist)
-
-
-def render_trend_chart(df, class_col, time_col):
-    has_class = class_col and class_col in df.columns
-    has_time = time_col and time_col in df.columns
-
-    def _trend():
-        if not has_time:
-            st.info("محتاجين عمود التاريخ عشان نعرض اتجاه المكالمات بمرور الوقت.")
-            return
-        trend_df = df.copy()
-        trend_df[time_col] = pd.to_datetime(trend_df[time_col], errors="coerce")
-        trend_df["اليوم"] = trend_df[time_col].dt.date
-        if has_class:
-            trend_df["الحالة"] = trend_df[class_col].map({1: "ناجحة", 0: "غير ناجحة"})
-            daily = trend_df.groupby(["اليوم", "الحالة"]).size().reset_index(name="عدد المكالمات")
-            fig5 = px.area(daily, x="اليوم", y="عدد المكالمات", color="الحالة", color_discrete_map=CHART_COLORS)
-        else:
-            daily = trend_df.groupby("اليوم").size().reset_index(name="عدد المكالمات")
-            fig5 = px.area(daily, x="اليوم", y="عدد المكالمات", color_discrete_sequence=[COLOR_ACCENT])
-        fig5.update_traces(line_width=2)
-        fig5.update_layout(**PLOTLY_LAYOUT, legend_title_text="", xaxis_title="", yaxis_title="عدد المكالمات")
-        st.plotly_chart(fig5, use_container_width=True, config=PLOTLY_CONFIG)
-
-    chart_card("📅 اتجاه عدد المكالمات يوميًا", _trend)
-
-
-def render_quick_summary(df, class_col=None, sales_col=None, time_col=None):
-    """لمحة سريعة بتتعرض في تويب «التصنيف» فور ما التصنيف يخلص — دلوقتي فيها 4 شارتس
-    + كروت أبرز النقاط، عشان تديك صورة كاملة من غير ما تحتاج تروح تويب الداشبورد."""
-    render_metric_cards(df, class_col, sales_col, time_col)
-    st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
-    render_highlights(df, class_col, sales_col, time_col)
-    st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
-
-    col_a, col_b = st.columns(2)
-    with col_a:
-        render_pie_chart(df, class_col)
-    with col_b:
-        render_trend_chart(df, class_col, time_col)
-
-    col_c, col_d = st.columns(2)
-    with col_c:
-        render_agent_perf_chart(df, class_col, sales_col, with_table=False)
-    with col_d:
-        render_wasted_bar(df, sales_col)
-
-
-def render_highlights(df, class_col, sales_col, time_col):
-    """كروت أبرز النقاط — أفضل محصّل / الأكثر إهدارًا للوقت / أكثر يوم نشاطًا."""
-    has_class = class_col and class_col in df.columns
-    has_sales = sales_col and sales_col in df.columns
-    has_wasted = WASTED_TIME_COL in df.columns
-    has_time = time_col and time_col in df.columns
-
-    cols = st.columns(3)
-
-    with cols[0]:
-        with st.container(border=True):
-            st.markdown('<div class="highlight-label">🏅 أفضل محصّل (نسبة نجاح)</div>', unsafe_allow_html=True)
-            if has_class and has_sales:
-                perf = _compute_agent_perf(df, class_col, sales_col)
-                perf = perf[perf["إجمالي المكالمات"] >= 3]  # نتجاهل اللي مكالماته قليلة جدًا
-                if len(perf):
-                    top = perf.iloc[0]
-                    st.markdown(f'<div class="highlight-value">{top[sales_col]}</div>', unsafe_allow_html=True)
-                    st.markdown(f'<div class="highlight-sub">{top["نسبة النجاح %"]}% نجاح ({int(top["إجمالي المكالمات"])} مكالمة)</div>', unsafe_allow_html=True)
-                else:
-                    st.markdown('<div class="highlight-sub">مفيش بيانات كافية</div>', unsafe_allow_html=True)
-            else:
-                st.markdown('<div class="highlight-sub">محتاجين عمود التصنيف والمحصّل</div>', unsafe_allow_html=True)
-
-    with cols[1]:
-        with st.container(border=True):
-            st.markdown('<div class="highlight-label">🐌 الأكثر إهدارًا للوقت</div>', unsafe_allow_html=True)
-            if has_wasted and has_sales:
-                wasted_totals = df.groupby(sales_col)[WASTED_TIME_COL].sum().sort_values(ascending=False)
-                if len(wasted_totals):
-                    st.markdown(f'<div class="highlight-value">{wasted_totals.index[0]}</div>', unsafe_allow_html=True)
-                    st.markdown(f'<div class="highlight-sub">{round(wasted_totals.iloc[0], 1)} دقيقة مهدرة</div>', unsafe_allow_html=True)
-                else:
-                    st.markdown('<div class="highlight-sub">مفيش بيانات كافية</div>', unsafe_allow_html=True)
-            else:
-                st.markdown('<div class="highlight-sub">محتاجين عمود المحصّل والوقت المهدر</div>', unsafe_allow_html=True)
-
-    with cols[2]:
-        with st.container(border=True):
-            st.markdown('<div class="highlight-label">📅 أكثر يوم نشاطًا</div>', unsafe_allow_html=True)
-            if has_time:
-                t = pd.to_datetime(df[time_col], errors="coerce")
-                if t.notna().any():
-                    daily_counts = t.dt.date.value_counts()
-                    st.markdown(f'<div class="highlight-value">{daily_counts.index[0]}</div>', unsafe_allow_html=True)
-                    st.markdown(f'<div class="highlight-sub">{int(daily_counts.iloc[0])} مكالمة</div>', unsafe_allow_html=True)
-                else:
-                    st.markdown('<div class="highlight-sub">مفيش تواريخ صالحة</div>', unsafe_allow_html=True)
-            else:
-                st.markdown('<div class="highlight-sub">محتاجين عمود التاريخ</div>', unsafe_allow_html=True)
-
-
-def render_comparison_matrix(df, class_col, sales_col):
-    """جدول مقارنة شامل لكل المحصّلين + خريطة أداء (نسبة النجاح مقابل الوقت المهدر)."""
-    has_class = class_col and class_col in df.columns
-    has_sales = sales_col and sales_col in df.columns
-    has_wasted = WASTED_TIME_COL in df.columns
-
-    if not (has_class and has_sales):
-        st.info("محتاجين عمود التصنيف وعمود المحصّل عشان نبني جدول المقارنة.")
-        return
-
-    perf = _compute_agent_perf(df, class_col, sales_col)
-
-    if has_wasted:
-        wasted_agg = df.groupby(sales_col)[WASTED_TIME_COL].agg(["sum", "mean"]).round(1)
-        wasted_agg.columns = ["إجمالي الوقت المهدر", "متوسط الوقت المهدر"]
-        perf = perf.merge(wasted_agg, left_on=sales_col, right_index=True, how="left")
-
-    def _table():
-        st.dataframe(
-            perf.rename(columns={sales_col: "المحصّل"}),
-            use_container_width=True,
-            hide_index=True,
-        )
-
-    chart_card(f"📋 جدول المقارنة الشامل — كل المحصّلين ({len(perf)})", _table)
-
-    if has_wasted:
-        def _scatter():
-            fig = px.scatter(
-                perf, x="نسبة النجاح %", y="إجمالي الوقت المهدر", size="إجمالي المكالمات",
-                text=sales_col, color="نسبة النجاح %",
-                color_continuous_scale=[COLOR_FAIL, COLOR_WARN, COLOR_SUCCESS],
-            )
-            avg_success = perf["نسبة النجاح %"].mean()
-            avg_wasted = perf["إجمالي الوقت المهدر"].mean()
-            fig.add_vline(x=avg_success, line_dash="dot", line_color="#8B96AC", opacity=0.5)
-            fig.add_hline(y=avg_wasted, line_dash="dot", line_color="#8B96AC", opacity=0.5)
-            fig.update_traces(textposition="top center", textfont_size=10, marker=dict(line=dict(color="#0E1420", width=1)))
-            fig.update_layout(
-                **PLOTLY_LAYOUT, coloraxis_showscale=False,
-                xaxis_title="نسبة النجاح %", yaxis_title="إجمالي الوقت المهدر (دقيقة)",
-            )
-            st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG)
-            st.caption(
-                "🔵 حجم الفقاعة = عدد المكالمات · الخطوط المنقّطة = المتوسط العام. "
-                "أعلى يمين = أداء ممتاز، أسفل يمين = ممتاز بس وقته بيتهدر، أعلى يسار = نجاح قليل بجهد وقت أقل، أسفل يسار = محتاج متابعة."
-            )
-
-        chart_card("🧭 خريطة الأداء: نسبة النجاح مقابل الوقت المهدر", _scatter)
-
-
-def render_full_dashboard(df, class_col=None, sales_col=None, time_col=None):
-    """النسخة الكاملة — تويب «الداشبورد» بس، منظّمة في تبويبات فرعية."""
-    render_metric_cards(df, class_col, sales_col, time_col)
-    st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
-    render_highlights(df, class_col, sales_col, time_col)
-    st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
-
-    sub_tab1, sub_tab2, sub_tab3, sub_tab4 = st.tabs(
-        ["📈 نظرة عامة", "👥 أداء المحصّلين", "⏱️ الوقت المهدر", "🔍 مقارنة شاملة"]
-    )
-
-    with sub_tab1:
-        col_a, col_b = st.columns(2)
-        with col_a:
-            render_pie_chart(df, class_col)
-        with col_b:
-            render_trend_chart(df, class_col, time_col)
-
-    with sub_tab2:
-        render_agent_perf_chart(df, class_col, sales_col, with_table=False)
-
-    with sub_tab3:
-        col_c, col_d = st.columns(2)
-        with col_c:
-            render_wasted_bar(df, sales_col, top_n=None)
-        with col_d:
-            render_wasted_hist(df)
-
-    with sub_tab4:
-        render_comparison_matrix(df, class_col, sales_col)
-
-
-# ==========================================================
-# تصدير الداشبورد كصفحة ويب (HTML) مستقلة — نفس الشكل والألوان
-# ==========================================================
-
-def _fig_to_div(fig, div_id, height=420):
-    """بيحول الفيجر لكارت HTML — أهم حاجة إننا نديله ارتفاع صريح، لأن من غيره
-    الشارت بيتصاغر لحجم شبه صفري جوه صندوق ارتفاعه تلقائي (اللي كان بيحصل قبل كده)."""
-    if fig.layout.height is None:
-        fig.update_layout(height=height)
-    fig.update_layout(**PLOTLY_LAYOUT, autosize=True)
-    return pio.to_html(
-        fig, full_html=False, include_plotlyjs=False,
-        config=PLOTLY_CONFIG, div_id=div_id,
-        default_width="100%", default_height=f"{fig.layout.height}px",
-    )
-
-
-def build_dashboard_html(df, class_col, sales_col, time_col, source_name="") -> str:
-    """بيبني صفحة HTML مستقلة (تفتح في أي متصفح، تفاعلية زي الأصل)
-    فيها نفس تصميم وألوان الداشبورد جوه التطبيق، عشان تتبعت أو تتحفظ كصفحة ويب."""
-
-    has_class = bool(class_col and class_col in df.columns)
-    has_sales = bool(sales_col and sales_col in df.columns)
-    has_time = bool(time_col and time_col in df.columns)
-    has_wasted = WASTED_TIME_COL in df.columns
-
-    total_calls = len(df)
-    success_count = int((df[class_col] == 1).sum()) if has_class else None
-    fail_count = int((df[class_col] == 0).sum()) if has_class else None
-    success_rate = round(success_count / total_calls * 100, 1) if has_class and total_calls else None
-    total_wasted = round(df[WASTED_TIME_COL].sum(), 1) if has_wasted else None
-    avg_wasted = round(df[WASTED_TIME_COL].mean(), 1) if has_wasted and total_calls else None
-
-    # ---- كروت أبرز النقاط ----
-    top_agent_html = '<div class="highlight-sub">محتاجين عمود التصنيف والمحصّل</div>'
-    if has_class and has_sales:
-        perf_all = _compute_agent_perf(df, class_col, sales_col)
-        perf_qualified = perf_all[perf_all["إجمالي المكالمات"] >= 3]
-        if len(perf_qualified):
-            top = perf_qualified.iloc[0]
-            top_agent_html = (
-                f'<div class="highlight-value">{top[sales_col]}</div>'
-                f'<div class="highlight-sub">{top["نسبة النجاح %"]}% نجاح '
-                f'({int(top["إجمالي المكالمات"])} مكالمة)</div>'
-            )
-        else:
-            top_agent_html = '<div class="highlight-sub">مفيش بيانات كافية</div>'
-
-    slow_agent_html = '<div class="highlight-sub">محتاجين عمود المحصّل والوقت المهدر</div>'
-    if has_wasted and has_sales:
-        wasted_totals = df.groupby(sales_col)[WASTED_TIME_COL].sum().sort_values(ascending=False)
-        if len(wasted_totals):
-            slow_agent_html = (
-                f'<div class="highlight-value">{wasted_totals.index[0]}</div>'
-                f'<div class="highlight-sub">{round(wasted_totals.iloc[0], 1)} دقيقة مهدرة</div>'
-            )
-        else:
-            slow_agent_html = '<div class="highlight-sub">مفيش بيانات كافية</div>'
-
-    busiest_day_html = '<div class="highlight-sub">محتاجين عمود التاريخ</div>'
-    if has_time:
-        t = pd.to_datetime(df[time_col], errors="coerce")
-        if t.notna().any():
-            daily_counts = t.dt.date.value_counts()
-            busiest_day_html = (
-                f'<div class="highlight-value">{daily_counts.index[0]}</div>'
-                f'<div class="highlight-sub">{int(daily_counts.iloc[0])} مكالمة</div>'
-            )
-        else:
-            busiest_day_html = '<div class="highlight-sub">مفيش تواريخ صالحة</div>'
-
-    # ---- الشارتس (بنبنيها في متغيرات الأول، وبعدين نرتبها بالترتيب اللي هيبقى شكله منظم) ----
-    chart_pie = chart_hist = chart_trend = chart_agents = chart_wasted = chart_scatter = None
-
-    if has_class:
-        labels_series = df[class_col].map({1: "ناجحة", 0: "غير ناجحة"})
-        pie_df = labels_series.value_counts().reset_index()
-        pie_df.columns = ["التصنيف", "العدد"]
-        fig_pie = px.pie(pie_df, names="التصنيف", values="العدد", hole=0.62,
-                          color="التصنيف", color_discrete_map=CHART_COLORS)
-        fig_pie.update_traces(textinfo="percent", textfont_size=13,
-                               marker=dict(line=dict(color="#0E1420", width=3)))
-        fig_pie.update_layout(showlegend=True,
-                               legend=dict(orientation="h", yanchor="bottom", y=-0.15, x=0.5, xanchor="center"),
-                               annotations=[dict(text=f"{success_rate}%<br><span style='font-size:11px;color:#8B96AC'>نجاح</span>",
-                                                  x=0.5, y=0.5, font_size=22, font_color=COLOR_SUCCESS, showarrow=False)])
-        chart_pie = ("🎯 توزيع نتائج التصنيف", _fig_to_div(fig_pie, "fig_pie"), False)
-
-    if has_wasted:
-        fig_hist = px.histogram(df, x=WASTED_TIME_COL, nbins=20, color_discrete_sequence=[COLOR_ACCENT])
-        fig_hist.update_layout(bargap=0.08, xaxis_title="الوقت المهدر (دقيقة)", yaxis_title="عدد المرات")
-        chart_hist = ("⏱️ توزيع الوقت المهدر بين المكالمات", _fig_to_div(fig_hist, "fig_hist"), False)
-
-    if has_time:
-        trend_df = df.copy()
-        trend_df[time_col] = pd.to_datetime(trend_df[time_col], errors="coerce")
-        trend_df["اليوم"] = trend_df[time_col].dt.date
-        if has_class:
-            trend_df["الحالة"] = trend_df[class_col].map({1: "ناجحة", 0: "غير ناجحة"})
-            daily = trend_df.groupby(["اليوم", "الحالة"]).size().reset_index(name="عدد المكالمات")
-            fig_trend = px.area(daily, x="اليوم", y="عدد المكالمات", color="الحالة", color_discrete_map=CHART_COLORS)
-        else:
-            daily = trend_df.groupby("اليوم").size().reset_index(name="عدد المكالمات")
-            fig_trend = px.area(daily, x="اليوم", y="عدد المكالمات", color_discrete_sequence=[COLOR_ACCENT])
-        fig_trend.update_traces(line_width=2)
-        fig_trend.update_layout(legend_title_text="", xaxis_title="", yaxis_title="عدد المكالمات")
-        chart_trend = ("📅 اتجاه عدد المكالمات يوميًا", _fig_to_div(fig_trend, "fig_trend"), True)
-
-    if has_class and has_sales:
-        agent_perf = _compute_agent_perf(df, class_col, sales_col)
-        fig_agents = px.bar(agent_perf, x=sales_col, y=["ناجحة", "غير ناجحة"],
-                             color_discrete_sequence=[COLOR_SUCCESS, COLOR_FAIL], barmode="stack")
-        fig_agents.update_traces(marker_line_width=0)
-        fig_agents.update_layout(legend_title_text="", xaxis_title="", yaxis_title="عدد المكالمات")
-        chart_agents = ("📊 أداء كل محصّل (ناجحة مقابل غير ناجحة)", _fig_to_div(fig_agents, "fig_agents"), True)
-
-    if has_wasted and has_sales:
-        wasted_by_agent = df.groupby(sales_col)[WASTED_TIME_COL].sum().sort_values(ascending=False).reset_index()
-        chart_height = max(300, 28 * len(wasted_by_agent))
-        fig_wasted = px.bar(wasted_by_agent, x=WASTED_TIME_COL, y=sales_col, orientation="h",
-                             color=WASTED_TIME_COL, color_continuous_scale=[COLOR_ACCENT, COLOR_WARN, COLOR_FAIL])
-        fig_wasted.update_traces(marker_line_width=0)
-        fig_wasted.update_layout(yaxis={"categoryorder": "total ascending", "title": ""},
-                                  xaxis_title="الوقت المهدر (دقيقة)", coloraxis_showscale=False, height=chart_height)
-        chart_wasted = ("🏆 كل المحصّلين حسب الوقت المهدر", _fig_to_div(fig_wasted, "fig_wasted", height=chart_height), True)
-
-
-    comparison_table_html = ""
-    chart_scatter = None
-    if has_class and has_sales:
-        perf = _compute_agent_perf(df, class_col, sales_col)
-        if has_wasted:
-            wasted_agg = df.groupby(sales_col)[WASTED_TIME_COL].agg(["sum", "mean"]).round(1)
-            wasted_agg.columns = ["إجمالي الوقت المهدر", "متوسط الوقت المهدر"]
-            perf = perf.merge(wasted_agg, left_on=sales_col, right_index=True, how="left")
-
-            fig_scatter = px.scatter(perf, x="نسبة النجاح %", y="إجمالي الوقت المهدر", size="إجمالي المكالمات",
-                                      text=sales_col, color="نسبة النجاح %",
-                                      color_continuous_scale=[COLOR_FAIL, COLOR_WARN, COLOR_SUCCESS])
-            fig_scatter.add_vline(x=perf["نسبة النجاح %"].mean(), line_dash="dot", line_color="#8B96AC", opacity=0.5)
-            fig_scatter.add_hline(y=perf["إجمالي الوقت المهدر"].mean(), line_dash="dot", line_color="#8B96AC", opacity=0.5)
-            fig_scatter.update_traces(textposition="top center", textfont_size=10,
-                                       marker=dict(line=dict(color="#0E1420", width=1)))
-            fig_scatter.update_layout(coloraxis_showscale=False, xaxis_title="نسبة النجاح %",
-                                       yaxis_title="إجمالي الوقت المهدر (دقيقة)")
-            chart_scatter = ("🧭 خريطة الأداء: نسبة النجاح مقابل الوقت المهدر", _fig_to_div(fig_scatter, "fig_scatter", height=460), True)
-
-        comparison_table_html = perf.rename(columns={sales_col: "المحصّل"}).to_html(
-            index=False, classes="comp-table", border=0, justify="right"
-        )
-
-    # ترتيب نهائي منظم: الاتنين نص العرض (دائري + هيستوجرام) جنب بعض، وبعدين كل شارت واسع في صف لوحده
-    charts_html = [c for c in [chart_pie, chart_hist, chart_trend, chart_agents, chart_wasted, chart_scatter] if c]
-
-    def metric_card(label, value, sub=""):
-        return f'''<div class="metric-box">
+def classify_label(v):
+    try:
+        return int(float(v))
+    except Exception:
+        return None
+
+
+def covered_mask(df):
+    """المكالمة المغطاة = ليست لا يرد وليست مغلق، مع دعم اختلاف الكتابة."""
+    if "Sub State" not in df.columns:
+        return pd.Series(True, index=df.index)
+    s = df["Sub State"].fillna("").astype(str).str.strip().str.lower()
+    not_answered = s.str.contains(r"لا\s*يرد|لايرد|no\s*answer|not\s*answer", regex=True, na=False)
+    closed = s.str.contains(r"مغلق|closed", regex=True, na=False)
+    return ~(not_answered | closed)
+
+
+def prepare_dashboard_df(df, sales_col, time_col, substate_col, class_col):
+    out = df.copy()
+    if sales_col and sales_col in out.columns:
+        out[sales_col] = out[sales_col].fillna("غير محدد").astype(str).str.strip()
+    if substate_col and substate_col in out.columns:
+        out["Sub State"] = out[substate_col].fillna("غير محدد").astype(str).str.strip()
+    if time_col and time_col in out.columns:
+        out["_datetime"] = pd.to_datetime(out[time_col], errors="coerce")
+    if class_col and class_col in out.columns:
+        out["_class"] = pd.to_numeric(out[class_col], errors="coerce")
+    return out
+
+
+def metric_box(label, value, sub=""):
+    st.markdown(
+        f"""
+        <div class="metric-card">
             <div class="metric-label">{label}</div>
             <div class="metric-value">{value}</div>
             <div class="metric-sub">{sub}</div>
-        </div>'''
-
-    metrics_html = "".join([
-        metric_card("📞 إجمالي المكالمات", total_calls),
-        metric_card("✅ ناجحة", success_count if has_class else "—", f"{success_rate}%" if has_class else ""),
-        metric_card("⛔ غير ناجحة", fail_count if has_class else "—"),
-        metric_card("⏱️ إجمالي الوقت المهدر (دقيقة)", total_wasted if has_wasted else "—",
-                     f"متوسط {avg_wasted} د/مكالمة" if has_wasted else ""),
-    ])
-
-    charts_grid_html = "".join(
-        f'''<div class="chart-box{' wide' if wide else ''}">
-            <div class="chart-box-title">{title}</div>
-            {div}
-        </div>''' for title, div, wide in charts_html
-    )
-
-    generated_at = datetime.now().strftime("%Y-%m-%d %H:%M")
-
-    return f"""<!DOCTYPE html>
-<html lang="ar" dir="rtl">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>داشبورد نشاط المحصّلين | 7oudaModel</title>
-<script src="https://cdn.plot.ly/plotly-2.32.0.min.js"></script>
-<style>
-@import url('https://fonts.googleapis.com/css2?family=Tajawal:wght@400;500;700;900&family=JetBrains+Mono:wght@500;700&display=swap');
-:root {{
-    --bg: #0E1420; --surface: #151F30; --surface-2: #1B2A42;
-    --accent: #5EEAD4; --success: #34D399; --danger: #FB7185; --warn: #FBBF24;
-    --text: #E7ECF3; --text-dim: #8B96AC;
-}}
-* {{ box-sizing: border-box; }}
-body {{
-    margin: 0; font-family: 'Tajawal', sans-serif; color: var(--text);
-    background: radial-gradient(circle at 20% 0%, #10192C 0%, var(--bg) 55%);
-    min-height: 100vh;
-}}
-.wrap {{ max-width: 1280px; margin: 0 auto; padding: 2rem 1.5rem 4rem; }}
-.header {{ margin-bottom: 1.5rem; }}
-.eyebrow {{
-    font-family: 'JetBrains Mono', monospace; font-size: 0.72rem; letter-spacing: 0.14em;
-    color: var(--accent); text-transform: uppercase; margin-bottom: 0.3rem;
-}}
-h1 {{ font-weight: 900; font-size: 1.9rem; margin: 0; }}
-.subtitle {{ color: var(--text-dim); font-size: 0.95rem; margin-top: 0.4rem; }}
-.divider {{
-    height: 1px; background: linear-gradient(90deg, transparent, rgba(94,234,212,0.35), transparent);
-    margin: 1.6rem 0; border: none;
-}}
-.metrics-grid {{ display: grid; grid-template-columns: repeat(4, 1fr); gap: 1rem; }}
-.metric-box {{
-    background: var(--surface); border: 1px solid rgba(255,255,255,0.06); border-radius: 14px;
-    padding: 1rem 1.1rem;
-}}
-.metric-label {{ font-size: 0.82rem; color: var(--text-dim); margin-bottom: 0.4rem; }}
-.metric-value {{ font-family: 'JetBrains Mono', monospace; font-weight: 700; font-size: 1.5rem; color: var(--accent); }}
-.metric-sub {{ font-size: 0.78rem; color: var(--text-dim); margin-top: 0.3rem; }}
-.highlights-grid {{ display: grid; grid-template-columns: repeat(3, 1fr); gap: 1rem; }}
-.highlight-box {{
-    background: var(--surface); border: 1px solid rgba(255,255,255,0.06); border-radius: 14px; padding: 1rem 1.1rem;
-}}
-.highlight-label {{ font-size: 0.82rem; color: var(--text-dim); margin-bottom: 0.5rem; }}
-.highlight-value {{ font-weight: 900; font-size: 1.2rem; color: var(--accent); line-height: 1.3; }}
-.highlight-sub {{ font-size: 0.8rem; color: var(--text-dim); margin-top: 0.2rem; }}
-.charts-grid {{ display: grid; grid-template-columns: repeat(2, 1fr); gap: 1rem; align-items: start; }}
-.chart-box {{
-    background: var(--surface); border: 1px solid rgba(255,255,255,0.07); border-radius: 14px; padding: 1rem 1.1rem;
-    overflow: hidden;
-}}
-.chart-box.wide {{ grid-column: 1 / -1; }}
-.chart-box .plotly-graph-div {{ width: 100% !important; }}
-.chart-box-title {{
-    font-weight: 700; font-size: 0.95rem; margin-bottom: 0.5rem; padding-bottom: 0.5rem;
-    border-bottom: 1px solid rgba(255,255,255,0.06);
-}}
-.table-box {{
-    background: var(--surface); border: 1px solid rgba(255,255,255,0.07); border-radius: 14px;
-    padding: 1rem 1.1rem; margin-top: 1rem; overflow-x: auto;
-}}
-.comp-table {{ width: 100%; border-collapse: collapse; font-size: 0.85rem; }}
-.comp-table th {{
-    background: var(--surface-2); color: var(--accent); padding: 0.55rem 0.7rem; text-align: right;
-    position: sticky; top: 0;
-}}
-.comp-table td {{ padding: 0.5rem 0.7rem; border-bottom: 1px solid rgba(255,255,255,0.05); }}
-.comp-table tr:hover td {{ background: rgba(94,234,212,0.05); }}
-.footer {{ text-align: center; color: var(--text-dim); font-size: 0.78rem; margin-top: 2.5rem; }}
-@media (max-width: 900px) {{
-    .metrics-grid, .highlights-grid, .charts-grid {{ grid-template-columns: 1fr; }}
-}}
-</style>
-</head>
-<body>
-<div class="wrap">
-    <div class="header">
-        <div class="eyebrow">ACTIVITY DASHBOARD · SNAPSHOT</div>
-        <h1>📊 داشبورد نشاط المحصّلين</h1>
-        <div class="subtitle">{('مصدر البيانات: ' + source_name) if source_name else ''} · تم إنشاؤه في {generated_at}</div>
-    </div>
-    <div class="divider"></div>
-    <div class="metrics-grid">{metrics_html}</div>
-    <div class="divider"></div>
-    <div class="highlights-grid">
-        <div class="highlight-box"><div class="highlight-label">🏅 أفضل محصّل (نسبة نجاح)</div>{top_agent_html}</div>
-        <div class="highlight-box"><div class="highlight-label">🐌 الأكثر إهدارًا للوقت</div>{slow_agent_html}</div>
-        <div class="highlight-box"><div class="highlight-label">📅 أكثر يوم نشاطًا</div>{busiest_day_html}</div>
-    </div>
-    <div class="divider"></div>
-    <div class="charts-grid">{charts_grid_html}</div>
-    {f'<div class="table-box"><div class="chart-box-title">📋 جدول المقارنة الشامل — كل المحصّلين</div>{comparison_table_html}</div>' if comparison_table_html else ''}
-    <div class="footer">تم إنشاء هذه الصفحة تلقائيًا من لوحة تحليل المكالمات · 7oudaModel</div>
-</div>
-</body>
-</html>"""
-
-
-# ==========================================================
-# تويب 1: التصنيف
-# ==========================================================
-
-def page_classification():
-    page_header(
-        "CALL QUALITY CLASSIFIER",
-        "🎯 تصنيف المكالمات",
-        "ارفع الملف، وهيتصنّف كل صف تلقائيًا (1 = ناجحة، 0 = غير ناجحة) ويتحسب الوقت المهدر لكل محصّل",
-        show_wave=True,
-    )
-
-    with st.expander("⚙️ إعدادات حساب الوقت المهدر (وقت البريك)", expanded=False):
-        c1, c2 = st.columns(2)
-        break_start = c1.time_input("بداية البريك", value=dt_time(13, 0))
-        break_end = c2.time_input("نهاية البريك", value=dt_time(13, 30))
-
-    uploaded_file = st.file_uploader("ارفع ملف البيانات (CSV أو Excel)", type=["csv", "xlsx", "xls"])
-
-    if uploaded_file is not None:
-        st.session_state["raw_file_bytes"] = uploaded_file.getvalue()
-        st.session_state["raw_file_name"] = uploaded_file.name
-        st.session_state["raw_file_size"] = uploaded_file.size
-
-    has_cached_file = "raw_file_bytes" in st.session_state
-
-    if not has_cached_file:
-        st.markdown(
-            '<div class="placeholder-card">📂 ارفع ملف عشان تبدأ التصنيف</div>',
-            unsafe_allow_html=True,
-        )
-        return
-
-    file_bytes = st.session_state["raw_file_bytes"]
-    file_name = st.session_state["raw_file_name"]
-    file_size = st.session_state["raw_file_size"]
-
-    try:
-        if file_name.endswith(".csv"):
-            df = pd.read_csv(io.BytesIO(file_bytes))
-        else:
-            df = pd.read_excel(io.BytesIO(file_bytes))
-    except Exception as e:
-        st.error(f"مش قادر أقرأ الملف: {e}")
-        return
-
-    if len(df) > 0:
-        df = df.iloc[1:].reset_index(drop=True)
-
-    if ORIGINAL_TEXT_COL in df.columns:
-        df = df.rename(columns={ORIGINAL_TEXT_COL: MODEL_TEXT_COL})
-
-    st.dataframe(df.head(10), use_container_width=True)
-
-    if MODEL_TEXT_COL not in df.columns:
-        st.error(
-            f"عمود النص ('{ORIGINAL_TEXT_COL}' أو '{MODEL_TEXT_COL}') مش موجود في الملف. "
-            f"الأعمدة الموجودة: {', '.join(df.columns.astype(str))}"
-        )
-        return
-
-    st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
-
-    file_token = f"{file_name}_{file_size}"
-
-    if st.button("🚀 ابدأ التصنيف", type="primary", use_container_width=True):
-        tokenizer, model, device = load_model()
-
-        texts = df[MODEL_TEXT_COL].tolist()
-        preds, confidences = predict_batch(texts, tokenizer, model, device)
-
-        result_df = df.copy()
-        result_df[CLASSIFICATION_COL] = preds
-        result_df["نسبة_الثقة"] = [round(c * 100, 1) for c in confidences]
-
-        sales_col = find_column(result_df, SALES_PERSON_CANDIDATES)
-        time_col = find_column(result_df, CREATED_ON_CANDIDATES)
-
-        if sales_col and time_col:
-            result_df = calculate_wasted_time(result_df, sales_col, time_col, break_start, break_end)
-        else:
-            st.warning(
-                "مش لاقي عمود المحصّل (Create By) أو عمود التاريخ (Created On) بنفس الاسم المتوقع، "
-                "فمش هينحسب الوقت المهدر. الأعمدة الموجودة: " + ", ".join(result_df.columns.astype(str))
-            )
-
-        result_df = result_df.rename(columns={MODEL_TEXT_COL: ORIGINAL_TEXT_COL})
-
-        st.session_state["last_result_df"] = result_df
-        st.session_state["last_sales_col"] = sales_col
-        st.session_state["last_time_col"] = time_col
-        st.session_state["last_file_token"] = file_token
-
-    if st.session_state.get("last_file_token") == file_token and "last_result_df" in st.session_state:
-        result_df = st.session_state["last_result_df"]
-        sales_col = st.session_state.get("last_sales_col")
-        time_col = st.session_state.get("last_time_col")
-
-        st.success("تم التصنيف وحساب الوقت المهدر بنجاح ✅")
-
-        if WASTED_TIME_COL in result_df.columns:
-            try:
-                styled = result_df.style.map(highlight_wasted, subset=[WASTED_TIME_COL])
-            except AttributeError:
-                styled = result_df.style.applymap(highlight_wasted, subset=[WASTED_TIME_COL])
-            st.dataframe(styled, use_container_width=True)
-        else:
-            st.dataframe(result_df, use_container_width=True)
-
-        st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
-
-        render_quick_summary(result_df, class_col=CLASSIFICATION_COL, sales_col=sales_col, time_col=time_col)
-
-        st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
-
-        if file_name.endswith(".csv"):
-            output = result_df.to_csv(index=False).encode("utf-8-sig")
-            out_name = "نتائج_التصنيف.csv"
-            mime = "text/csv"
-        else:
-            buffer = io.BytesIO()
-            with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
-                result_df.to_excel(writer, index=False, sheet_name="النتائج")
-            output = buffer.getvalue()
-            out_name = "نتائج_التصنيف.xlsx"
-            mime = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-
-        st.download_button(
-            "⬇️ تحميل الملف مع التصنيف والوقت المهدر",
-            data=output, file_name=out_name, mime=mime, use_container_width=True,
-        )
-
-
-# ==========================================================
-# تويبات 2-5: هنبنيها واحدة واحدة لما نحدد منطق كل واحدة
-# ==========================================================
-
-def page_placeholder(eyebrow, title, subtitle, icon):
-    page_header(eyebrow, f"{icon} {title}", subtitle)
-    st.markdown(
-        f"""
-        <div class="placeholder-card">
-            {icon}<br><br>
-            التويب ده لسه مننعمهاش — هنحدد سوا منطقها ومصدر بياناتها زي ما اتفقنا "حاجة حاجة"،
-            وهتتفعّل هنا أول ما نخلص عليها.
         </div>
         """,
         unsafe_allow_html=True,
     )
 
 
-# ==========================================================
-# تويب 6: الداشبورد (رفع ملف مُصنّف جاهز وبناء الداشبورد تلقائي)
-# ==========================================================
+def render_dashboard_metrics(df, sales_col, class_col):
+    covered = covered_mask(df)
+    covered_count = int(covered.sum())
+    success_count = int((df["_class"] == 1).sum()) if class_col and "_class" in df else 0
+    success_rate = round(success_count / covered_count * 100, 1) if covered_count else 0
+    agents = df[sales_col].nunique() if sales_col and sales_col in df else 0
+    wasted = round(df[WASTED_TIME_COL].sum(), 1) if WASTED_TIME_COL in df else 0
 
+    cols = st.columns(5)
+    with cols[0]:
+        metric_box("👥 عدد المحصلين", f"{agents:,}", "محصل نشط في البيانات")
+    with cols[1]:
+        metric_box("⏱️ الوقت المهدر", f"{wasted:,.1f}", "دقيقة")
+    with cols[2]:
+        metric_box("📞 المكالمات المغطاة", f"{covered_count:,}", "باستثناء لا يرد / مغلق")
+    with cols[3]:
+        metric_box("✅ المكالمات الناجحة", f"{success_count:,}", "تصنيف الموديل = 1")
+    with cols[4]:
+        metric_box("📈 نسبة النجاح", f"{success_rate:.1f}%", "ناجحة ÷ المكالمات المغطاة")
+
+
+def render_dashboard_filters(df, sales_col, substate_col, time_col, class_col):
+    st.markdown("### 🎛️ فلاتر الداشبورد")
+    c1, c2, c3, c4, c5 = st.columns([1.2, 1.2, 1, 1, 1])
+
+    sales_values = ["الكل"] + sorted(df[sales_col].dropna().astype(str).unique().tolist()) if sales_col else ["الكل"]
+    selected_sales = c1.multiselect("المحصل", sales_values, default=["الكل"])
+
+    sub_values = ["الكل"] + sorted(df[substate_col].dropna().astype(str).unique().tolist()) if substate_col else ["الكل"]
+    selected_sub = c2.multiselect("Sub State", sub_values, default=["الكل"])
+
+    dates = pd.to_datetime(df[time_col], errors="coerce").dropna().dt.date if time_col else pd.Series(dtype=object)
+    date_options = sorted(dates.unique().tolist()) if len(dates) else []
+    selected_dates = c3.multiselect("التاريخ", date_options, default=[])
+
+    start_t = c4.time_input("من الساعة", value=dt_time(0, 0))
+    end_t = c5.time_input("إلى الساعة", value=dt_time(23, 59))
+
+    c6, c7 = st.columns([1, 1])
+    class_options = ["الكل", "ناجحة", "غير ناجحة"]
+    selected_class = c6.multiselect("حالة المكالمة", class_options, default=["الكل"])
+
+    if sales_col and selected_sales and "الكل" not in selected_sales:
+        df = df[df[sales_col].astype(str).isin(selected_sales)]
+    if substate_col and selected_sub and "الكل" not in selected_sub:
+        df = df[df[substate_col].astype(str).isin(selected_sub)]
+    if selected_dates and time_col:
+        df = df[pd.to_datetime(df[time_col], errors="coerce").dt.date.isin(selected_dates)]
+
+    if time_col:
+        dt = pd.to_datetime(df[time_col], errors="coerce")
+        tm = dt.dt.time
+        if start_t <= end_t:
+            df = df[(tm >= start_t) & (tm <= end_t)]
+        else:
+            df = df[(tm >= start_t) | (tm <= end_t)]
+
+    if class_col and selected_class and "الكل" not in selected_class:
+        wanted = [1 if x == "ناجحة" else 0 for x in selected_class]
+        df = df[df["_class"].isin(wanted)]
+
+    return df
+
+
+def render_activity_charts(df, sales_col, substate_col, time_col, class_col):
+    # 1) نشاط المحصلين
+    if sales_col:
+        activity = df.groupby(sales_col).size().reset_index(name="عدد الإفادات")
+        activity = activity.sort_values("عدد الإفادات", ascending=True)
+        fig = px.bar(activity, x="عدد الإفادات", y=sales_col, orientation="h",
+                     color="عدد الإفادات", color_continuous_scale=[COLOR_BLUE, COLOR_ACCENT])
+        fig.update_layout(coloraxis_showscale=False, xaxis_title="عدد الإفادات", yaxis_title="")
+        chart_card("👥 نشاط المحصلين — عدد الإفادات", style_fig(fig, max(360, len(activity) * 28)))
+
+    # 2) لا يرد ومغلق لكل محصل
+    if sales_col and substate_col:
+        temp = df.copy()
+        s = temp[substate_col].fillna("").astype(str)
+        temp["الحالة المختصرة"] = "أخرى"
+        temp.loc[s.str.contains(r"لا\s*يرد|لايرد|no\s*answer", case=False, regex=True, na=False), "الحالة المختصرة"] = "لا يرد"
+        temp.loc[s.str.contains(r"مغلق|closed", case=False, regex=True, na=False), "الحالة المختصرة"] = "مغلق"
+        temp = temp[temp["الحالة المختصرة"].isin(["لا يرد", "مغلق"])]
+        if len(temp):
+            g = temp.groupby([sales_col, "الحالة المختصرة"]).size().reset_index(name="العدد")
+            fig = px.bar(g, x=sales_col, y="العدد", color="الحالة المختصرة",
+                         barmode="group", color_discrete_map={"لا يرد": COLOR_WARN, "مغلق": COLOR_FAIL})
+            fig.update_layout(xaxis_title="", yaxis_title="عدد الإفادات", legend_title="")
+            chart_card("📞 لا يرد ومغلق لكل محصل", style_fig(fig, 410))
+
+    # 3) الوقت المهدر لكل محصل
+    if sales_col and WASTED_TIME_COL in df.columns:
+        g = df.groupby(sales_col)[WASTED_TIME_COL].sum().reset_index()
+        g = g.sort_values(WASTED_TIME_COL, ascending=True)
+        fig = px.bar(g, x=WASTED_TIME_COL, y=sales_col, orientation="h",
+                     color=WASTED_TIME_COL,
+                     color_continuous_scale=[COLOR_ACCENT, COLOR_WARN, COLOR_FAIL])
+        fig.update_layout(coloraxis_showscale=False, xaxis_title="دقيقة", yaxis_title="")
+        chart_card("⏱️ الوقت المهدر لكل محصل", style_fig(fig, max(360, len(g) * 28)))
+
+    # 4) نشاط المحصلين خلال اليوم
+    if sales_col and time_col:
+        t = df.copy()
+        t["_hour"] = pd.to_datetime(t[time_col], errors="coerce").dt.hour
+        t = t.dropna(subset=["_hour"])
+        if len(t):
+            hourly = t.groupby([sales_col, "_hour"]).size().reset_index(name="عدد الإفادات")
+            fig = px.line(hourly, x="_hour", y="عدد الإفادات", color=sales_col,
+                          markers=True)
+            fig.update_layout(xaxis_title="ساعة اليوم", yaxis_title="عدد الإفادات", legend_title="المحصل")
+            chart_card("🕐 نشاط المحصلين على مدار اليوم", style_fig(fig, 430))
+
+    # 5) ناجحة / غير ناجحة
+    if class_col and "_class" in df.columns:
+        temp = df["_class"].map({1: "ناجحة", 0: "غير ناجحة"}).value_counts().reset_index()
+        temp.columns = ["الحالة", "العدد"]
+        fig = px.pie(temp, names="الحالة", values="العدد", hole=.62,
+                     color="الحالة",
+                     color_discrete_map={"ناجحة": COLOR_SUCCESS, "غير ناجحة": COLOR_FAIL})
+        fig.update_traces(textinfo="percent+label")
+        chart_card("🎯 توزيع المكالمات الناجحة وغير الناجحة", style_fig(fig, 390))
+
+
+def build_dashboard_html(df, source_name=""):
+    """تصدير Snapshot تفاعلي بسيط للداشبورد كصفحة HTML."""
+    total = len(df)
+    covered = int(covered_mask(df).sum())
+    success = int((df["_class"] == 1).sum()) if "_class" in df.columns else 0
+    rate = round(success / covered * 100, 1) if covered else 0
+    agents = df["_sales"].nunique() if "_sales" in df.columns else 0
+    wasted = round(df[WASTED_TIME_COL].sum(), 1) if WASTED_TIME_COL in df.columns else 0
+
+    charts = []
+
+    if "_sales" in df.columns:
+        g = df.groupby("_sales").size().reset_index(name="عدد الإفادات")
+        fig = px.bar(g.sort_values("عدد الإفادات"), x="عدد الإفادات", y="_sales", orientation="h",
+                     color="عدد الإفادات", color_continuous_scale=[COLOR_BLUE, COLOR_ACCENT])
+        fig.update_layout(coloraxis_showscale=False, xaxis_title="عدد الإفادات", yaxis_title="")
+        charts.append(("👥 نشاط المحصلين", pio.to_html(style_fig(fig, 450), full_html=False, include_plotlyjs=False)))
+
+    if "_sales" in df.columns and WASTED_TIME_COL in df.columns:
+        g = df.groupby("_sales")[WASTED_TIME_COL].sum().reset_index()
+        fig = px.bar(g.sort_values(WASTED_TIME_COL), x=WASTED_TIME_COL, y="_sales", orientation="h",
+                     color=WASTED_TIME_COL,
+                     color_continuous_scale=[COLOR_ACCENT, COLOR_WARN, COLOR_FAIL])
+        fig.update_layout(coloraxis_showscale=False, xaxis_title="دقيقة", yaxis_title="")
+        charts.append(("⏱️ الوقت المهدر", pio.to_html(style_fig(fig, 450), full_html=False, include_plotlyjs=False)))
+
+    if "_datetime" in df.columns:
+        h = df.dropna(subset=["_datetime"]).copy()
+        h["ساعة"] = h["_datetime"].dt.hour
+        h = h.groupby("ساعة").size().reset_index(name="عدد الإفادات")
+        fig = px.line(h, x="ساعة", y="عدد الإفادات", markers=True)
+        fig.update_layout(xaxis_title="ساعة اليوم", yaxis_title="عدد الإفادات")
+        charts.append(("🕐 النشاط خلال اليوم", pio.to_html(style_fig(fig, 450), full_html=False, include_plotlyjs=False)))
+
+    generated = datetime.now().strftime("%Y-%m-%d %H:%M")
+    cards = f"""
+    <div class="cards">
+      <div><span>👥 المحصلين</span><b>{agents:,}</b></div>
+      <div><span>⏱️ الوقت المهدر</span><b>{wasted:,.1f}</b><small>دقيقة</small></div>
+      <div><span>📞 المكالمات المغطاة</span><b>{covered:,}</b></div>
+      <div><span>✅ الناجحة</span><b>{success:,}</b></div>
+      <div><span>📈 نسبة النجاح</span><b>{rate:.1f}%</b></div>
+    </div>
+    """
+
+    chart_html = "".join(
+        f'<section><h3>{title}</h3>{html}</section>' for title, html in charts
+    )
+
+    return f"""<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>7ouda Model - Dashboard</title>
+<script src="https://cdn.plot.ly/plotly-2.32.0.min.js"></script>
+<style>
+body{{margin:0;background:#080D17;color:#F1F5F9;font-family:Tajawal,Arial,sans-serif}}
+.wrap{{max-width:1400px;margin:auto;padding:35px 22px}}
+h1{{margin:0;font-size:30px}} .sub{{color:#94A3B8;margin:8px 0 25px}}
+.cards{{display:grid;grid-template-columns:repeat(5,1fr);gap:14px;margin:20px 0}}
+.cards>div,section{{background:#111A2A;border:1px solid rgba(255,255,255,.07);border-radius:16px;padding:18px}}
+.cards span{{display:block;color:#94A3B8;font-size:14px}} .cards b{{display:block;color:#5EEAD4;font-size:27px;margin-top:8px}}
+.cards small{{color:#94A3B8}} .charts{{display:grid;grid-template-columns:1fr 1fr;gap:15px}}
+section{{overflow:hidden}} h3{{margin:0 0 8px;font-size:17px}}
+@media(max-width:900px){{.cards,.charts{{grid-template-columns:1fr}}}}
+</style></head>
+<body><div class="wrap">
+<h1>📊 داشبورد نشاط المحصلين</h1>
+<div class="sub">مصدر البيانات: {source_name} · تم الإنشاء {generated}</div>
+{cards}
+<div class="charts">{chart_html}</div>
+</div></body></html>"""
+
+
+# ==========================================================
+# تصدير Excel
+# ==========================================================
+def dataframe_to_excel(df, sheet_name="النتائج"):
+    buffer = io.BytesIO()
+    with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
+        df.to_excel(writer, index=False, sheet_name=sheet_name)
+    return buffer.getvalue()
+
+
+def pending_to_excel(filtered_df):
+    """ملف الوعود القائمة + Pivot Summary في شيت منفصل."""
+    buffer = io.BytesIO()
+    pivot = pd.pivot_table(
+        filtered_df,
+        index=["Salesperson", "Account Number"],
+        values="Net Amount",
+        aggfunc="sum",
+        fill_value=0,
+    ).reset_index()
+
+    with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
+        filtered_df.to_excel(writer, index=False, sheet_name="الوعود القائمة")
+        pivot.to_excel(writer, index=False, sheet_name="Pivot Table")
+
+        from openpyxl.styles import Font, PatternFill, Alignment
+        from openpyxl.utils import get_column_letter
+
+        for ws in writer.book.worksheets:
+            for cell in ws[1]:
+                cell.font = Font(bold=True, color="FFFFFF")
+                cell.fill = PatternFill("solid", fgColor="17243A")
+                cell.alignment = Alignment(horizontal="center")
+            for col in range(1, ws.max_column + 1):
+                letter = get_column_letter(col)
+                max_len = max(
+                    len(str(ws.cell(row=r, column=col).value or ""))
+                    for r in range(1, min(ws.max_row, 200) + 1)
+                )
+                ws.column_dimensions[letter].width = min(max(max_len + 2, 12), 35)
+            ws.freeze_panes = "A2"
+            ws.auto_filter.ref = ws.dimensions
+
+    return buffer.getvalue()
+
+
+# ==========================================================
+# Page: Classification
+# ==========================================================
+def page_classification():
+    page_header(
+        "CALL QUALITY CLASSIFIER",
+        "🎯 تصنيف المكالمات",
+        "ارفع الملف وسيتم تصنيف الإفادات: 1 = ناجحة، 0 = غير ناجحة، مع حساب الوقت المهدر.",
+    )
+
+    with st.expander("⚙️ إعدادات البريك", expanded=False):
+        c1, c2 = st.columns(2)
+        break_start = c1.time_input("بداية البريك", value=dt_time(13, 0))
+        break_end = c2.time_input("نهاية البريك", value=dt_time(13, 30))
+
+    uploaded = st.file_uploader(
+        "ارفع ملف البيانات (CSV / Excel)",
+        type=["csv", "xlsx", "xls"],
+        key="classification_upload",
+    )
+
+    if uploaded is not None:
+        st.session_state["raw_file_bytes"] = uploaded.getvalue()
+        st.session_state["raw_file_name"] = uploaded.name
+        st.session_state["raw_file_size"] = uploaded.size
+
+    if "raw_file_bytes" not in st.session_state:
+        st.markdown('<div class="card">📂 ارفع ملفًا للبدء.</div>', unsafe_allow_html=True)
+        return
+
+    name = st.session_state["raw_file_name"]
+    try:
+        df = read_bytes(st.session_state["raw_file_bytes"], name)
+    except Exception as e:
+        st.error(f"خطأ في قراءة الملف: {e}")
+        return
+
+    # إزالة أول صف بعد العناوين
+    if len(df):
+        df = df.iloc[1:].reset_index(drop=True)
+
+    if ORIGINAL_TEXT_COL in df.columns:
+        df = df.rename(columns={ORIGINAL_TEXT_COL: MODEL_TEXT_COL})
+
+    if MODEL_TEXT_COL not in df.columns:
+        st.error(f"الملف يجب أن يحتوي على '{ORIGINAL_TEXT_COL}' أو '{MODEL_TEXT_COL}'.")
+        return
+
+    with st.expander("👀 معاينة البيانات", expanded=False):
+        st.dataframe(df.head(10), use_container_width=True)
+
+    token = f"{name}_{st.session_state['raw_file_size']}"
+
+    if st.button("🚀 ابدأ التصنيف", type="primary", use_container_width=True):
+        tokenizer, model, device = load_model()
+        preds, confs = predict_batch(df[MODEL_TEXT_COL].tolist(), tokenizer, model, device)
+
+        result = df.copy()
+        result[CLASSIFICATION_COL] = preds
+        result["نسبة_الثقة"] = [round(x * 100, 1) for x in confs]
+
+        sales_col = find_column(result, SALES_PERSON_CANDIDATES)
+        time_col = find_column(result, CREATED_ON_CANDIDATES)
+
+        if sales_col and time_col:
+            result = calculate_wasted_time(
+                result, sales_col, time_col, break_start, break_end
+            )
+        else:
+            st.warning("لم أجد عمود المحصل أو التاريخ/الوقت؛ لن يتم حساب الوقت المهدر.")
+
+        result = result.rename(columns={MODEL_TEXT_COL: ORIGINAL_TEXT_COL})
+        st.session_state["last_result_df"] = result
+        st.session_state["last_sales_col"] = sales_col
+        st.session_state["last_time_col"] = time_col
+        st.session_state["last_file_token"] = token
+
+    if st.session_state.get("last_file_token") != token:
+        return
+
+    result = st.session_state["last_result_df"]
+    st.success("تم التصنيف وحساب الوقت المهدر بنجاح ✅")
+    st.dataframe(result, use_container_width=True)
+
+    c1, c2 = st.columns(2)
+    with c1:
+        st.download_button(
+            "⬇️ تحميل نتائج التصنيف Excel",
+            dataframe_to_excel(result, "النتائج"),
+            "نتائج_التصنيف.xlsx",
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            use_container_width=True,
+        )
+    with c2:
+        st.download_button(
+            "⬇️ تحميل النتائج CSV",
+            result.to_csv(index=False).encode("utf-8-sig"),
+            "نتائج_التصنيف.csv",
+            "text/csv",
+            use_container_width=True,
+        )
+
+
+# ==========================================================
+# Page: Dashboard
+# ==========================================================
 def page_dashboard():
     page_header(
         "ACTIVITY DASHBOARD",
-        "📊 داشبورد النشاط",
-        "ارفع الملف بعد ما يتصنّف، والداشبورد هيتبني تلقائي بكل تفاصيله",
-        show_wave=True,
+        "📊 داشبورد نشاط المحصلين",
+        "داشبورد تفاعلي بالفلاتر والكروت والشارتس الخاصة بالنشاط والنجاح والوقت المهدر.",
     )
 
-    dash_file = st.file_uploader(
-        "ارفع الملف المصنّف (اللي فيه عمود 'التصنيف')", type=["csv", "xlsx", "xls"], key="dash_upload"
+    uploaded = st.file_uploader(
+        "ارفع الملف المصنّف",
+        type=["csv", "xlsx", "xls"],
+        key="dash_upload",
     )
+    if uploaded is not None:
+        st.session_state["dash_raw_bytes"] = uploaded.getvalue()
+        st.session_state["dash_raw_name"] = uploaded.name
 
-    if dash_file is not None:
-        st.session_state["dash_raw_bytes"] = dash_file.getvalue()
-        st.session_state["dash_raw_name"] = dash_file.name
-
-    has_cached = "dash_raw_bytes" in st.session_state
-
-    if not has_cached:
-        st.markdown(
-            '<div class="placeholder-card">📂 ارفع ملف مصنّف عشان يظهر الداشبورد هنا</div>',
-            unsafe_allow_html=True,
-        )
+    if "dash_raw_bytes" not in st.session_state:
+        st.markdown('<div class="card">📂 ارفع ملف التصنيف لعرض الداشبورد.</div>', unsafe_allow_html=True)
         return
-
-    file_bytes = st.session_state["dash_raw_bytes"]
-    file_name = st.session_state["dash_raw_name"]
 
     try:
-        if file_name.endswith(".csv"):
-            df = pd.read_csv(io.BytesIO(file_bytes))
-        else:
-            df = pd.read_excel(io.BytesIO(file_bytes))
+        df = read_bytes(
+            st.session_state["dash_raw_bytes"],
+            st.session_state["dash_raw_name"],
+        )
     except Exception as e:
-        st.error(f"مش قادر أقرأ الملف: {e}")
+        st.error(f"خطأ في قراءة الملف: {e}")
         return
 
-    class_col_guess = CLASSIFICATION_COL if CLASSIFICATION_COL in df.columns else None
-    sales_col_guess = find_column(df, SALES_PERSON_CANDIDATES)
-    time_col_guess = find_column(df, CREATED_ON_CANDIDATES)
+    class_col = CLASSIFICATION_COL if CLASSIFICATION_COL in df.columns else None
+    sales_col = find_column(df, SALES_PERSON_CANDIDATES)
+    time_col = find_column(df, CREATED_ON_CANDIDATES)
+    substate_col = find_column(df, SUB_STATE_CANDIDATES)
 
-    with st.expander("⚙️ تأكيد الأعمدة", expanded=(class_col_guess is None or sales_col_guess is None)):
-        cols = ["— بدون —"] + list(df.columns.astype(str))
-        class_col_sel = st.selectbox(
-            "عمود التصنيف (1/0)", cols, index=cols.index(class_col_guess) if class_col_guess in cols else 0
+    if not class_col:
+        st.warning("لم أجد عمود التصنيف. اختره يدويًا.")
+    cols = ["— بدون —"] + list(df.columns.astype(str))
+
+    with st.expander("⚙️ تأكيد الأعمدة", expanded=not all([class_col, sales_col, time_col])):
+        c1, c2, c3, c4 = st.columns(4)
+        class_sel = c1.selectbox(
+            "التصنيف (1/0)", cols,
+            index=cols.index(class_col) if class_col in cols else 0,
         )
-        sales_col_sel = st.selectbox(
-            "عمود المحصّل", cols, index=cols.index(sales_col_guess) if sales_col_guess in cols else 0
+        sales_sel = c2.selectbox(
+            "المحصل", cols,
+            index=cols.index(sales_col) if sales_col in cols else 0,
         )
-        time_col_sel = st.selectbox(
-            "عمود التاريخ/الوقت", cols, index=cols.index(time_col_guess) if time_col_guess in cols else 0
+        time_sel = c3.selectbox(
+            "التاريخ والوقت", cols,
+            index=cols.index(time_col) if time_col in cols else 0,
+        )
+        sub_sel = c4.selectbox(
+            "Sub State", cols,
+            index=cols.index(substate_col) if substate_col in cols else 0,
         )
 
-    class_col = None if class_col_sel == "— بدون —" else class_col_sel
-    sales_col = None if sales_col_sel == "— بدون —" else sales_col_sel
-    time_col = None if time_col_sel == "— بدون —" else time_col_sel
+    class_col = None if class_sel == "— بدون —" else class_sel
+    sales_col = None if sales_sel == "— بدون —" else sales_sel
+    time_col = None if time_sel == "— بدون —" else time_sel
+    substate_col = None if sub_sel == "— بدون —" else sub_sel
 
-    st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
-    render_full_dashboard(df, class_col=class_col, sales_col=sales_col, time_col=time_col)
+    work = prepare_dashboard_df(df, sales_col, time_col, substate_col, class_col)
 
-    st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
+    # أسماء موحدة للحسابات
+    if substate_col:
+        work["Sub State"] = work[substate_col]
+    if sales_col:
+        work["_sales"] = work[sales_col]
+    if time_col:
+        work["_datetime"] = pd.to_datetime(work[time_col], errors="coerce")
+    if class_col:
+        work["_class"] = pd.to_numeric(work[class_col], errors="coerce")
 
-    # ---- تحميل الداشبورد نفسه كصفحة ويب مستقلة (HTML تفاعلية بنفس الشكل) ----
-    dashboard_html = build_dashboard_html(
-        df, class_col=class_col, sales_col=sales_col, time_col=time_col, source_name=file_name
+    filtered = render_dashboard_filters(
+        work, sales_col, substate_col, time_col, class_col
     )
+
+    st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
+    render_dashboard_metrics(filtered, sales_col, class_col)
+
+    st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
+    render_activity_charts(
+        filtered, sales_col, substate_col, time_col, class_col
+    )
+
+    st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
     st.download_button(
-        "🌐 تحميل الداشبورد كصفحة ويب (HTML)",
-        data=dashboard_html.encode("utf-8"),
-        file_name="داشبورد_النشاط.html",
-        mime="text/html",
+        "🌐 تحميل Snapshot للداشبورد HTML",
+        build_dashboard_html(
+            filtered.assign(
+                _sales=filtered[sales_col] if sales_col else "",
+                _datetime=pd.to_datetime(filtered[time_col], errors="coerce") if time_col else pd.NaT,
+            ),
+            st.session_state["dash_raw_name"],
+        ).encode("utf-8"),
+        "داشبورد_النشاط.html",
+        "text/html",
         use_container_width=True,
-        key="dash_html_download",
         type="primary",
     )
-    st.caption("الملف ده صفحة ويب مستقلة فيها نفس الكروت والشارتس بتفاعليتها — تقدر تفتحها في أي متصفح أو تبعتها لحد تاني من غير ما يحتاج يشغّل التطبيق.")
 
-    with st.expander("⬇️ تحميل البيانات الخام بدل الداشبورد", expanded=False):
-        if file_name.endswith(".csv"):
-            output = df.to_csv(index=False).encode("utf-8-sig")
-            out_name = "بيانات_الداشبورد.csv"
-            mime = "text/csv"
-        else:
-            buffer = io.BytesIO()
-            with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
-                df.to_excel(writer, index=False, sheet_name="البيانات")
-            output = buffer.getvalue()
-            out_name = "بيانات_الداشبورد.xlsx"
-            mime = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 
+# ==========================================================
+# Page: Pending Promises
+# ==========================================================
+def page_pending_promises():
+    page_header(
+        "PENDING PROMISES",
+        "📗 الوعود القائمة",
+        "ارفع ملف المحفظة، وسيتم استخراج الوعود القائمة لليوم الحالي وتجهيز Excel + Pivot Summary.",
+    )
+
+    uploaded = st.file_uploader(
+        "ارفع ملف المحفظة (Excel / CSV)",
+        type=["xlsx", "xls", "csv"],
+        key="pending_upload",
+    )
+    if uploaded is None:
+        st.markdown('<div class="card">📂 ارفع ملف المحفظة للبدء.</div>', unsafe_allow_html=True)
+        return
+
+    try:
+        wallet = read_uploaded(uploaded)
+    except Exception as e:
+        st.error(f"خطأ في قراءة ملف المحفظة: {e}")
+        return
+
+    salesperson_col = find_column(wallet, ["Salesperson", "Sales Person", "salesperson"])
+    substate_col = find_column(wallet, SUB_STATE_CANDIDATES)
+    due_col = find_column(wallet, FOLLOW_UP_CANDIDATES)
+    account_col = find_column(wallet, ACCOUNT_CANDIDATES)
+    amount_col = find_column(wallet, NET_AMOUNT_CANDIDATES)
+
+    missing = []
+    if not salesperson_col: missing.append("Salesperson")
+    if not substate_col: missing.append("Sub State")
+    if not due_col: missing.append("Follow up Due Date")
+    if not account_col: missing.append("Account Number")
+    if not amount_col: missing.append("Net Amount")
+
+    if missing:
+        st.error("الأعمدة التالية غير موجودة: " + "، ".join(missing))
+        st.info("الأعمدة الموجودة: " + "، ".join(map(str, wallet.columns)))
+        return
+
+    # توحيد الأسماء المطلوبة
+    work = wallet.copy()
+    work["Salesperson"] = work[salesperson_col].fillna("").astype(str).str.strip()
+    work["Sub State"] = work[substate_col].fillna("").astype(str).str.strip()
+    work["Follow up Due Date"] = pd.to_datetime(work[due_col], errors="coerce")
+    work["Account Number"] = work[account_col]
+    work["Net Amount"] = pd.to_numeric(
+        work[amount_col].astype(str).str.replace(",", "", regex=False),
+        errors="coerce"
+    ).fillna(0)
+
+    # 1) استبعاد المحصلين المحددين
+    excluded_norm = {x.strip().lower() for x in EXCLUDED_SALESPERSONS}
+    mask_sales = ~work["Salesperson"].str.lower().isin(excluded_norm)
+
+    # 2) واعد بالسداد فقط
+    mask_promise = work["Sub State"].str.strip().str.lower() == "واعد بالسداد"
+
+    # 3) تاريخ اليوم
+    today = pd.Timestamp.today().normalize()
+    mask_today = work["Follow up Due Date"].dt.normalize() == today
+
+    result = work[mask_sales & mask_promise & mask_today].copy()
+
+    # الاحتفاظ بكل أعمدة المحفظة، مع ضمان الأعمدة المطلوبة في أول الملف
+    priority = ["Salesperson", "Account Number", "Net Amount", "Sub State", "Follow up Due Date"]
+    others = [c for c in result.columns if c not in priority]
+    result = result[priority + others]
+
+    st.markdown("### 📌 نتيجة الوعود القائمة")
+    c1, c2, c3 = st.columns(3)
+    c1.metric("عدد الوعود", f"{len(result):,}")
+    c2.metric("عدد المحصلين", f"{result['Salesperson'].nunique():,}")
+    c3.metric("إجمالي Net Amount", f"{result['Net Amount'].sum():,.2f}")
+
+    if len(result):
+        st.dataframe(result, use_container_width=True, hide_index=True)
+
+        excel_bytes = pending_to_excel(result)
         st.download_button(
-            "⬇️ تحميل بيانات الداشبورد",
-            data=output, file_name=out_name, mime=mime, use_container_width=True, key="dash_download",
+            "⬇️ تحميل الوعود القائمة + Pivot Table",
+            excel_bytes,
+            "الوعود_القائمة.xlsx",
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            use_container_width=True,
+            type="primary",
         )
 
+        pivot_preview = pd.pivot_table(
+            result,
+            index=["Salesperson", "Account Number"],
+            values="Net Amount",
+            aggfunc="sum",
+            fill_value=0,
+        ).reset_index()
+
+        st.markdown("### 📊 Pivot Summary")
+        st.dataframe(pivot_preview, use_container_width=True, hide_index=True)
+    else:
+        st.warning(f"لا توجد وعود قائمة مطابقة لشروط اليوم ({today.date()}).")
+
 
 # ==========================================================
-# التنقل (Sidebar Navigation)
+# Placeholders
 # ==========================================================
+def page_placeholder(eyebrow, title, subtitle, icon):
+    page_header(eyebrow, f"{icon} {title}", subtitle)
+    st.markdown(
+        f'<div class="card" style="text-align:center;padding:3rem;">'
+        f'{icon}<br><br>التويب ده جاهز للمنطق القادم.</div>',
+        unsafe_allow_html=True,
+    )
 
+
+# ==========================================================
+# Navigation
+# ==========================================================
 PAGES = {
     "🎯 التصنيف": page_classification,
-    "📗 الوعود القائمة": lambda: page_placeholder(
-        "PENDING", "الوعود القائمة", "المكالمات اللي فيها وعد سداد لسه قائم", "📗"
-    ),
+    "📗 الوعود القائمة": page_pending_promises,
     "📕 الوعود المكسورة": lambda: page_placeholder(
-        "BROKEN", "الوعود المكسورة", "المكالمات اللي فيها وعد سداد اتكسر", "📕"
+        "BROKEN", "الوعود المكسورة", "الوعود التي لم يتم الالتزام بها.", "📕"
     ),
     "⚠️ الإهمال": lambda: page_placeholder(
-        "NEGLECT", "الإهمال", "حالات الإهمال في المتابعة", "⚠️"
+        "NEGLECT", "الإهمال", "حالات الإهمال في المتابعة.", "⚠️"
     ),
     "🧾 أخطاء الحالات": lambda: page_placeholder(
-        "CASE ERRORS", "أخطاء الحالات", "الحالات اللي فيها أخطاء في التسجيل أو المتابعة", "🧾"
+        "CASE ERRORS", "أخطاء الحالات", "الحالات التي تحتاج مراجعة.", "🧾"
     ),
     "📊 الداشبورد": page_dashboard,
 }
@@ -1410,12 +1073,16 @@ with st.sidebar:
     st.markdown(
         """
         <div class="sidebar-brand">
-            <div class="subtitle">7OUDA MODEL</div>
-            <div class="title">🎙️ لوحة تحليل المكالمات</div>
+            <div class="mini">7OUDA MODEL</div>
+            <div class="big">🎙️ لوحة تحليل المكالمات</div>
         </div>
         """,
         unsafe_allow_html=True,
     )
-    selected_page = st.radio("التنقل", list(PAGES.keys()), label_visibility="collapsed")
+    selected_page = st.radio(
+        "التنقل",
+        list(PAGES.keys()),
+        label_visibility="collapsed",
+    )
 
 PAGES[selected_page]()

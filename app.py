@@ -203,6 +203,49 @@ section[data-testid="stSidebar"] .stRadio input:checked + div {
 }
 [data-testid="stFileUploader"] section { background: transparent; }
 
+/* نص التعليمات جوه صندوق الرفع (اسحب الملف هنا / الحد الأقصى...) كان بلون باهت جدًا فوق الخلفية الغامقة */
+[data-testid="stFileUploaderDropzoneInstructions"] div,
+[data-testid="stFileUploaderDropzoneInstructions"] span,
+[data-testid="stFileUploaderDropzoneInstructions"] small,
+[data-testid="stFileUploader"] small,
+[data-testid="stFileUploader"] p {
+    color: var(--text) !important;
+    opacity: 1 !important;
+}
+[data-testid="stFileUploaderDropzoneInstructions"] svg {
+    fill: var(--text-dim) !important;
+}
+/* زرار Browse files */
+[data-testid="stFileUploader"] button,
+[data-testid="stFileUploaderDropzone"] button {
+    background: var(--surface-2) !important;
+    color: var(--text) !important;
+    border: 1px solid rgba(255,255,255,0.18) !important;
+    font-weight: 700 !important;
+}
+[data-testid="stFileUploader"] button:hover {
+    border-color: var(--accent) !important;
+    color: var(--accent) !important;
+}
+/* اسم الملف بعد الرفع + حجمه + زرار الحذف */
+[data-testid="stFileUploaderFile"] {
+    background: var(--surface-2) !important;
+    border-radius: 10px !important;
+}
+[data-testid="stFileUploaderFile"] div, [data-testid="stFileUploaderFile"] span {
+    color: var(--text) !important;
+}
+[data-testid="stFileUploaderFileName"] { color: var(--text) !important; }
+[data-testid="stFileUploaderFileErrorMessage"] { color: var(--danger) !important; }
+
+/* عناوين كل ودجت (label) — كانت أحيانًا بلون باهت جدًا */
+[data-testid="stWidgetLabel"] p,
+[data-testid="stWidgetLabel"] label,
+[data-testid="stWidgetLabel"] span {
+    color: var(--text) !important;
+    opacity: 1 !important;
+}
+
 /* ===== الأزرار ===== */
 .stButton > button, .stDownloadButton > button {
     background: linear-gradient(90deg, var(--accent), #3FD9C7);

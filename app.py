@@ -121,16 +121,13 @@ div[data-testid="stDecoration"] {
     background: transparent !important;
     display: none !important;
 }
-/* ستاتوس بار / Deploy button */
 [data-testid="stStatusWidget"] {
     background: var(--surface) !important;
     color: var(--text) !important;
 }
-/* أي نص في التوب بار */
 .stDeployButton, .stAppDeployButton {
     color: var(--text-dim) !important;
 }
-/* خلفية الـ app بالكامل */
 .stApp > header {
     background-color: #0B111C !important;
 }
@@ -877,353 +874,6 @@ def render_comparison_matrix(df, class_col, sales_col):
         chart_card("🧭 خريطة الأداء: نسبة النجاح مقابل الوقت المهدر", _scatter)
 
 
-# ==========================================================
-# تحليل سلوك المحصّلين (تعميق)
-# ==========================================================
-
-def _build_behavior_table(df, class_col, sales_col, time_col):
-    """جدول سلوك شامل لكل محصّل: حجم، نجاح، وقت مهدر، إيقاع، ثبات."""
-    has_class = class_col and class_col in df.columns
-    has_wasted = WASTED_TIME_COL in df.columns
-    has_time = time_col and time_col in df.columns
-
-    rows = []
-    for agent, g in df.groupby(sales_col):
-        n = len(g)
-        row = {"المحصّل": agent, "عدد المكالمات": n}
-
-        if has_class:
-            succ = int((g[class_col] == 1).sum())
-            row["ناجحة"] = succ
-            row["غير ناجحة"] = n - succ
-            row["نسبة النجاح %"] = round(succ / n * 100, 1) if n else 0
-        else:
-            row["ناجحة"] = None
-            row["غير ناجحة"] = None
-            row["نسبة النجاح %"] = None
-
-        if has_wasted:
-            row["إجمالي الوقت المهدر"] = round(g[WASTED_TIME_COL].sum(), 1)
-            row["متوسط الفجوة (د)"] = round(g[WASTED_TIME_COL].mean(), 1)
-            row["وسيط الفجوة (د)"] = round(g[WASTED_TIME_COL].median(), 1)
-            row["انحراف الفجوة"] = round(g[WASTED_TIME_COL].std(), 1) if n > 1 else 0
-            # نسبة الفجوات الطويلة (>10 د)
-            long_gaps = (g[WASTED_TIME_COL] > 10).sum()
-            row["% فجوات طويلة"] = round(long_gaps / n * 100, 1) if n else 0
-        else:
-            row["إجمالي الوقت المهدر"] = None
-            row["متوسط الفجوة (د)"] = None
-            row["وسيط الفجوة (د)"] = None
-            row["انحراف الفجوة"] = None
-            row["% فجوات طويلة"] = None
-
-        if has_time:
-            t = pd.to_datetime(g[time_col], errors="coerce").dropna()
-            if len(t) >= 2:
-                span_h = (t.max() - t.min()).total_seconds() / 3600
-                row["مدة النشاط (س)"] = round(span_h, 1)
-                row["مكالمات/ساعة"] = round(len(t) / span_h, 1) if span_h > 0 else None
-            else:
-                row["مدة النشاط (س)"] = None
-                row["مكالمات/ساعة"] = None
-        else:
-            row["مدة النشاط (س)"] = None
-            row["مكالمات/ساعة"] = None
-
-        # مؤشر كفاءة مبسّط: نسبة النجاح × حجم نسبي − عقوبة الوقت المهدر
-        # نطبّعه لاحقًا على كل الجدول
-        rows.append(row)
-
-    beh = pd.DataFrame(rows)
-    if beh.empty:
-        return beh
-
-    # مؤشر الكفاءة (0–100): مزيج من نسبة النجاح + السرعة − الفجوات الطويلة
-    if has_class and "نسبة النجاح %" in beh.columns:
-        sr = beh["نسبة النجاح %"].fillna(0)
-        vol = beh["عدد المكالمات"]
-        vol_norm = (vol / vol.max() * 100) if vol.max() else 0
-        long_pen = beh["% فجوات طويلة"].fillna(0) if has_wasted else 0
-        pace = beh["مكالمات/ساعة"].fillna(0)
-        pace_norm = (pace / pace.max() * 100) if pace.max() and pace.max() > 0 else 0
-        beh["مؤشر الكفاءة"] = (
-            sr * 0.45 + vol_norm * 0.20 + pace_norm * 0.20 - long_pen * 0.15
-        ).clip(0, 100).round(1)
-    else:
-        beh["مؤشر الكفاءة"] = None
-
-    return beh.sort_values("مؤشر الكفاءة", ascending=False, na_position="last").reset_index(drop=True)
-
-
-def render_behavior_section(df, class_col, sales_col, time_col, sub_col=None):
-    """قسم تعميق تحليل سلوك المحصّلين — يُستدعى من الداشبورد."""
-    if not sales_col or sales_col not in df.columns or df.empty:
-        st.info("محتاجين عمود المحصّل وبيانات عشان تحليل السلوك.")
-        return
-
-    st.markdown("### 🧠 تعميق تحليل سلوك المحصّلين")
-    st.caption(
-        "مؤشر الكفاءة · إيقاع المكالمات · نسبة النجاح حسب الساعة · الفجوات الطويلة · سلاسل النجاح/الفشل"
-    )
-
-    beh = _build_behavior_table(df, class_col, sales_col, time_col)
-    has_class = class_col and class_col in df.columns
-    has_wasted = WASTED_TIME_COL in df.columns
-    has_time = time_col and time_col in df.columns
-
-    # ---- كروت سلوك سريعة ----
-    top_eff = beh.iloc[0] if len(beh) and beh["مؤشر الكفاءة"].notna().any() else None
-    slowest = None
-    if has_wasted and len(beh):
-        slowest = beh.sort_values("متوسط الفجوة (د)", ascending=False).iloc[0]
-    steadiest = None
-    if has_wasted and len(beh) and beh["انحراف الفجوة"].notna().any():
-        steadiest = beh.sort_values("انحراف الفجوة", ascending=True).iloc[0]
-
-    h1, h2, h3 = st.columns(3)
-    with h1:
-        with st.container(border=True):
-            st.markdown('<div class="highlight-label">🏆 أعلى كفاءة</div>', unsafe_allow_html=True)
-            if top_eff is not None:
-                st.markdown(f'<div class="highlight-value">{top_eff["المحصّل"]}</div>', unsafe_allow_html=True)
-                st.markdown(
-                    f'<div class="highlight-sub">مؤشر {top_eff["مؤشر الكفاءة"]} · '
-                    f'{top_eff.get("نسبة النجاح %", "—")}% نجاح</div>',
-                    unsafe_allow_html=True,
-                )
-            else:
-                st.markdown('<div class="highlight-sub">—</div>', unsafe_allow_html=True)
-    with h2:
-        with st.container(border=True):
-            st.markdown('<div class="highlight-label">🐌 أبطأ إيقاع (متوسط فجوة)</div>', unsafe_allow_html=True)
-            if slowest is not None:
-                st.markdown(f'<div class="highlight-value">{slowest["المحصّل"]}</div>', unsafe_allow_html=True)
-                st.markdown(
-                    f'<div class="highlight-sub">{slowest["متوسط الفجوة (د)"]} د/مكالمة</div>',
-                    unsafe_allow_html=True,
-                )
-            else:
-                st.markdown('<div class="highlight-sub">—</div>', unsafe_allow_html=True)
-    with h3:
-        with st.container(border=True):
-            st.markdown('<div class="highlight-label">🎯 أكثر ثباتًا (أقل تذبذب فجوات)</div>', unsafe_allow_html=True)
-            if steadiest is not None:
-                st.markdown(f'<div class="highlight-value">{steadiest["المحصّل"]}</div>', unsafe_allow_html=True)
-                st.markdown(
-                    f'<div class="highlight-sub">انحراف {steadiest["انحراف الفجوة"]}</div>',
-                    unsafe_allow_html=True,
-                )
-            else:
-                st.markdown('<div class="highlight-sub">—</div>', unsafe_allow_html=True)
-
-    st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
-
-    # ---- جدول السلوك ----
-    def _beh_table():
-        show_cols = [c for c in beh.columns if beh[c].notna().any()]
-        st.dataframe(beh[show_cols], use_container_width=True, hide_index=True)
-        st.caption(
-            "مؤشر الكفاءة = 45% نجاح + 20% حجم + 20% سرعة (مكالمات/ساعة) − 15% عقوبة الفجوات الطويلة (>10 د). "
-            "كل ما المؤشر أعلى كل ما السلوك أفضل."
-        )
-
-    chart_card(f"📋 بطاقة سلوك كل محصّل ({len(beh)})", _beh_table)
-
-    # ---- شارتس سلوك ----
-    col1, col2 = st.columns(2)
-
-    with col1:
-        def _eff_bar():
-            if "مؤشر الكفاءة" not in beh.columns or beh["مؤشر الكفاءة"].isna().all():
-                st.info("محتاجين تصنيف عشان نحسب مؤشر الكفاءة")
-                return
-            plot_df = beh.dropna(subset=["مؤشر الكفاءة"]).sort_values("مؤشر الكفاءة")
-            fig = px.bar(
-                plot_df, x="مؤشر الكفاءة", y="المحصّل", orientation="h",
-                color="مؤشر الكفاءة",
-                color_continuous_scale=[COLOR_FAIL, COLOR_WARN, COLOR_SUCCESS],
-            )
-            fig.update_layout(**PLOTLY_LAYOUT, coloraxis_showscale=False,
-                              xaxis_title="مؤشر الكفاءة (0–100)", yaxis_title="",
-                              height=max(280, 28 * len(plot_df)))
-            fig.update_traces(marker_line_width=0)
-            st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG)
-
-        chart_card("🏅 ترتيب المحصّلين بمؤشر الكفاءة", _eff_bar)
-
-    with col2:
-        def _pace_scatter():
-            if not has_class or not has_wasted:
-                st.info("محتاجين تصنيف + وقت مهدر")
-                return
-            plot_df = beh.dropna(subset=["نسبة النجاح %", "متوسط الفجوة (د)"])
-            if plot_df.empty:
-                st.info("مفيش بيانات كافية")
-                return
-            fig = px.scatter(
-                plot_df, x="متوسط الفجوة (د)", y="نسبة النجاح %",
-                size="عدد المكالمات", text="المحصّل",
-                color="مؤشر الكفاءة",
-                color_continuous_scale=[COLOR_FAIL, COLOR_WARN, COLOR_SUCCESS],
-            )
-            fig.update_traces(textposition="top center", textfont_size=10,
-                              marker=dict(line=dict(color="#0E1420", width=1)))
-            fig.update_layout(**PLOTLY_LAYOUT, coloraxis_showscale=False,
-                              xaxis_title="متوسط الفجوة بين المكالمات (دقيقة)",
-                              yaxis_title="نسبة النجاح %")
-            # خطوط المتوسط
-            if len(plot_df) > 1:
-                fig.add_vline(x=plot_df["متوسط الفجوة (د)"].mean(), line_dash="dot",
-                              line_color="#8B96AC", opacity=0.5)
-                fig.add_hline(y=plot_df["نسبة النجاح %"].mean(), line_dash="dot",
-                              line_color="#8B96AC", opacity=0.5)
-            st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG)
-            st.caption("يسار أعلى = سريع وناجح · يمين أعلى = ناجح بس بطيء · يسار أسفل = سريع بس نجاح ضعيف")
-
-        chart_card("🧭 خريطة الإيقاع مقابل النجاح", _pace_scatter)
-
-    # ---- Heatmap: نسبة النجاح حسب الساعة ----
-    if has_class and has_time:
-        def _hour_heatmap():
-            tmp = df.copy()
-            tmp["_dt"] = pd.to_datetime(tmp[time_col], errors="coerce")
-            tmp = tmp.dropna(subset=["_dt"])
-            if tmp.empty:
-                st.info("مفيش تواريخ صالحة")
-                return
-            tmp["الساعة"] = tmp["_dt"].dt.hour
-            heat = (
-                tmp.groupby([sales_col, "الساعة"])[class_col]
-                .agg(["mean", "count"])
-                .reset_index()
-            )
-            heat["نسبة النجاح %"] = (heat["mean"] * 100).round(1)
-            # نعرض بس الساعات اللي فيها نشاط
-            pivot = heat.pivot(index=sales_col, columns="الساعة", values="نسبة النجاح %")
-            # ترتيب الساعات
-            pivot = pivot.reindex(sorted(pivot.columns), axis=1)
-            fig = px.imshow(
-                pivot,
-                color_continuous_scale=[COLOR_FAIL, COLOR_WARN, COLOR_SUCCESS],
-                aspect="auto",
-                labels=dict(x="ساعة اليوم", y="المحصّل", color="نجاح %"),
-            )
-            fig.update_layout(**PLOTLY_LAYOUT, height=max(320, 30 * len(pivot)))
-            st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG)
-            st.caption("كل خلية = نسبة نجاح المحصّل في الساعة دي. الأخضر أعلى · الأحمر أقل.")
-
-        chart_card("🔥 Heatmap — نسبة النجاح حسب الساعة × المحصّل", _hour_heatmap)
-
-    # ---- توزيع الفجوات + سلاسل ----
-    col3, col4 = st.columns(2)
-
-    with col3:
-        def _gap_box():
-            if not has_wasted:
-                st.info("محتاجين عمود الوقت المهدر")
-                return
-            # box plot للفجوات لكل محصّل
-            fig = px.box(
-                df, x=sales_col, y=WASTED_TIME_COL,
-                color_discrete_sequence=[COLOR_ACCENT],
-            )
-            fig.update_layout(**PLOTLY_LAYOUT, xaxis_title="", yaxis_title="الفجوة (دقيقة)")
-            fig.update_traces(marker_line_width=0)
-            st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG)
-            st.caption("الصندوق يوضح توزيع الفجوات: الوسيط، الربع، والقيم الشاذة (فجوات طويلة جدًا).")
-
-        chart_card("📦 توزيع فجوات المكالمات لكل محصّل", _gap_box)
-
-    with col4:
-        def _streaks():
-            if not has_class or not has_time:
-                st.info("محتاجين تصنيف + وقت عشان نحسب السلاسل")
-                return
-            tmp = df.copy()
-            tmp["_dt"] = pd.to_datetime(tmp[time_col], errors="coerce")
-            tmp = tmp.dropna(subset=["_dt"]).sort_values([sales_col, "_dt"])
-
-            def max_streak(series, val):
-                """أطول سلسلة متتالية بقيمة val."""
-                best = cur = 0
-                for v in series:
-                    if v == val:
-                        cur += 1
-                        best = max(best, cur)
-                    else:
-                        cur = 0
-                return best
-
-            streak_rows = []
-            for agent, g in tmp.groupby(sales_col):
-                seq = g[class_col].tolist()
-                streak_rows.append({
-                    "المحصّل": agent,
-                    "أطول سلسلة نجاح": max_streak(seq, 1),
-                    "أطول سلسلة فشل": max_streak(seq, 0),
-                })
-            s_df = pd.DataFrame(streak_rows)
-            if s_df.empty:
-                st.info("مفيش بيانات")
-                return
-            fig = px.bar(
-                s_df, x="المحصّل", y=["أطول سلسلة نجاح", "أطول سلسلة فشل"],
-                barmode="group",
-                color_discrete_sequence=[COLOR_SUCCESS, COLOR_FAIL],
-            )
-            fig.update_layout(**PLOTLY_LAYOUT, xaxis_title="", yaxis_title="طول السلسلة",
-                              legend_title_text="")
-            fig.update_traces(marker_line_width=0)
-            st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG)
-            st.caption("أطول سلسلة نجاح متتالية vs أطول سلسلة فشل — مؤشر على الاستقرار النفسي/الأسلوبي.")
-
-        chart_card("🔗 سلاسل النجاح والفشل المتتالية", _streaks)
-
-    # ---- نسبة لا يرد/مغلق من إجمالي مكالمات كل محصّل ----
-    if sub_col and sub_col in df.columns:
-        def _na_rate():
-            sub_str = df[sub_col].astype(str)
-            mask_na = sub_str.str.contains("لا يرد|لايرد|no answer", case=False, na=False)
-            mask_cl = sub_str.str.contains("مغلق|closed|غلق", case=False, na=False)
-            tmp = df.copy()
-            tmp["_na"] = mask_na.astype(int)
-            tmp["_cl"] = mask_cl.astype(int)
-            sizes = tmp.groupby(sales_col).size().rename("إجمالي")
-            sums = tmp.groupby(sales_col)[["_na", "_cl"]].sum()
-            agg = sums.join(sizes).reset_index()
-            agg = agg.rename(columns={"_na": "لا_يرد", "_cl": "مغلق"})
-            agg["% لا يرد"] = (agg["لا_يرد"] / agg["إجمالي"] * 100).round(1)
-            agg["% مغلق"] = (agg["مغلق"] / agg["إجمالي"] * 100).round(1)
-            melt = agg.melt(
-                id_vars=[sales_col], value_vars=["% لا يرد", "% مغلق"],
-                var_name="النوع", value_name="النسبة %",
-            )
-            fig = px.bar(
-                melt, x=sales_col, y="النسبة %", color="النوع", barmode="group",
-                color_discrete_map={"% لا يرد": COLOR_WARN, "% مغلق": COLOR_FAIL},
-            )
-            fig.update_layout(**PLOTLY_LAYOUT, xaxis_title="", yaxis_title="% من مكالمات المحصّل",
-                              legend_title_text="")
-            fig.update_traces(marker_line_width=0)
-            st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG)
-
-        chart_card("📵 نسبة «لا يرد» و «مغلق» من إجمالي مكالمات كل محصّل", _na_rate)
-
-    # تحميل جدول السلوك
-    st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
-    buf = io.BytesIO()
-    with pd.ExcelWriter(buf, engine="openpyxl") as writer:
-        beh.to_excel(writer, index=False, sheet_name="سلوك_المحصلين")
-    st.download_button(
-        "⬇️ تحميل بطاقة سلوك المحصّلين (Excel)",
-        data=buf.getvalue(),
-        file_name="تحليل_سلوك_المحصلين.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        use_container_width=True,
-        key="beh_dl",
-    )
-
-
 def render_full_dashboard(df, class_col=None, sales_col=None, time_col=None):
     """النسخة الكاملة — تويب «الداشبورد» بس، منظّمة في تبويبات فرعية."""
     render_metric_cards(df, class_col, sales_col, time_col)
@@ -1715,7 +1365,6 @@ def page_pending_promises():
         st.error(f"مش قادر أقرأ الملف: {e}")
         return
 
-    # اكتشاف الأعمدة
     sales_col = find_column(df, SALESPERSON_CANDS)
     sub_col = find_column(df, SUBSTATE_CANDS)
     due_col = find_column(df, FOLLOWUP_CANDS)
@@ -1743,11 +1392,8 @@ def page_pending_promises():
         st.write(f"**Account Number:** `{account_col or '—'}`")
         st.write(f"**Net Amount:** `{amount_col or '—'}`")
 
-    # 1) فلترة Salesperson — استبعاد القائمة
     mask_sales = ~df[sales_col].astype(str).str.strip().isin(EXCLUDED_SALESPERSONS)
-    # 2) Sub State = واعد بالسداد
     mask_sub = df[sub_col].astype(str).str.strip() == "واعد بالسداد"
-    # 3) Follow up Due Date = تاريخ اليوم
     due_parsed = pd.to_datetime(df[due_col], errors="coerce")
     today = pd.Timestamp.now().normalize()
     mask_due = due_parsed.dt.normalize() == today
@@ -1768,7 +1414,6 @@ def page_pending_promises():
     st.success(f"تم استخراج {len(filtered)} وعد قائم ✅")
     st.dataframe(filtered, use_container_width=True)
 
-    # تحميل Excel للوعود القائمة
     buffer = io.BytesIO()
     with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
         filtered.to_excel(writer, index=False, sheet_name="الوعود_القائمة")
@@ -1781,7 +1426,6 @@ def page_pending_promises():
         type="primary",
     )
 
-    # Pivot: Salesperson + Account Number + Net Amount
     st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
     st.markdown("### 📊 Pivot Table — المحصّل × رقم الحساب × صافي المبلغ")
 
@@ -1830,6 +1474,334 @@ def page_placeholder(eyebrow, title, subtitle, icon):
 
 
 # ==========================================================
+# تحليل سلوك المحصّلين (تعميق)
+# ==========================================================
+
+def _build_behavior_table(df, class_col, sales_col, time_col):
+    has_class = class_col and class_col in df.columns
+    has_wasted = WASTED_TIME_COL in df.columns
+    has_time = time_col and time_col in df.columns
+
+    rows = []
+    for agent, g in df.groupby(sales_col):
+        n = len(g)
+        row = {"المحصّل": agent, "عدد المكالمات": n}
+
+        if has_class:
+            succ = int((g[class_col] == 1).sum())
+            row["ناجحة"] = succ
+            row["غير ناجحة"] = n - succ
+            row["نسبة النجاح %"] = round(succ / n * 100, 1) if n else 0
+        else:
+            row["ناجحة"] = None
+            row["غير ناجحة"] = None
+            row["نسبة النجاح %"] = None
+
+        if has_wasted:
+            row["إجمالي الوقت المهدر"] = round(g[WASTED_TIME_COL].sum(), 1)
+            row["متوسط الفجوة (د)"] = round(g[WASTED_TIME_COL].mean(), 1)
+            row["وسيط الفجوة (د)"] = round(g[WASTED_TIME_COL].median(), 1)
+            row["انحراف الفجوة"] = round(g[WASTED_TIME_COL].std(), 1) if n > 1 else 0
+            long_gaps = (g[WASTED_TIME_COL] > 10).sum()
+            row["% فجوات طويلة"] = round(long_gaps / n * 100, 1) if n else 0
+        else:
+            row["إجمالي الوقت المهدر"] = None
+            row["متوسط الفجوة (د)"] = None
+            row["وسيط الفجوة (د)"] = None
+            row["انحراف الفجوة"] = None
+            row["% فجوات طويلة"] = None
+
+        if has_time:
+            t = pd.to_datetime(g[time_col], errors="coerce").dropna()
+            if len(t) >= 2:
+                span_h = (t.max() - t.min()).total_seconds() / 3600
+                row["مدة النشاط (س)"] = round(span_h, 1)
+                row["مكالمات/ساعة"] = round(len(t) / span_h, 1) if span_h > 0 else None
+            else:
+                row["مدة النشاط (س)"] = None
+                row["مكالمات/ساعة"] = None
+        else:
+            row["مدة النشاط (س)"] = None
+            row["مكالمات/ساعة"] = None
+
+        rows.append(row)
+
+    beh = pd.DataFrame(rows)
+    if beh.empty:
+        return beh
+
+    if has_class and "نسبة النجاح %" in beh.columns:
+        sr = beh["نسبة النجاح %"].fillna(0)
+        vol = beh["عدد المكالمات"]
+        vol_norm = (vol / vol.max() * 100) if vol.max() else 0
+        long_pen = beh["% فجوات طويلة"].fillna(0) if has_wasted else 0
+        pace = beh["مكالمات/ساعة"].fillna(0)
+        pace_norm = (pace / pace.max() * 100) if pace.max() and pace.max() > 0 else 0
+        beh["مؤشر الكفاءة"] = (
+            sr * 0.45 + vol_norm * 0.20 + pace_norm * 0.20 - long_pen * 0.15
+        ).clip(0, 100).round(1)
+    else:
+        beh["مؤشر الكفاءة"] = None
+
+    return beh.sort_values("مؤشر الكفاءة", ascending=False, na_position="last").reset_index(drop=True)
+
+
+def render_behavior_section(df, class_col, sales_col, time_col, sub_col=None):
+    if not sales_col or sales_col not in df.columns or df.empty:
+        st.info("محتاجين عمود المحصّل وبيانات عشان تحليل السلوك.")
+        return
+
+    st.markdown("### 🧠 تعميق تحليل سلوك المحصّلين")
+    st.caption(
+        "مؤشر الكفاءة · إيقاع المكالمات · نسبة النجاح حسب الساعة · الفجوات الطويلة · سلاسل النجاح/الفشل"
+    )
+
+    beh = _build_behavior_table(df, class_col, sales_col, time_col)
+    has_class = class_col and class_col in df.columns
+    has_wasted = WASTED_TIME_COL in df.columns
+    has_time = time_col and time_col in df.columns
+
+    top_eff = beh.iloc[0] if len(beh) and beh["مؤشر الكفاءة"].notna().any() else None
+    slowest = None
+    if has_wasted and len(beh):
+        slowest = beh.sort_values("متوسط الفجوة (د)", ascending=False).iloc[0]
+    steadiest = None
+    if has_wasted and len(beh) and beh["انحراف الفجوة"].notna().any():
+        steadiest = beh.sort_values("انحراف الفجوة", ascending=True).iloc[0]
+
+    h1, h2, h3 = st.columns(3)
+    with h1:
+        with st.container(border=True):
+            st.markdown('<div class="highlight-label">🏆 أعلى كفاءة</div>', unsafe_allow_html=True)
+            if top_eff is not None:
+                st.markdown(f'<div class="highlight-value">{top_eff["المحصّل"]}</div>', unsafe_allow_html=True)
+                st.markdown(
+                    f'<div class="highlight-sub">مؤشر {top_eff["مؤشر الكفاءة"]} · '
+                    f'{top_eff.get("نسبة النجاح %", "—")}% نجاح</div>',
+                    unsafe_allow_html=True,
+                )
+            else:
+                st.markdown('<div class="highlight-sub">—</div>', unsafe_allow_html=True)
+    with h2:
+        with st.container(border=True):
+            st.markdown('<div class="highlight-label">🐌 أبطأ إيقاع (متوسط فجوة)</div>', unsafe_allow_html=True)
+            if slowest is not None:
+                st.markdown(f'<div class="highlight-value">{slowest["المحصّل"]}</div>', unsafe_allow_html=True)
+                st.markdown(
+                    f'<div class="highlight-sub">{slowest["متوسط الفجوة (د)"]} د/مكالمة</div>',
+                    unsafe_allow_html=True,
+                )
+            else:
+                st.markdown('<div class="highlight-sub">—</div>', unsafe_allow_html=True)
+    with h3:
+        with st.container(border=True):
+            st.markdown('<div class="highlight-label">🎯 أكثر ثباتًا (أقل تذبذب فجوات)</div>', unsafe_allow_html=True)
+            if steadiest is not None:
+                st.markdown(f'<div class="highlight-value">{steadiest["المحصّل"]}</div>', unsafe_allow_html=True)
+                st.markdown(
+                    f'<div class="highlight-sub">انحراف {steadiest["انحراف الفجوة"]}</div>',
+                    unsafe_allow_html=True,
+                )
+            else:
+                st.markdown('<div class="highlight-sub">—</div>', unsafe_allow_html=True)
+
+    st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
+
+    def _beh_table():
+        show_cols = [c for c in beh.columns if beh[c].notna().any()]
+        st.dataframe(beh[show_cols], use_container_width=True, hide_index=True)
+        st.caption(
+            "مؤشر الكفاءة = 45% نجاح + 20% حجم + 20% سرعة (مكالمات/ساعة) − 15% عقوبة الفجوات الطويلة (>10 د)."
+        )
+
+    chart_card(f"📋 بطاقة سلوك كل محصّل ({len(beh)})", _beh_table)
+
+    col1, col2 = st.columns(2)
+
+    with col1:
+        def _eff_bar():
+            if "مؤشر الكفاءة" not in beh.columns or beh["مؤشر الكفاءة"].isna().all():
+                st.info("محتاجين تصنيف عشان نحسب مؤشر الكفاءة")
+                return
+            plot_df = beh.dropna(subset=["مؤشر الكفاءة"]).sort_values("مؤشر الكفاءة")
+            fig = px.bar(
+                plot_df, x="مؤشر الكفاءة", y="المحصّل", orientation="h",
+                color="مؤشر الكفاءة",
+                color_continuous_scale=[COLOR_FAIL, COLOR_WARN, COLOR_SUCCESS],
+            )
+            fig.update_layout(**PLOTLY_LAYOUT, coloraxis_showscale=False,
+                              xaxis_title="مؤشر الكفاءة (0–100)", yaxis_title="",
+                              height=max(280, 28 * len(plot_df)))
+            fig.update_traces(marker_line_width=0)
+            st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG)
+
+        chart_card("🏅 ترتيب المحصّلين بمؤشر الكفاءة", _eff_bar)
+
+    with col2:
+        def _pace_scatter():
+            if not has_class or not has_wasted:
+                st.info("محتاجين تصنيف + وقت مهدر")
+                return
+            plot_df = beh.dropna(subset=["نسبة النجاح %", "متوسط الفجوة (د)"])
+            if plot_df.empty:
+                st.info("مفيش بيانات كافية")
+                return
+            fig = px.scatter(
+                plot_df, x="متوسط الفجوة (د)", y="نسبة النجاح %",
+                size="عدد المكالمات", text="المحصّل",
+                color="مؤشر الكفاءة",
+                color_continuous_scale=[COLOR_FAIL, COLOR_WARN, COLOR_SUCCESS],
+            )
+            fig.update_traces(textposition="top center", textfont_size=10,
+                              marker=dict(line=dict(color="#0E1420", width=1)))
+            fig.update_layout(**PLOTLY_LAYOUT, coloraxis_showscale=False,
+                              xaxis_title="متوسط الفجوة بين المكالمات (دقيقة)",
+                              yaxis_title="نسبة النجاح %")
+            if len(plot_df) > 1:
+                fig.add_vline(x=plot_df["متوسط الفجوة (د)"].mean(), line_dash="dot",
+                              line_color="#8B96AC", opacity=0.5)
+                fig.add_hline(y=plot_df["نسبة النجاح %"].mean(), line_dash="dot",
+                              line_color="#8B96AC", opacity=0.5)
+            st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG)
+            st.caption("يسار أعلى = سريع وناجح · يمين أعلى = ناجح بس بطيء · يسار أسفل = سريع بس نجاح ضعيف")
+
+        chart_card("🧭 خريطة الإيقاع مقابل النجاح", _pace_scatter)
+
+    if has_class and has_time:
+        def _hour_heatmap():
+            tmp = df.copy()
+            tmp["_dt"] = pd.to_datetime(tmp[time_col], errors="coerce")
+            tmp = tmp.dropna(subset=["_dt"])
+            if tmp.empty:
+                st.info("مفيش تواريخ صالحة")
+                return
+            tmp["الساعة"] = tmp["_dt"].dt.hour
+            heat = (
+                tmp.groupby([sales_col, "الساعة"])[class_col]
+                .agg(["mean", "count"])
+                .reset_index()
+            )
+            heat["نسبة النجاح %"] = (heat["mean"] * 100).round(1)
+            pivot = heat.pivot(index=sales_col, columns="الساعة", values="نسبة النجاح %")
+            pivot = pivot.reindex(sorted(pivot.columns), axis=1)
+            fig = px.imshow(
+                pivot,
+                color_continuous_scale=[COLOR_FAIL, COLOR_WARN, COLOR_SUCCESS],
+                aspect="auto",
+                labels=dict(x="ساعة اليوم", y="المحصّل", color="نجاح %"),
+            )
+            fig.update_layout(**PLOTLY_LAYOUT, height=max(320, 30 * len(pivot)))
+            st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG)
+            st.caption("كل خلية = نسبة نجاح المحصّل في الساعة دي. الأخضر أعلى · الأحمر أقل.")
+
+        chart_card("🔥 Heatmap — نسبة النجاح حسب الساعة × المحصّل", _hour_heatmap)
+
+    col3, col4 = st.columns(2)
+
+    with col3:
+        def _gap_box():
+            if not has_wasted:
+                st.info("محتاجين عمود الوقت المهدر")
+                return
+            fig = px.box(
+                df, x=sales_col, y=WASTED_TIME_COL,
+                color_discrete_sequence=[COLOR_ACCENT],
+            )
+            fig.update_layout(**PLOTLY_LAYOUT, xaxis_title="", yaxis_title="الفجوة (دقيقة)")
+            fig.update_traces(marker_line_width=0)
+            st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG)
+            st.caption("الصندوق يوضح توزيع الفجوات: الوسيط، الربع، والقيم الشاذة.")
+
+        chart_card("📦 توزيع فجوات المكالمات لكل محصّل", _gap_box)
+
+    with col4:
+        def _streaks():
+            if not has_class or not has_time:
+                st.info("محتاجين تصنيف + وقت عشان نحسب السلاسل")
+                return
+            tmp = df.copy()
+            tmp["_dt"] = pd.to_datetime(tmp[time_col], errors="coerce")
+            tmp = tmp.dropna(subset=["_dt"]).sort_values([sales_col, "_dt"])
+
+            def max_streak(series, val):
+                best = cur = 0
+                for v in series:
+                    if v == val:
+                        cur += 1
+                        best = max(best, cur)
+                    else:
+                        cur = 0
+                return best
+
+            streak_rows = []
+            for agent, g in tmp.groupby(sales_col):
+                seq = g[class_col].tolist()
+                streak_rows.append({
+                    "المحصّل": agent,
+                    "أطول سلسلة نجاح": max_streak(seq, 1),
+                    "أطول سلسلة فشل": max_streak(seq, 0),
+                })
+            s_df = pd.DataFrame(streak_rows)
+            if s_df.empty:
+                st.info("مفيش بيانات")
+                return
+            fig = px.bar(
+                s_df, x="المحصّل", y=["أطول سلسلة نجاح", "أطول سلسلة فشل"],
+                barmode="group",
+                color_discrete_sequence=[COLOR_SUCCESS, COLOR_FAIL],
+            )
+            fig.update_layout(**PLOTLY_LAYOUT, xaxis_title="", yaxis_title="طول السلسلة",
+                              legend_title_text="")
+            fig.update_traces(marker_line_width=0)
+            st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG)
+            st.caption("أطول سلسلة نجاح متتالية vs أطول سلسلة فشل.")
+
+        chart_card("🔗 سلاسل النجاح والفشل المتتالية", _streaks)
+
+    if sub_col and sub_col in df.columns:
+        def _na_rate():
+            sub_str = df[sub_col].astype(str)
+            mask_na = sub_str.str.contains("لا يرد|لايرد|no answer", case=False, na=False)
+            mask_cl = sub_str.str.contains("مغلق|closed|غلق", case=False, na=False)
+            tmp = df.copy()
+            tmp["_na"] = mask_na.astype(int)
+            tmp["_cl"] = mask_cl.astype(int)
+            sizes = tmp.groupby(sales_col).size().rename("إجمالي")
+            sums = tmp.groupby(sales_col)[["_na", "_cl"]].sum()
+            agg = sums.join(sizes).reset_index()
+            agg = agg.rename(columns={"_na": "لا_يرد", "_cl": "مغلق"})
+            agg["% لا يرد"] = (agg["لا_يرد"] / agg["إجمالي"] * 100).round(1)
+            agg["% مغلق"] = (agg["مغلق"] / agg["إجمالي"] * 100).round(1)
+            melt = agg.melt(
+                id_vars=[sales_col], value_vars=["% لا يرد", "% مغلق"],
+                var_name="النوع", value_name="النسبة %",
+            )
+            fig = px.bar(
+                melt, x=sales_col, y="النسبة %", color="النوع", barmode="group",
+                color_discrete_map={"% لا يرد": COLOR_WARN, "% مغلق": COLOR_FAIL},
+            )
+            fig.update_layout(**PLOTLY_LAYOUT, xaxis_title="", yaxis_title="% من مكالمات المحصّل",
+                              legend_title_text="")
+            fig.update_traces(marker_line_width=0)
+            st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG)
+
+        chart_card("📵 نسبة «لا يرد» و «مغلق» من إجمالي مكالمات كل محصّل", _na_rate)
+
+    st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
+    buf = io.BytesIO()
+    with pd.ExcelWriter(buf, engine="openpyxl") as writer:
+        beh.to_excel(writer, index=False, sheet_name="سلوك_المحصلين")
+    st.download_button(
+        "⬇️ تحميل بطاقة سلوك المحصّلين (Excel)",
+        data=buf.getvalue(),
+        file_name="تحليل_سلوك_المحصلين.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        use_container_width=True,
+        key="beh_dl",
+    )
+
+
+# ==========================================================
 # تويب الداشبورد (محدث)
 # ==========================================================
 
@@ -1870,7 +1842,6 @@ def page_dashboard():
         st.error(f"مش قادر أقرأ الملف: {e}")
         return
 
-    # اكتشاف الأعمدة
     class_col = CLASSIFICATION_COL if CLASSIFICATION_COL in df.columns else None
     sales_col = find_column(df, SALES_PERSON_CANDIDATES + SALESPERSON_CANDS)
     time_col = find_column(df, CREATED_ON_CANDIDATES)
@@ -1954,7 +1925,6 @@ def page_dashboard():
             result_opts = None
             st.caption("مفيش عمود تصنيف")
 
-    # تطبيق الفلاتر
     filtered = df.copy()
     if sel_agents is not None and sales_col:
         filtered = filtered[filtered[sales_col].astype(str).isin(sel_agents)]
@@ -1993,7 +1963,6 @@ def page_dashboard():
     st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
 
     # ========== الشارتس ==========
-    # صف 1: توزيع التصنيف + نشاط على مدار اليوم
     col_a, col_b = st.columns(2)
 
     with col_a:
@@ -2039,7 +2008,6 @@ def page_dashboard():
             st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG)
         chart_card("🕐 نشاط المحصّلين على مدار اليوم (بالساعة)", _hourly)
 
-    # صف 2: أداء المحصلين + الوقت المهدر
     col_c, col_d = st.columns(2)
 
     with col_c:
@@ -2082,14 +2050,12 @@ def page_dashboard():
             st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG)
         chart_card("⏱️ الوقت المهدر لكل محصّل", _wasted_chart)
 
-    # صف 3: لا يرد / مغلق حسب المحصل
     st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
 
     def _noanswer_closed():
         if not (sales_col and sub_col and sales_col in filtered.columns and sub_col in filtered.columns):
             st.info("محتاجين عمود المحصّل + Sub State عشان نعرض لا يرد / مغلق")
             return
-        # نبحث عن قيم فيها "لا يرد" أو "مغلق" (أو مشابه)
         sub_str = filtered[sub_col].astype(str)
         mask_na = sub_str.str.contains("لا يرد|لايرد|no answer|لا يرد", case=False, na=False)
         mask_cl = sub_str.str.contains("مغلق|closed|غلق", case=False, na=False)
@@ -2100,7 +2066,6 @@ def page_dashboard():
         target["_نوع"] = "أخرى"
         target.loc[mask_na.loc[target.index], "_نوع"] = "لا يرد"
         target.loc[mask_cl.loc[target.index], "_نوع"] = "مغلق"
-        # لو الصف فيه الاتنين، نفضّل اللي اتحدد أخير
         counts = target.groupby([sales_col, "_نوع"]).size().reset_index(name="العدد")
         fig = px.bar(
             counts, x=sales_col, y="العدد", color="_نوع", barmode="group",
@@ -2113,7 +2078,6 @@ def page_dashboard():
 
     chart_card("📵 المحصّلين × إفادات «لا يرد» و «مغلق»", _noanswer_closed)
 
-    # صف 4: اتجاه يومي
     def _daily_trend():
         if not time_col or time_col not in filtered.columns:
             st.info("مفيش عمود تاريخ")
@@ -2139,7 +2103,6 @@ def page_dashboard():
 
     st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
 
-    # ===== تعميق تحليل سلوك المحصّلين =====
     render_behavior_section(
         filtered,
         class_col=class_col,
@@ -2150,7 +2113,6 @@ def page_dashboard():
 
     st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
 
-    # تحميل HTML + بيانات
     dashboard_html = build_dashboard_html(
         filtered, class_col=class_col, sales_col=sales_col, time_col=time_col, source_name=file_name
     )

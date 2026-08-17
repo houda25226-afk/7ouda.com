@@ -87,8 +87,7 @@ html, body, [class*="css"] {
 .main .block-container {
     direction: rtl;
     text-align: right;
-    max-width: 1400px;
-    padding-top: 1.5rem;
+    max-width: 1200px;
 }
 [data-testid="stSidebarContent"], [data-testid="stSidebarUserContent"] {
     direction: rtl;
@@ -97,43 +96,6 @@ html, body, [class*="css"] {
 
 #MainMenu {visibility: hidden;}
 footer {visibility: hidden;}
-
-/* ===== هيدر ستريملت + التوب بار (كان أبيض) ===== */
-header[data-testid="stHeader"] {
-    background: #0B111C !important;
-    background-color: #0B111C !important;
-    border-bottom: 1px solid rgba(255,255,255,0.06);
-}
-header[data-testid="stHeader"] * {
-    color: var(--text) !important;
-}
-div[data-testid="stToolbar"] {
-    background: transparent !important;
-    color: var(--text) !important;
-}
-div[data-testid="stToolbar"] button,
-div[data-testid="stToolbar"] svg,
-div[data-testid="stToolbar"] span {
-    color: var(--text-dim) !important;
-    fill: var(--text-dim) !important;
-}
-div[data-testid="stDecoration"] {
-    background: transparent !important;
-    display: none !important;
-}
-[data-testid="stStatusWidget"] {
-    background: var(--surface) !important;
-    color: var(--text) !important;
-}
-.stDeployButton, .stAppDeployButton {
-    color: var(--text-dim) !important;
-}
-.stApp > header {
-    background-color: #0B111C !important;
-}
-section.main > div {
-    background: transparent !important;
-}
 
 /* ===== الشريط الجانبي (ثابت على الشمال) ===== */
 section[data-testid="stSidebar"] {
@@ -384,22 +346,11 @@ li[role="option"]:hover, li[aria-selected="true"] { background: var(--surface) !
 
 [data-testid="stTextInput"] input,
 [data-testid="stTimeInput"] input,
-[data-testid="stNumberInput"] input,
-[data-testid="stDateInput"] input {
+[data-testid="stNumberInput"] input {
     background: var(--surface-2) !important;
     color: var(--text) !important;
     border-color: rgba(255,255,255,0.1) !important;
     border-radius: 10px !important;
-}
-
-/* MultiSelect tags */
-[data-baseweb="tag"] {
-    background: var(--surface-2) !important;
-    color: var(--text) !important;
-    border-color: rgba(94,234,212,0.3) !important;
-}
-[data-baseweb="select"] span {
-    color: var(--text) !important;
 }
 
 .stTabs [data-baseweb="tab-list"] {
@@ -1317,147 +1268,8 @@ def page_classification():
 
 
 # ==========================================================
-# تويب: الوعود القائمة
+# تويبات 2-5: هنبنيها واحدة واحدة لما نحدد منطق كل واحدة
 # ==========================================================
-
-EXCLUDED_SALESPERSONS = [
-    "Archive Companies II Anas",
-    "Closed payments II Anas",
-    "Hold Companies II Anas",
-    "Op II Ibrahim Qassem",
-    "قانونى -الوطنية",
-]
-
-SALESPERSON_CANDS = ["Salesperson", "Sales Person", "salesperson", "Create By", "Created By", "المحصل", "CreateBy"]
-SUBSTATE_CANDS = ["Sub State", "SubState", "sub state", "Sub state", "الحالة الفرعية"]
-FOLLOWUP_CANDS = ["Follow up Due Date", "Follow Up Due Date", "Followup Due Date", "Follow-up Due Date", "موعد المتابعة"]
-ACCOUNT_CANDS = ["Account Number", "Customer Account Number", "Account No", "رقم الحساب", "AccountNumber"]
-NET_AMOUNT_CANDS = ["Net Amount", "NetAmount", "Amount", "المبلغ", "صافي المبلغ"]
-
-
-def page_pending_promises():
-    page_header(
-        "PENDING PROMISES",
-        "📗 الوعود القائمة",
-        "ارفع المحفظة → فلترة تلقائية (Salesperson / واعد بالسداد / تاريخ اليوم) → Excel + Pivot",
-        show_wave=True,
-    )
-
-    uploaded = st.file_uploader(
-        "ارفع ملف المحفظة (CSV أو Excel)",
-        type=["csv", "xlsx", "xls"],
-        key="pending_upload",
-    )
-
-    if uploaded is None:
-        st.markdown(
-            '<div class="placeholder-card">📂 ارفع ملف المحفظة عشان نطلع الوعود القائمة</div>',
-            unsafe_allow_html=True,
-        )
-        return
-
-    try:
-        if uploaded.name.endswith(".csv"):
-            df = pd.read_csv(uploaded)
-        else:
-            df = pd.read_excel(uploaded)
-    except Exception as e:
-        st.error(f"مش قادر أقرأ الملف: {e}")
-        return
-
-    sales_col = find_column(df, SALESPERSON_CANDS)
-    sub_col = find_column(df, SUBSTATE_CANDS)
-    due_col = find_column(df, FOLLOWUP_CANDS)
-    account_col = find_column(df, ACCOUNT_CANDS)
-    amount_col = find_column(df, NET_AMOUNT_CANDS)
-
-    missing = []
-    if not sales_col:
-        missing.append("Salesperson")
-    if not sub_col:
-        missing.append("Sub State")
-    if not due_col:
-        missing.append("Follow up Due Date")
-    if missing:
-        st.error(
-            f"الأعمدة دي مش موجودة: {', '.join(missing)}. "
-            f"الأعمدة الموجودة: {', '.join(df.columns.astype(str))}"
-        )
-        return
-
-    with st.expander("⚙️ الأعمدة المكتشفة", expanded=False):
-        st.write(f"**Salesperson:** `{sales_col}`")
-        st.write(f"**Sub State:** `{sub_col}`")
-        st.write(f"**Follow up Due Date:** `{due_col}`")
-        st.write(f"**Account Number:** `{account_col or '—'}`")
-        st.write(f"**Net Amount:** `{amount_col or '—'}`")
-
-    mask_sales = ~df[sales_col].astype(str).str.strip().isin(EXCLUDED_SALESPERSONS)
-    mask_sub = df[sub_col].astype(str).str.strip() == "واعد بالسداد"
-    due_parsed = pd.to_datetime(df[due_col], errors="coerce")
-    today = pd.Timestamp.now().normalize()
-    mask_due = due_parsed.dt.normalize() == today
-
-    filtered = df[mask_sales & mask_sub & mask_due].copy()
-
-    st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
-
-    m1, m2, m3 = st.columns(3)
-    m1.metric("📋 إجمالي الصفوف الأصلية", len(df))
-    m2.metric("📗 الوعود القائمة (بعد الفلترة)", len(filtered))
-    m3.metric("📅 تاريخ اليوم", today.strftime("%Y-%m-%d"))
-
-    if len(filtered) == 0:
-        st.warning("مفيش صفوف مطابقة للفلاتر (واعد بالسداد + تاريخ اليوم + استبعاد المحصلين المحددين).")
-        return
-
-    st.success(f"تم استخراج {len(filtered)} وعد قائم ✅")
-    st.dataframe(filtered, use_container_width=True)
-
-    buffer = io.BytesIO()
-    with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
-        filtered.to_excel(writer, index=False, sheet_name="الوعود_القائمة")
-    st.download_button(
-        "⬇️ تحميل الوعود القائمة (Excel)",
-        data=buffer.getvalue(),
-        file_name=f"الوعود_القائمة_{today.strftime('%Y%m%d')}.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        use_container_width=True,
-        type="primary",
-    )
-
-    st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
-    st.markdown("### 📊 Pivot Table — المحصّل × رقم الحساب × صافي المبلغ")
-
-    if not account_col or not amount_col:
-        st.info(
-            "محتاجين عمودي Account Number و Net Amount عشان نبني الـ Pivot. "
-            f"Account: {account_col or 'مش موجود'} · Amount: {amount_col or 'مش موجود'}"
-        )
-    else:
-        pivot_df = filtered.copy()
-        pivot_df[amount_col] = pd.to_numeric(pivot_df[amount_col], errors="coerce").fillna(0)
-        pivot = (
-            pivot_df.groupby([sales_col, account_col], as_index=False)[amount_col]
-            .sum()
-            .rename(columns={sales_col: "Salesperson", account_col: "Account Number", amount_col: "Net Amount"})
-            .sort_values(["Salesperson", "Net Amount"], ascending=[True, False])
-        )
-        st.dataframe(pivot, use_container_width=True, hide_index=True)
-
-        buf2 = io.BytesIO()
-        with pd.ExcelWriter(buf2, engine="openpyxl") as writer:
-            pivot.to_excel(writer, index=False, sheet_name="Pivot")
-            filtered.to_excel(writer, index=False, sheet_name="الوعود_القائمة")
-        st.download_button(
-            "⬇️ تحميل الـ Pivot + الوعود (Excel)",
-            data=buf2.getvalue(),
-            file_name=f"pivot_الوعود_القائمة_{today.strftime('%Y%m%d')}.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            use_container_width=True,
-            key="pivot_dl",
-        )
-
 
 def page_placeholder(eyebrow, title, subtitle, icon):
     page_header(eyebrow, f"{icon} {title}", subtitle)
@@ -1474,342 +1286,14 @@ def page_placeholder(eyebrow, title, subtitle, icon):
 
 
 # ==========================================================
-# تحليل سلوك المحصّلين (تعميق)
-# ==========================================================
-
-def _build_behavior_table(df, class_col, sales_col, time_col):
-    has_class = class_col and class_col in df.columns
-    has_wasted = WASTED_TIME_COL in df.columns
-    has_time = time_col and time_col in df.columns
-
-    rows = []
-    for agent, g in df.groupby(sales_col):
-        n = len(g)
-        row = {"المحصّل": agent, "عدد المكالمات": n}
-
-        if has_class:
-            succ = int((g[class_col] == 1).sum())
-            row["ناجحة"] = succ
-            row["غير ناجحة"] = n - succ
-            row["نسبة النجاح %"] = round(succ / n * 100, 1) if n else 0
-        else:
-            row["ناجحة"] = None
-            row["غير ناجحة"] = None
-            row["نسبة النجاح %"] = None
-
-        if has_wasted:
-            row["إجمالي الوقت المهدر"] = round(g[WASTED_TIME_COL].sum(), 1)
-            row["متوسط الفجوة (د)"] = round(g[WASTED_TIME_COL].mean(), 1)
-            row["وسيط الفجوة (د)"] = round(g[WASTED_TIME_COL].median(), 1)
-            row["انحراف الفجوة"] = round(g[WASTED_TIME_COL].std(), 1) if n > 1 else 0
-            long_gaps = (g[WASTED_TIME_COL] > 10).sum()
-            row["% فجوات طويلة"] = round(long_gaps / n * 100, 1) if n else 0
-        else:
-            row["إجمالي الوقت المهدر"] = None
-            row["متوسط الفجوة (د)"] = None
-            row["وسيط الفجوة (د)"] = None
-            row["انحراف الفجوة"] = None
-            row["% فجوات طويلة"] = None
-
-        if has_time:
-            t = pd.to_datetime(g[time_col], errors="coerce").dropna()
-            if len(t) >= 2:
-                span_h = (t.max() - t.min()).total_seconds() / 3600
-                row["مدة النشاط (س)"] = round(span_h, 1)
-                row["مكالمات/ساعة"] = round(len(t) / span_h, 1) if span_h > 0 else None
-            else:
-                row["مدة النشاط (س)"] = None
-                row["مكالمات/ساعة"] = None
-        else:
-            row["مدة النشاط (س)"] = None
-            row["مكالمات/ساعة"] = None
-
-        rows.append(row)
-
-    beh = pd.DataFrame(rows)
-    if beh.empty:
-        return beh
-
-    if has_class and "نسبة النجاح %" in beh.columns:
-        sr = beh["نسبة النجاح %"].fillna(0)
-        vol = beh["عدد المكالمات"]
-        vol_norm = (vol / vol.max() * 100) if vol.max() else 0
-        long_pen = beh["% فجوات طويلة"].fillna(0) if has_wasted else 0
-        pace = beh["مكالمات/ساعة"].fillna(0)
-        pace_norm = (pace / pace.max() * 100) if pace.max() and pace.max() > 0 else 0
-        beh["مؤشر الكفاءة"] = (
-            sr * 0.45 + vol_norm * 0.20 + pace_norm * 0.20 - long_pen * 0.15
-        ).clip(0, 100).round(1)
-    else:
-        beh["مؤشر الكفاءة"] = None
-
-    return beh.sort_values("مؤشر الكفاءة", ascending=False, na_position="last").reset_index(drop=True)
-
-
-def render_behavior_section(df, class_col, sales_col, time_col, sub_col=None):
-    if not sales_col or sales_col not in df.columns or df.empty:
-        st.info("محتاجين عمود المحصّل وبيانات عشان تحليل السلوك.")
-        return
-
-    st.markdown("### 🧠 تعميق تحليل سلوك المحصّلين")
-    st.caption(
-        "مؤشر الكفاءة · إيقاع المكالمات · نسبة النجاح حسب الساعة · الفجوات الطويلة · سلاسل النجاح/الفشل"
-    )
-
-    beh = _build_behavior_table(df, class_col, sales_col, time_col)
-    has_class = class_col and class_col in df.columns
-    has_wasted = WASTED_TIME_COL in df.columns
-    has_time = time_col and time_col in df.columns
-
-    top_eff = beh.iloc[0] if len(beh) and beh["مؤشر الكفاءة"].notna().any() else None
-    slowest = None
-    if has_wasted and len(beh):
-        slowest = beh.sort_values("متوسط الفجوة (د)", ascending=False).iloc[0]
-    steadiest = None
-    if has_wasted and len(beh) and beh["انحراف الفجوة"].notna().any():
-        steadiest = beh.sort_values("انحراف الفجوة", ascending=True).iloc[0]
-
-    h1, h2, h3 = st.columns(3)
-    with h1:
-        with st.container(border=True):
-            st.markdown('<div class="highlight-label">🏆 أعلى كفاءة</div>', unsafe_allow_html=True)
-            if top_eff is not None:
-                st.markdown(f'<div class="highlight-value">{top_eff["المحصّل"]}</div>', unsafe_allow_html=True)
-                st.markdown(
-                    f'<div class="highlight-sub">مؤشر {top_eff["مؤشر الكفاءة"]} · '
-                    f'{top_eff.get("نسبة النجاح %", "—")}% نجاح</div>',
-                    unsafe_allow_html=True,
-                )
-            else:
-                st.markdown('<div class="highlight-sub">—</div>', unsafe_allow_html=True)
-    with h2:
-        with st.container(border=True):
-            st.markdown('<div class="highlight-label">🐌 أبطأ إيقاع (متوسط فجوة)</div>', unsafe_allow_html=True)
-            if slowest is not None:
-                st.markdown(f'<div class="highlight-value">{slowest["المحصّل"]}</div>', unsafe_allow_html=True)
-                st.markdown(
-                    f'<div class="highlight-sub">{slowest["متوسط الفجوة (د)"]} د/مكالمة</div>',
-                    unsafe_allow_html=True,
-                )
-            else:
-                st.markdown('<div class="highlight-sub">—</div>', unsafe_allow_html=True)
-    with h3:
-        with st.container(border=True):
-            st.markdown('<div class="highlight-label">🎯 أكثر ثباتًا (أقل تذبذب فجوات)</div>', unsafe_allow_html=True)
-            if steadiest is not None:
-                st.markdown(f'<div class="highlight-value">{steadiest["المحصّل"]}</div>', unsafe_allow_html=True)
-                st.markdown(
-                    f'<div class="highlight-sub">انحراف {steadiest["انحراف الفجوة"]}</div>',
-                    unsafe_allow_html=True,
-                )
-            else:
-                st.markdown('<div class="highlight-sub">—</div>', unsafe_allow_html=True)
-
-    st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
-
-    def _beh_table():
-        show_cols = [c for c in beh.columns if beh[c].notna().any()]
-        st.dataframe(beh[show_cols], use_container_width=True, hide_index=True)
-        st.caption(
-            "مؤشر الكفاءة = 45% نجاح + 20% حجم + 20% سرعة (مكالمات/ساعة) − 15% عقوبة الفجوات الطويلة (>10 د)."
-        )
-
-    chart_card(f"📋 بطاقة سلوك كل محصّل ({len(beh)})", _beh_table)
-
-    col1, col2 = st.columns(2)
-
-    with col1:
-        def _eff_bar():
-            if "مؤشر الكفاءة" not in beh.columns or beh["مؤشر الكفاءة"].isna().all():
-                st.info("محتاجين تصنيف عشان نحسب مؤشر الكفاءة")
-                return
-            plot_df = beh.dropna(subset=["مؤشر الكفاءة"]).sort_values("مؤشر الكفاءة")
-            fig = px.bar(
-                plot_df, x="مؤشر الكفاءة", y="المحصّل", orientation="h",
-                color="مؤشر الكفاءة",
-                color_continuous_scale=[COLOR_FAIL, COLOR_WARN, COLOR_SUCCESS],
-            )
-            fig.update_layout(**PLOTLY_LAYOUT, coloraxis_showscale=False,
-                              xaxis_title="مؤشر الكفاءة (0–100)", yaxis_title="",
-                              height=max(280, 28 * len(plot_df)))
-            fig.update_traces(marker_line_width=0)
-            st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG)
-
-        chart_card("🏅 ترتيب المحصّلين بمؤشر الكفاءة", _eff_bar)
-
-    with col2:
-        def _pace_scatter():
-            if not has_class or not has_wasted:
-                st.info("محتاجين تصنيف + وقت مهدر")
-                return
-            plot_df = beh.dropna(subset=["نسبة النجاح %", "متوسط الفجوة (د)"])
-            if plot_df.empty:
-                st.info("مفيش بيانات كافية")
-                return
-            fig = px.scatter(
-                plot_df, x="متوسط الفجوة (د)", y="نسبة النجاح %",
-                size="عدد المكالمات", text="المحصّل",
-                color="مؤشر الكفاءة",
-                color_continuous_scale=[COLOR_FAIL, COLOR_WARN, COLOR_SUCCESS],
-            )
-            fig.update_traces(textposition="top center", textfont_size=10,
-                              marker=dict(line=dict(color="#0E1420", width=1)))
-            fig.update_layout(**PLOTLY_LAYOUT, coloraxis_showscale=False,
-                              xaxis_title="متوسط الفجوة بين المكالمات (دقيقة)",
-                              yaxis_title="نسبة النجاح %")
-            if len(plot_df) > 1:
-                fig.add_vline(x=plot_df["متوسط الفجوة (د)"].mean(), line_dash="dot",
-                              line_color="#8B96AC", opacity=0.5)
-                fig.add_hline(y=plot_df["نسبة النجاح %"].mean(), line_dash="dot",
-                              line_color="#8B96AC", opacity=0.5)
-            st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG)
-            st.caption("يسار أعلى = سريع وناجح · يمين أعلى = ناجح بس بطيء · يسار أسفل = سريع بس نجاح ضعيف")
-
-        chart_card("🧭 خريطة الإيقاع مقابل النجاح", _pace_scatter)
-
-    if has_class and has_time:
-        def _hour_heatmap():
-            tmp = df.copy()
-            tmp["_dt"] = pd.to_datetime(tmp[time_col], errors="coerce")
-            tmp = tmp.dropna(subset=["_dt"])
-            if tmp.empty:
-                st.info("مفيش تواريخ صالحة")
-                return
-            tmp["الساعة"] = tmp["_dt"].dt.hour
-            heat = (
-                tmp.groupby([sales_col, "الساعة"])[class_col]
-                .agg(["mean", "count"])
-                .reset_index()
-            )
-            heat["نسبة النجاح %"] = (heat["mean"] * 100).round(1)
-            pivot = heat.pivot(index=sales_col, columns="الساعة", values="نسبة النجاح %")
-            pivot = pivot.reindex(sorted(pivot.columns), axis=1)
-            fig = px.imshow(
-                pivot,
-                color_continuous_scale=[COLOR_FAIL, COLOR_WARN, COLOR_SUCCESS],
-                aspect="auto",
-                labels=dict(x="ساعة اليوم", y="المحصّل", color="نجاح %"),
-            )
-            fig.update_layout(**PLOTLY_LAYOUT, height=max(320, 30 * len(pivot)))
-            st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG)
-            st.caption("كل خلية = نسبة نجاح المحصّل في الساعة دي. الأخضر أعلى · الأحمر أقل.")
-
-        chart_card("🔥 Heatmap — نسبة النجاح حسب الساعة × المحصّل", _hour_heatmap)
-
-    col3, col4 = st.columns(2)
-
-    with col3:
-        def _gap_box():
-            if not has_wasted:
-                st.info("محتاجين عمود الوقت المهدر")
-                return
-            fig = px.box(
-                df, x=sales_col, y=WASTED_TIME_COL,
-                color_discrete_sequence=[COLOR_ACCENT],
-            )
-            fig.update_layout(**PLOTLY_LAYOUT, xaxis_title="", yaxis_title="الفجوة (دقيقة)")
-            fig.update_traces(marker_line_width=0)
-            st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG)
-            st.caption("الصندوق يوضح توزيع الفجوات: الوسيط، الربع، والقيم الشاذة.")
-
-        chart_card("📦 توزيع فجوات المكالمات لكل محصّل", _gap_box)
-
-    with col4:
-        def _streaks():
-            if not has_class or not has_time:
-                st.info("محتاجين تصنيف + وقت عشان نحسب السلاسل")
-                return
-            tmp = df.copy()
-            tmp["_dt"] = pd.to_datetime(tmp[time_col], errors="coerce")
-            tmp = tmp.dropna(subset=["_dt"]).sort_values([sales_col, "_dt"])
-
-            def max_streak(series, val):
-                best = cur = 0
-                for v in series:
-                    if v == val:
-                        cur += 1
-                        best = max(best, cur)
-                    else:
-                        cur = 0
-                return best
-
-            streak_rows = []
-            for agent, g in tmp.groupby(sales_col):
-                seq = g[class_col].tolist()
-                streak_rows.append({
-                    "المحصّل": agent,
-                    "أطول سلسلة نجاح": max_streak(seq, 1),
-                    "أطول سلسلة فشل": max_streak(seq, 0),
-                })
-            s_df = pd.DataFrame(streak_rows)
-            if s_df.empty:
-                st.info("مفيش بيانات")
-                return
-            fig = px.bar(
-                s_df, x="المحصّل", y=["أطول سلسلة نجاح", "أطول سلسلة فشل"],
-                barmode="group",
-                color_discrete_sequence=[COLOR_SUCCESS, COLOR_FAIL],
-            )
-            fig.update_layout(**PLOTLY_LAYOUT, xaxis_title="", yaxis_title="طول السلسلة",
-                              legend_title_text="")
-            fig.update_traces(marker_line_width=0)
-            st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG)
-            st.caption("أطول سلسلة نجاح متتالية vs أطول سلسلة فشل.")
-
-        chart_card("🔗 سلاسل النجاح والفشل المتتالية", _streaks)
-
-    if sub_col and sub_col in df.columns:
-        def _na_rate():
-            sub_str = df[sub_col].astype(str)
-            mask_na = sub_str.str.contains("لا يرد|لايرد|no answer", case=False, na=False)
-            mask_cl = sub_str.str.contains("مغلق|closed|غلق", case=False, na=False)
-            tmp = df.copy()
-            tmp["_na"] = mask_na.astype(int)
-            tmp["_cl"] = mask_cl.astype(int)
-            sizes = tmp.groupby(sales_col).size().rename("إجمالي")
-            sums = tmp.groupby(sales_col)[["_na", "_cl"]].sum()
-            agg = sums.join(sizes).reset_index()
-            agg = agg.rename(columns={"_na": "لا_يرد", "_cl": "مغلق"})
-            agg["% لا يرد"] = (agg["لا_يرد"] / agg["إجمالي"] * 100).round(1)
-            agg["% مغلق"] = (agg["مغلق"] / agg["إجمالي"] * 100).round(1)
-            melt = agg.melt(
-                id_vars=[sales_col], value_vars=["% لا يرد", "% مغلق"],
-                var_name="النوع", value_name="النسبة %",
-            )
-            fig = px.bar(
-                melt, x=sales_col, y="النسبة %", color="النوع", barmode="group",
-                color_discrete_map={"% لا يرد": COLOR_WARN, "% مغلق": COLOR_FAIL},
-            )
-            fig.update_layout(**PLOTLY_LAYOUT, xaxis_title="", yaxis_title="% من مكالمات المحصّل",
-                              legend_title_text="")
-            fig.update_traces(marker_line_width=0)
-            st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG)
-
-        chart_card("📵 نسبة «لا يرد» و «مغلق» من إجمالي مكالمات كل محصّل", _na_rate)
-
-    st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
-    buf = io.BytesIO()
-    with pd.ExcelWriter(buf, engine="openpyxl") as writer:
-        beh.to_excel(writer, index=False, sheet_name="سلوك_المحصلين")
-    st.download_button(
-        "⬇️ تحميل بطاقة سلوك المحصّلين (Excel)",
-        data=buf.getvalue(),
-        file_name="تحليل_سلوك_المحصلين.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        use_container_width=True,
-        key="beh_dl",
-    )
-
-
-# ==========================================================
-# تويب الداشبورد (محدث)
+# تويب 6: الداشبورد (رفع ملف مُصنّف جاهز وبناء الداشبورد تلقائي)
 # ==========================================================
 
 def page_dashboard():
     page_header(
         "ACTIVITY DASHBOARD",
         "📊 داشبورد النشاط",
-        "ارفع الملف المصنّف → فلترة (محصّل / Sub State / تاريخ / ناجحة) → كروت + شارتس احترافية",
+        "ارفع الملف بعد ما يتصنّف، والداشبورد هيتبني تلقائي بكل تفاصيله",
         show_wave=True,
     )
 
@@ -1842,279 +1326,34 @@ def page_dashboard():
         st.error(f"مش قادر أقرأ الملف: {e}")
         return
 
-    class_col = CLASSIFICATION_COL if CLASSIFICATION_COL in df.columns else None
-    sales_col = find_column(df, SALES_PERSON_CANDIDATES + SALESPERSON_CANDS)
-    time_col = find_column(df, CREATED_ON_CANDIDATES)
-    sub_col = find_column(df, SUBSTATE_CANDS + ["Main State", "Final State", "الحالة", "State"])
-    has_wasted = WASTED_TIME_COL in df.columns
+    class_col_guess = CLASSIFICATION_COL if CLASSIFICATION_COL in df.columns else None
+    sales_col_guess = find_column(df, SALES_PERSON_CANDIDATES)
+    time_col_guess = find_column(df, CREATED_ON_CANDIDATES)
 
-    with st.expander("⚙️ تأكيد الأعمدة", expanded=(class_col is None or sales_col is None)):
+    with st.expander("⚙️ تأكيد الأعمدة", expanded=(class_col_guess is None or sales_col_guess is None)):
         cols = ["— بدون —"] + list(df.columns.astype(str))
-        class_col = st.selectbox(
-            "عمود التصنيف (1/0)", cols,
-            index=cols.index(class_col) if class_col in cols else 0, key="dash_class_sel"
+        class_col_sel = st.selectbox(
+            "عمود التصنيف (1/0)", cols, index=cols.index(class_col_guess) if class_col_guess in cols else 0
         )
-        sales_col = st.selectbox(
-            "عمود المحصّل", cols,
-            index=cols.index(sales_col) if sales_col in cols else 0, key="dash_sales_sel"
+        sales_col_sel = st.selectbox(
+            "عمود المحصّل", cols, index=cols.index(sales_col_guess) if sales_col_guess in cols else 0
         )
-        time_col = st.selectbox(
-            "عمود التاريخ/الوقت", cols,
-            index=cols.index(time_col) if time_col in cols else 0, key="dash_time_sel"
+        time_col_sel = st.selectbox(
+            "عمود التاريخ/الوقت", cols, index=cols.index(time_col_guess) if time_col_guess in cols else 0
         )
-        sub_col = st.selectbox(
-            "عمود Sub State / الحالة", cols,
-            index=cols.index(sub_col) if sub_col in cols else 0, key="dash_sub_sel"
-        )
-        class_col = None if class_col == "— بدون —" else class_col
-        sales_col = None if sales_col == "— بدون —" else sales_col
-        time_col = None if time_col == "— بدون —" else time_col
-        sub_col = None if sub_col == "— بدون —" else sub_col
 
-    # ========== فلاتر (Slicers) ==========
+    class_col = None if class_col_sel == "— بدون —" else class_col_sel
+    sales_col = None if sales_col_sel == "— بدون —" else sales_col_sel
+    time_col = None if time_col_sel == "— بدون —" else time_col_sel
+
     st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
-    st.markdown("### 🔍 الفلاتر")
-
-    f1, f2, f3, f4 = st.columns(4)
-
-    with f1:
-        if sales_col and sales_col in df.columns:
-            agents = sorted(df[sales_col].dropna().astype(str).unique().tolist())
-            sel_agents = st.multiselect("المحصّلين", agents, default=agents, key="flt_agents")
-        else:
-            sel_agents = None
-            st.caption("مفيش عمود محصّل")
-
-    with f2:
-        if sub_col and sub_col in df.columns:
-            states = sorted(df[sub_col].dropna().astype(str).unique().tolist())
-            sel_states = st.multiselect("Sub State", states, default=states, key="flt_states")
-        else:
-            sel_states = None
-            st.caption("مفيش عمود Sub State")
-
-    with f3:
-        if time_col and time_col in df.columns:
-            t_series = pd.to_datetime(df[time_col], errors="coerce")
-            valid_dates = t_series.dropna().dt.date
-            if len(valid_dates):
-                min_d, max_d = valid_dates.min(), valid_dates.max()
-                date_range = st.date_input(
-                    "نطاق التاريخ",
-                    value=(min_d, max_d),
-                    min_value=min_d,
-                    max_value=max_d,
-                    key="flt_dates",
-                )
-            else:
-                date_range = None
-                st.caption("مفيش تواريخ صالحة")
-        else:
-            date_range = None
-            st.caption("مفيش عمود تاريخ")
-
-    with f4:
-        if class_col and class_col in df.columns:
-            result_opts = st.multiselect(
-                "نتيجة المكالمة",
-                ["ناجحة", "غير ناجحة"],
-                default=["ناجحة", "غير ناجحة"],
-                key="flt_result",
-            )
-        else:
-            result_opts = None
-            st.caption("مفيش عمود تصنيف")
-
-    filtered = df.copy()
-    if sel_agents is not None and sales_col:
-        filtered = filtered[filtered[sales_col].astype(str).isin(sel_agents)]
-    if sel_states is not None and sub_col:
-        filtered = filtered[filtered[sub_col].astype(str).isin(sel_states)]
-    if date_range is not None and time_col and isinstance(date_range, (list, tuple)) and len(date_range) == 2:
-        t_parsed = pd.to_datetime(filtered[time_col], errors="coerce")
-        mask = (t_parsed.dt.date >= date_range[0]) & (t_parsed.dt.date <= date_range[1])
-        filtered = filtered[mask]
-    if result_opts is not None and class_col:
-        want = []
-        if "ناجحة" in result_opts:
-            want.append(1)
-        if "غير ناجحة" in result_opts:
-            want.append(0)
-        if want:
-            filtered = filtered[filtered[class_col].isin(want)]
-
-    st.caption(f"عرض {len(filtered)} من أصل {len(df)} صف بعد الفلترة")
-    st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
-
-    # ========== كروت المؤشرات ==========
-    n_agents = filtered[sales_col].nunique() if sales_col and sales_col in filtered.columns else 0
-    total_covered = len(filtered)
-    success_count = int((filtered[class_col] == 1).sum()) if class_col and class_col in filtered.columns else 0
-    success_rate = round(success_count / total_covered * 100, 1) if total_covered else 0
-    total_wasted = round(filtered[WASTED_TIME_COL].sum(), 1) if has_wasted else 0
-
-    c1, c2, c3, c4, c5 = st.columns(5)
-    c1.metric("👥 عدد المحصّلين", n_agents)
-    c2.metric("📞 المكالمات المغطاة", total_covered)
-    c3.metric("✅ المكالمات الناجحة", success_count)
-    c4.metric("📈 نسبة النجاح", f"{success_rate}%")
-    c5.metric("⏱️ إجمالي الوقت المهدر (د)", total_wasted if has_wasted else "—")
+    render_full_dashboard(df, class_col=class_col, sales_col=sales_col, time_col=time_col)
 
     st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
 
-    # ========== الشارتس ==========
-    col_a, col_b = st.columns(2)
-
-    with col_a:
-        def _pie():
-            if not class_col or class_col not in filtered.columns:
-                st.info("مفيش عمود تصنيف")
-                return
-            labels = filtered[class_col].map({1: "ناجحة", 0: "غير ناجحة"})
-            pie_df = labels.value_counts().reset_index()
-            pie_df.columns = ["التصنيف", "العدد"]
-            fig = px.pie(
-                pie_df, names="التصنيف", values="العدد", hole=0.55,
-                color="التصنيف", color_discrete_map=CHART_COLORS,
-            )
-            fig.update_traces(textinfo="percent+label", textfont_size=12,
-                              marker=dict(line=dict(color="#0E1420", width=2)))
-            fig.update_layout(**PLOTLY_LAYOUT, showlegend=False,
-                              annotations=[dict(
-                                  text=f"{success_rate}%",
-                                  x=0.5, y=0.5, font_size=24, font_color=COLOR_SUCCESS, showarrow=False
-                              )])
-            st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG)
-        chart_card("🎯 توزيع نتائج التصنيف", _pie)
-
-    with col_b:
-        def _hourly():
-            if not time_col or time_col not in filtered.columns:
-                st.info("مفيش عمود وقت")
-                return
-            tmp = filtered.copy()
-            tmp["_dt"] = pd.to_datetime(tmp[time_col], errors="coerce")
-            tmp = tmp.dropna(subset=["_dt"])
-            if tmp.empty:
-                st.info("مفيش تواريخ صالحة")
-                return
-            tmp["الساعة"] = tmp["_dt"].dt.hour
-            hourly = tmp.groupby("الساعة").size().reset_index(name="عدد المكالمات")
-            fig = px.bar(hourly, x="الساعة", y="عدد المكالمات",
-                         color_discrete_sequence=[COLOR_ACCENT])
-            fig.update_layout(**PLOTLY_LAYOUT, xaxis_title="ساعة اليوم", yaxis_title="عدد المكالمات",
-                              xaxis=dict(dtick=1))
-            fig.update_traces(marker_line_width=0)
-            st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG)
-        chart_card("🕐 نشاط المحصّلين على مدار اليوم (بالساعة)", _hourly)
-
-    col_c, col_d = st.columns(2)
-
-    with col_c:
-        def _agent_calls():
-            if not sales_col or sales_col not in filtered.columns:
-                st.info("مفيش عمود محصّل")
-                return
-            if class_col and class_col in filtered.columns:
-                perf = _compute_agent_perf(filtered, class_col, sales_col)
-                fig = px.bar(
-                    perf, x=sales_col, y=["ناجحة", "غير ناجحة"],
-                    color_discrete_sequence=[COLOR_SUCCESS, COLOR_FAIL], barmode="stack",
-                )
-            else:
-                counts = filtered.groupby(sales_col).size().reset_index(name="عدد المكالمات")
-                fig = px.bar(counts, x=sales_col, y="عدد المكالمات",
-                             color_discrete_sequence=[COLOR_ACCENT])
-            fig.update_layout(**PLOTLY_LAYOUT, xaxis_title="", yaxis_title="عدد المكالمات",
-                              legend_title_text="")
-            fig.update_traces(marker_line_width=0)
-            st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG)
-        chart_card("📊 نشاط المحصّلين (عدد المكالمات)", _agent_calls)
-
-    with col_d:
-        def _wasted_chart():
-            if not (has_wasted and sales_col and sales_col in filtered.columns):
-                st.info("محتاجين عمود الوقت المهدر + المحصّل")
-                return
-            w = (filtered.groupby(sales_col)[WASTED_TIME_COL]
-                 .sum().sort_values(ascending=True).reset_index())
-            h = max(280, 26 * len(w))
-            fig = px.bar(
-                w, x=WASTED_TIME_COL, y=sales_col, orientation="h",
-                color=WASTED_TIME_COL,
-                color_continuous_scale=[COLOR_ACCENT, COLOR_WARN, COLOR_FAIL],
-            )
-            fig.update_layout(**PLOTLY_LAYOUT, height=h, coloraxis_showscale=False,
-                              xaxis_title="الوقت المهدر (دقيقة)", yaxis_title="")
-            fig.update_traces(marker_line_width=0)
-            st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG)
-        chart_card("⏱️ الوقت المهدر لكل محصّل", _wasted_chart)
-
-    st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
-
-    def _noanswer_closed():
-        if not (sales_col and sub_col and sales_col in filtered.columns and sub_col in filtered.columns):
-            st.info("محتاجين عمود المحصّل + Sub State عشان نعرض لا يرد / مغلق")
-            return
-        sub_str = filtered[sub_col].astype(str)
-        mask_na = sub_str.str.contains("لا يرد|لايرد|no answer|لا يرد", case=False, na=False)
-        mask_cl = sub_str.str.contains("مغلق|closed|غلق", case=False, na=False)
-        target = filtered[mask_na | mask_cl].copy()
-        if target.empty:
-            st.info("مفيش صفوف بحالة «لا يرد» أو «مغلق» في البيانات المفلترة")
-            return
-        target["_نوع"] = "أخرى"
-        target.loc[mask_na.loc[target.index], "_نوع"] = "لا يرد"
-        target.loc[mask_cl.loc[target.index], "_نوع"] = "مغلق"
-        counts = target.groupby([sales_col, "_نوع"]).size().reset_index(name="العدد")
-        fig = px.bar(
-            counts, x=sales_col, y="العدد", color="_نوع", barmode="group",
-            color_discrete_map={"لا يرد": COLOR_WARN, "مغلق": COLOR_FAIL, "أخرى": COLOR_ACCENT},
-        )
-        fig.update_layout(**PLOTLY_LAYOUT, xaxis_title="", yaxis_title="عدد الإفادات",
-                          legend_title_text="")
-        fig.update_traces(marker_line_width=0)
-        st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG)
-
-    chart_card("📵 المحصّلين × إفادات «لا يرد» و «مغلق»", _noanswer_closed)
-
-    def _daily_trend():
-        if not time_col or time_col not in filtered.columns:
-            st.info("مفيش عمود تاريخ")
-            return
-        tmp = filtered.copy()
-        tmp["_dt"] = pd.to_datetime(tmp[time_col], errors="coerce")
-        tmp = tmp.dropna(subset=["_dt"])
-        tmp["اليوم"] = tmp["_dt"].dt.date
-        if class_col and class_col in tmp.columns:
-            tmp["الحالة"] = tmp[class_col].map({1: "ناجحة", 0: "غير ناجحة"})
-            daily = tmp.groupby(["اليوم", "الحالة"]).size().reset_index(name="عدد المكالمات")
-            fig = px.area(daily, x="اليوم", y="عدد المكالمات", color="الحالة",
-                          color_discrete_map=CHART_COLORS)
-        else:
-            daily = tmp.groupby("اليوم").size().reset_index(name="عدد المكالمات")
-            fig = px.area(daily, x="اليوم", y="عدد المكالمات", color_discrete_sequence=[COLOR_ACCENT])
-        fig.update_traces(line_width=2)
-        fig.update_layout(**PLOTLY_LAYOUT, xaxis_title="", yaxis_title="عدد المكالمات",
-                          legend_title_text="")
-        st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG)
-
-    chart_card("📅 اتجاه عدد المكالمات يوميًا", _daily_trend)
-
-    st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
-
-    render_behavior_section(
-        filtered,
-        class_col=class_col,
-        sales_col=sales_col,
-        time_col=time_col,
-        sub_col=sub_col,
-    )
-
-    st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
-
+    # ---- تحميل الداشبورد نفسه كصفحة ويب مستقلة (HTML تفاعلية بنفس الشكل) ----
     dashboard_html = build_dashboard_html(
-        filtered, class_col=class_col, sales_col=sales_col, time_col=time_col, source_name=file_name
+        df, class_col=class_col, sales_col=sales_col, time_col=time_col, source_name=file_name
     )
     st.download_button(
         "🌐 تحميل الداشبورد كصفحة ويب (HTML)",
@@ -2125,22 +1364,23 @@ def page_dashboard():
         key="dash_html_download",
         type="primary",
     )
-    st.caption("صفحة ويب مستقلة بنفس الكروت والشارتس — تفتح في أي متصفح بدون تشغيل التطبيق.")
+    st.caption("الملف ده صفحة ويب مستقلة فيها نفس الكروت والشارتس بتفاعليتها — تقدر تفتحها في أي متصفح أو تبعتها لحد تاني من غير ما يحتاج يشغّل التطبيق.")
 
-    with st.expander("⬇️ تحميل البيانات المفلترة", expanded=False):
+    with st.expander("⬇️ تحميل البيانات الخام بدل الداشبورد", expanded=False):
         if file_name.endswith(".csv"):
-            output = filtered.to_csv(index=False).encode("utf-8-sig")
-            out_name = "بيانات_مفلترة.csv"
+            output = df.to_csv(index=False).encode("utf-8-sig")
+            out_name = "بيانات_الداشبورد.csv"
             mime = "text/csv"
         else:
             buffer = io.BytesIO()
             with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
-                filtered.to_excel(writer, index=False, sheet_name="البيانات")
+                df.to_excel(writer, index=False, sheet_name="البيانات")
             output = buffer.getvalue()
-            out_name = "بيانات_مفلترة.xlsx"
+            out_name = "بيانات_الداشبورد.xlsx"
             mime = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+
         st.download_button(
-            "⬇️ تحميل البيانات المفلترة",
+            "⬇️ تحميل بيانات الداشبورد",
             data=output, file_name=out_name, mime=mime, use_container_width=True, key="dash_download",
         )
 
@@ -2151,7 +1391,9 @@ def page_dashboard():
 
 PAGES = {
     "🎯 التصنيف": page_classification,
-    "📗 الوعود القائمة": page_pending_promises,
+    "📗 الوعود القائمة": lambda: page_placeholder(
+        "PENDING", "الوعود القائمة", "المكالمات اللي فيها وعد سداد لسه قائم", "📗"
+    ),
     "📕 الوعود المكسورة": lambda: page_placeholder(
         "BROKEN", "الوعود المكسورة", "المكالمات اللي فيها وعد سداد اتكسر", "📕"
     ),

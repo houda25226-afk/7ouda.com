@@ -861,11 +861,16 @@ def render_full_dashboard(df, class_col=None, sales_col=None, time_col=None):
 # تصدير الداشبورد كصفحة ويب (HTML) مستقلة — نفس الشكل والألوان
 # ==========================================================
 
-def _fig_to_div(fig, div_id):
-    fig.update_layout(**PLOTLY_LAYOUT)
+def _fig_to_div(fig, div_id, height=420):
+    """بيحول الفيجر لكارت HTML — أهم حاجة إننا نديله ارتفاع صريح، لأن من غيره
+    الشارت بيتصاغر لحجم شبه صفري جوه صندوق ارتفاعه تلقائي (اللي كان بيحصل قبل كده)."""
+    if fig.layout.height is None:
+        fig.update_layout(height=height)
+    fig.update_layout(**PLOTLY_LAYOUT, autosize=True)
     return pio.to_html(
         fig, full_html=False, include_plotlyjs=False,
         config=PLOTLY_CONFIG, div_id=div_id,
+        default_width="100%", default_height=f"{fig.layout.height}px",
     )
 
 
@@ -923,8 +928,8 @@ def build_dashboard_html(df, class_col, sales_col, time_col, source_name="") -> 
         else:
             busiest_day_html = '<div class="highlight-sub">مفيش تواريخ صالحة</div>'
 
-    # ---- الشارتس ----
-    charts_html = []
+    # ---- الشارتس (بنبنيها في متغيرات الأول، وبعدين نرتبها بالترتيب اللي هيبقى شكله منظم) ----
+    chart_pie = chart_hist = chart_trend = chart_agents = chart_wasted = chart_scatter = None
 
     if has_class:
         labels_series = df[class_col].map({1: "ناجحة", 0: "غير ناجحة"})
@@ -938,7 +943,12 @@ def build_dashboard_html(df, class_col, sales_col, time_col, source_name="") -> 
                                legend=dict(orientation="h", yanchor="bottom", y=-0.15, x=0.5, xanchor="center"),
                                annotations=[dict(text=f"{success_rate}%<br><span style='font-size:11px;color:#8B96AC'>نجاح</span>",
                                                   x=0.5, y=0.5, font_size=22, font_color=COLOR_SUCCESS, showarrow=False)])
-        charts_html.append(("🎯 توزيع نتائج التصنيف", _fig_to_div(fig_pie, "fig_pie")))
+        chart_pie = ("🎯 توزيع نتائج التصنيف", _fig_to_div(fig_pie, "fig_pie"), False)
+
+    if has_wasted:
+        fig_hist = px.histogram(df, x=WASTED_TIME_COL, nbins=20, color_discrete_sequence=[COLOR_ACCENT])
+        fig_hist.update_layout(bargap=0.08, xaxis_title="الوقت المهدر (دقيقة)", yaxis_title="عدد المرات")
+        chart_hist = ("⏱️ توزيع الوقت المهدر بين المكالمات", _fig_to_div(fig_hist, "fig_hist"), False)
 
     if has_time:
         trend_df = df.copy()
@@ -953,7 +963,7 @@ def build_dashboard_html(df, class_col, sales_col, time_col, source_name="") -> 
             fig_trend = px.area(daily, x="اليوم", y="عدد المكالمات", color_discrete_sequence=[COLOR_ACCENT])
         fig_trend.update_traces(line_width=2)
         fig_trend.update_layout(legend_title_text="", xaxis_title="", yaxis_title="عدد المكالمات")
-        charts_html.append(("📅 اتجاه عدد المكالمات يوميًا", _fig_to_div(fig_trend, "fig_trend")))
+        chart_trend = ("📅 اتجاه عدد المكالمات يوميًا", _fig_to_div(fig_trend, "fig_trend"), True)
 
     if has_class and has_sales:
         agent_perf = _compute_agent_perf(df, class_col, sales_col)
@@ -961,7 +971,7 @@ def build_dashboard_html(df, class_col, sales_col, time_col, source_name="") -> 
                              color_discrete_sequence=[COLOR_SUCCESS, COLOR_FAIL], barmode="stack")
         fig_agents.update_traces(marker_line_width=0)
         fig_agents.update_layout(legend_title_text="", xaxis_title="", yaxis_title="عدد المكالمات")
-        charts_html.append(("📊 أداء كل محصّل (ناجحة مقابل غير ناجحة)", _fig_to_div(fig_agents, "fig_agents")))
+        chart_agents = ("📊 أداء كل محصّل (ناجحة مقابل غير ناجحة)", _fig_to_div(fig_agents, "fig_agents"), True)
 
     if has_wasted and has_sales:
         wasted_by_agent = df.groupby(sales_col)[WASTED_TIME_COL].sum().sort_values(ascending=False).reset_index()
@@ -971,14 +981,11 @@ def build_dashboard_html(df, class_col, sales_col, time_col, source_name="") -> 
         fig_wasted.update_traces(marker_line_width=0)
         fig_wasted.update_layout(yaxis={"categoryorder": "total ascending", "title": ""},
                                   xaxis_title="الوقت المهدر (دقيقة)", coloraxis_showscale=False, height=chart_height)
-        charts_html.append(("🏆 كل المحصّلين حسب الوقت المهدر", _fig_to_div(fig_wasted, "fig_wasted")))
+        chart_wasted = ("🏆 كل المحصّلين حسب الوقت المهدر", _fig_to_div(fig_wasted, "fig_wasted", height=chart_height), True)
 
-    if has_wasted:
-        fig_hist = px.histogram(df, x=WASTED_TIME_COL, nbins=20, color_discrete_sequence=[COLOR_ACCENT])
-        fig_hist.update_layout(bargap=0.08, xaxis_title="الوقت المهدر (دقيقة)", yaxis_title="عدد المرات")
-        charts_html.append(("⏱️ توزيع الوقت المهدر بين المكالمات", _fig_to_div(fig_hist, "fig_hist")))
 
     comparison_table_html = ""
+    chart_scatter = None
     if has_class and has_sales:
         perf = _compute_agent_perf(df, class_col, sales_col)
         if has_wasted:
@@ -995,11 +1002,14 @@ def build_dashboard_html(df, class_col, sales_col, time_col, source_name="") -> 
                                        marker=dict(line=dict(color="#0E1420", width=1)))
             fig_scatter.update_layout(coloraxis_showscale=False, xaxis_title="نسبة النجاح %",
                                        yaxis_title="إجمالي الوقت المهدر (دقيقة)")
-            charts_html.append(("🧭 خريطة الأداء: نسبة النجاح مقابل الوقت المهدر", _fig_to_div(fig_scatter, "fig_scatter")))
+            chart_scatter = ("🧭 خريطة الأداء: نسبة النجاح مقابل الوقت المهدر", _fig_to_div(fig_scatter, "fig_scatter", height=460), True)
 
         comparison_table_html = perf.rename(columns={sales_col: "المحصّل"}).to_html(
             index=False, classes="comp-table", border=0, justify="right"
         )
+
+    # ترتيب نهائي منظم: الاتنين نص العرض (دائري + هيستوجرام) جنب بعض، وبعدين كل شارت واسع في صف لوحده
+    charts_html = [c for c in [chart_pie, chart_hist, chart_trend, chart_agents, chart_wasted, chart_scatter] if c]
 
     def metric_card(label, value, sub=""):
         return f'''<div class="metric-box">
@@ -1017,10 +1027,10 @@ def build_dashboard_html(df, class_col, sales_col, time_col, source_name="") -> 
     ])
 
     charts_grid_html = "".join(
-        f'''<div class="chart-box">
+        f'''<div class="chart-box{' wide' if wide else ''}">
             <div class="chart-box-title">{title}</div>
             {div}
-        </div>''' for title, div in charts_html
+        </div>''' for title, div, wide in charts_html
     )
 
     generated_at = datetime.now().strftime("%Y-%m-%d %H:%M")
@@ -1072,10 +1082,13 @@ h1 {{ font-weight: 900; font-size: 1.9rem; margin: 0; }}
 .highlight-label {{ font-size: 0.82rem; color: var(--text-dim); margin-bottom: 0.5rem; }}
 .highlight-value {{ font-weight: 900; font-size: 1.2rem; color: var(--accent); line-height: 1.3; }}
 .highlight-sub {{ font-size: 0.8rem; color: var(--text-dim); margin-top: 0.2rem; }}
-.charts-grid {{ display: grid; grid-template-columns: repeat(2, 1fr); gap: 1rem; }}
+.charts-grid {{ display: grid; grid-template-columns: repeat(2, 1fr); gap: 1rem; align-items: start; }}
 .chart-box {{
     background: var(--surface); border: 1px solid rgba(255,255,255,0.07); border-radius: 14px; padding: 1rem 1.1rem;
+    overflow: hidden;
 }}
+.chart-box.wide {{ grid-column: 1 / -1; }}
+.chart-box .plotly-graph-div {{ width: 100% !important; }}
 .chart-box-title {{
     font-weight: 700; font-size: 0.95rem; margin-bottom: 0.5rem; padding-bottom: 0.5rem;
     border-bottom: 1px solid rgba(255,255,255,0.06);

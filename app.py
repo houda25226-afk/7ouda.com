@@ -379,6 +379,33 @@ div[data-testid="stAlert"] p { color: var(--text) !important; }
 
 [data-testid="stCaptionContainer"] { color: var(--text-dim) !important; }
 
+/* ===== المفتاح (Toggle) — سؤال "هل يوجد بريك؟" بستايل هادي ===== */
+[data-testid="stToggle"] label p {
+    color: var(--text) !important;
+    font-weight: 500;
+}
+[data-testid="stToggle"] div[role="switch"] {
+    background: var(--surface-2) !important;
+    border: 1px solid rgba(255,255,255,0.12) !important;
+}
+[data-testid="stToggle"] div[role="switch"][aria-checked="true"] {
+    background: var(--accent) !important;
+    border-color: var(--accent) !important;
+}
+
+/* صف اختيار وقت البريك — خلفية هادية بحد جانبي تركواز رفيع */
+.break-time-row {
+    background: rgba(94, 234, 212, 0.05);
+    border-right: 3px solid var(--accent);
+    border-radius: 10px;
+    padding: 0.7rem 0.9rem 0.2rem 0.9rem;
+    margin: 0.6rem 0 0.4rem 0;
+}
+
+/* Plotly modebar وأي تلميحات داخلية أخرى تفضل متناسقة مع الثيم الغامق */
+.js-plotly-plot .plotly .modebar { background: transparent !important; }
+[data-testid="stTooltipIcon"] svg { fill: var(--text-dim) !important; }
+
 /* Scrollbar متناسق مع الثيم */
 ::-webkit-scrollbar { width: 10px; height: 10px; }
 ::-webkit-scrollbar-track { background: var(--bg); }
@@ -533,6 +560,19 @@ PLOTLY_LAYOUT = dict(
     font_color="#E7ECF3",
     font_family="Tajawal, sans-serif",
     margin=dict(t=42, b=10, l=10, r=10),
+    # مهم: من غير ده، الـ tooltip اللي بيظهر عند الـ hover بيطلع بخلفية بيضا افتراضية
+    # من Plotly وبالتالي بيبقى النص شبه مختفي فوق الثيم الغامق — ده سبب مشكلة
+    # "الألوان مش مظبوطة ومختفية" في اللي ظاهر في السكرين شوت.
+    hoverlabel=dict(
+        bgcolor="#1B2A42",
+        font_color="#E7ECF3",
+        font_family="Tajawal, sans-serif",
+        font_size=13,
+        bordercolor="rgba(94,234,212,0.35)",
+    ),
+    legend=dict(font=dict(color="#E7ECF3")),
+    xaxis=dict(color="#E7ECF3", gridcolor="rgba(255,255,255,0.06)", zerolinecolor="rgba(255,255,255,0.1)"),
+    yaxis=dict(color="#E7ECF3", gridcolor="rgba(255,255,255,0.06)", zerolinecolor="rgba(255,255,255,0.1)"),
 )
 PLOTLY_CONFIG = {"displayModeBar": False}
 
@@ -686,7 +726,10 @@ def render_trend_chart(df, class_col, time_col):
             return
         trend_df = df.copy()
         trend_df[time_col] = pd.to_datetime(trend_df[time_col], errors="coerce")
-        trend_df["اليوم"] = trend_df[time_col].dt.date
+        # ملحوظة: بنستخدم normalize() مش .dt.date، عشان نفضل جوه نوع بيانات
+        # datetime64 سليم (مش object من كائنات date بايثون) — ده اللي كان بيسبب
+        # محور تاريخ مكسور بأرقام وقت غريبة (23:59:59.999...) في نسخة الـ HTML المُصدَّرة.
+        trend_df["اليوم"] = trend_df[time_col].dt.normalize()
         if has_class:
             trend_df["الحالة"] = trend_df[class_col].map({1: "ناجحة", 0: "غير ناجحة"})
             daily = trend_df.groupby(["اليوم", "الحالة"]).size().reset_index(name="عدد المكالمات")
@@ -696,6 +739,7 @@ def render_trend_chart(df, class_col, time_col):
             fig5 = px.area(daily, x="اليوم", y="عدد المكالمات", color_discrete_sequence=[COLOR_ACCENT])
         fig5.update_traces(line_width=2)
         fig5.update_layout(**PLOTLY_LAYOUT, legend_title_text="", xaxis_title="", yaxis_title="عدد المكالمات")
+        fig5.update_xaxes(type="date", tickformat="%Y-%m-%d")
         st.plotly_chart(fig5, use_container_width=True, config=PLOTLY_CONFIG)
 
     chart_card("📅 اتجاه عدد المكالمات يوميًا", _trend)
@@ -953,7 +997,7 @@ def build_dashboard_html(df, class_col, sales_col, time_col, source_name="") -> 
     if has_time:
         trend_df = df.copy()
         trend_df[time_col] = pd.to_datetime(trend_df[time_col], errors="coerce")
-        trend_df["اليوم"] = trend_df[time_col].dt.date
+        trend_df["اليوم"] = trend_df[time_col].dt.normalize()
         if has_class:
             trend_df["الحالة"] = trend_df[class_col].map({1: "ناجحة", 0: "غير ناجحة"})
             daily = trend_df.groupby(["اليوم", "الحالة"]).size().reset_index(name="عدد المكالمات")
@@ -963,6 +1007,7 @@ def build_dashboard_html(df, class_col, sales_col, time_col, source_name="") -> 
             fig_trend = px.area(daily, x="اليوم", y="عدد المكالمات", color_discrete_sequence=[COLOR_ACCENT])
         fig_trend.update_traces(line_width=2)
         fig_trend.update_layout(legend_title_text="", xaxis_title="", yaxis_title="عدد المكالمات")
+        fig_trend.update_xaxes(type="date", tickformat="%Y-%m-%d")
         chart_trend = ("📅 اتجاه عدد المكالمات يوميًا", _fig_to_div(fig_trend, "fig_trend"), True)
 
     if has_class and has_sales:
@@ -1135,30 +1180,82 @@ h1 {{ font-weight: 900; font-size: 1.9rem; margin: 0; }}
 
 
 # ==========================================================
-# تويب 1: التصنيف
+# تويب 1: التصنيف — 3 أنشطة فرعية (الفترة الأولى / الفترة الثانية / المجمع اليومي)
 # ==========================================================
 
-def page_classification():
-    page_header(
-        "CALL QUALITY CLASSIFIER",
-        "🎯 تصنيف المكالمات",
-        "ارفع الملف، وهيتصنّف كل صف تلقائيًا (1 = ناجحة، 0 = غير ناجحة) ويتحسب الوقت المهدر لكل محصّل",
-        show_wave=True,
+def render_break_settings(period_key: str):
+    """بيسأل الأول: هل يوجد وقت بريك؟ ولو الإجابة أيوه، بيورّي ستايل رايق لاختيار الوقت.
+    لو لأ، الوقت المهدر هيتحسب من غير أي خصم بريك."""
+    with st.container(border=True):
+        st.markdown('<div class="chart-card-title">☕ إعدادات وقت البريك</div>', unsafe_allow_html=True)
+        has_break = st.toggle(
+            "هل يوجد وقت بريك بيعمل فجوة طبيعية بين المكالمات؟",
+            key=f"{period_key}_has_break",
+        )
+
+        if has_break:
+            st.markdown('<div class="break-time-row">', unsafe_allow_html=True)
+            c1, c2 = st.columns(2)
+            with c1:
+                break_start = st.time_input(
+                    "⏱️ بداية البريك", value=dt_time(13, 0), key=f"{period_key}_break_start"
+                )
+            with c2:
+                break_end = st.time_input(
+                    "⏱️ نهاية البريك", value=dt_time(13, 30), key=f"{period_key}_break_end"
+                )
+            st.markdown('</div>', unsafe_allow_html=True)
+            st.caption("هيتم خصم أي تداخل بين وقت البريك ده وبين الفجوة الفعلية بين كل مكالمة واللي قبلها، عشان الوقت المهدر يبقى دقيق.")
+        else:
+            break_start = break_end = None
+            st.caption("تمام، هيتحسب الوقت المهدر من إجمالي الفجوة بين كل مكالمة واللي قبلها من غير أي خصم.")
+
+    return break_start, break_end
+
+
+def _read_data_file(file_bytes: bytes, file_name: str) -> pd.DataFrame:
+    if file_name.lower().endswith(".csv"):
+        return pd.read_csv(io.BytesIO(file_bytes))
+    return pd.read_excel(io.BytesIO(file_bytes))
+
+
+def _download_df(df: pd.DataFrame, file_name: str, base_out_name: str, label: str, key: str):
+    if file_name.lower().endswith(".csv"):
+        output = df.to_csv(index=False).encode("utf-8-sig")
+        out_name = f"{base_out_name}.csv"
+        mime = "text/csv"
+    else:
+        buffer = io.BytesIO()
+        with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
+            df.to_excel(writer, index=False, sheet_name="النتائج")
+        output = buffer.getvalue()
+        out_name = f"{base_out_name}.xlsx"
+        mime = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+
+    st.download_button(
+        label, data=output, file_name=out_name, mime=mime, use_container_width=True, key=key,
     )
 
-    with st.expander("⚙️ إعدادات حساب الوقت المهدر (وقت البريك)", expanded=False):
-        c1, c2 = st.columns(2)
-        break_start = c1.time_input("بداية البريك", value=dt_time(13, 0))
-        break_end = c2.time_input("نهاية البريك", value=dt_time(13, 30))
 
-    uploaded_file = st.file_uploader("ارفع ملف البيانات (CSV أو Excel)", type=["csv", "xlsx", "xls"])
+def render_classification_flow(period_key: str, period_title: str, period_icon: str):
+    """تدفق رفع ملف خام وتصنيفه — مستخدم مرتين (الفترة الأولى والفترة الثانية)
+    وكل واحدة منهم ليها session_state منفصلة تمامًا عشان مايحصلش تداخل بينهم."""
+
+    st.markdown(f'<div class="chart-card-title">{period_icon} {period_title}</div>', unsafe_allow_html=True)
+    st.caption("ارفع ملف البيانات الخام، وهيتصنّف كل صف تلقائيًا (1 = ناجحة، 0 = غير ناجحة) ويتحسب الوقت المهدر لكل محصّل.")
+
+    break_start, break_end = render_break_settings(period_key)
+
+    uploaded_file = st.file_uploader(
+        "ارفع ملف البيانات (CSV أو Excel)", type=["csv", "xlsx", "xls"], key=f"{period_key}_uploader"
+    )
 
     if uploaded_file is not None:
-        st.session_state["raw_file_bytes"] = uploaded_file.getvalue()
-        st.session_state["raw_file_name"] = uploaded_file.name
-        st.session_state["raw_file_size"] = uploaded_file.size
+        st.session_state[f"{period_key}_raw_file_bytes"] = uploaded_file.getvalue()
+        st.session_state[f"{period_key}_raw_file_name"] = uploaded_file.name
+        st.session_state[f"{period_key}_raw_file_size"] = uploaded_file.size
 
-    has_cached_file = "raw_file_bytes" in st.session_state
+    has_cached_file = f"{period_key}_raw_file_bytes" in st.session_state
 
     if not has_cached_file:
         st.markdown(
@@ -1167,15 +1264,12 @@ def page_classification():
         )
         return
 
-    file_bytes = st.session_state["raw_file_bytes"]
-    file_name = st.session_state["raw_file_name"]
-    file_size = st.session_state["raw_file_size"]
+    file_bytes = st.session_state[f"{period_key}_raw_file_bytes"]
+    file_name = st.session_state[f"{period_key}_raw_file_name"]
+    file_size = st.session_state[f"{period_key}_raw_file_size"]
 
     try:
-        if file_name.endswith(".csv"):
-            df = pd.read_csv(io.BytesIO(file_bytes))
-        else:
-            df = pd.read_excel(io.BytesIO(file_bytes))
+        df = _read_data_file(file_bytes, file_name)
     except Exception as e:
         st.error(f"مش قادر أقرأ الملف: {e}")
         return
@@ -1199,7 +1293,7 @@ def page_classification():
 
     file_token = f"{file_name}_{file_size}"
 
-    if st.button("🚀 ابدأ التصنيف", type="primary", use_container_width=True):
+    if st.button("🚀 ابدأ التصنيف", type="primary", use_container_width=True, key=f"{period_key}_classify_btn"):
         tokenizer, model, device = load_model()
 
         texts = df[MODEL_TEXT_COL].tolist()
@@ -1222,15 +1316,18 @@ def page_classification():
 
         result_df = result_df.rename(columns={MODEL_TEXT_COL: ORIGINAL_TEXT_COL})
 
-        st.session_state["last_result_df"] = result_df
-        st.session_state["last_sales_col"] = sales_col
-        st.session_state["last_time_col"] = time_col
-        st.session_state["last_file_token"] = file_token
+        st.session_state[f"{period_key}_last_result_df"] = result_df
+        st.session_state[f"{period_key}_last_sales_col"] = sales_col
+        st.session_state[f"{period_key}_last_time_col"] = time_col
+        st.session_state[f"{period_key}_last_file_token"] = file_token
 
-    if st.session_state.get("last_file_token") == file_token and "last_result_df" in st.session_state:
-        result_df = st.session_state["last_result_df"]
-        sales_col = st.session_state.get("last_sales_col")
-        time_col = st.session_state.get("last_time_col")
+    if (
+        st.session_state.get(f"{period_key}_last_file_token") == file_token
+        and f"{period_key}_last_result_df" in st.session_state
+    ):
+        result_df = st.session_state[f"{period_key}_last_result_df"]
+        sales_col = st.session_state.get(f"{period_key}_last_sales_col")
+        time_col = st.session_state.get(f"{period_key}_last_time_col")
 
         st.success("تم التصنيف وحساب الوقت المهدر بنجاح ✅")
 
@@ -1249,22 +1346,105 @@ def page_classification():
 
         st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
 
-        if file_name.endswith(".csv"):
-            output = result_df.to_csv(index=False).encode("utf-8-sig")
-            out_name = "نتائج_التصنيف.csv"
-            mime = "text/csv"
-        else:
-            buffer = io.BytesIO()
-            with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
-                result_df.to_excel(writer, index=False, sheet_name="النتائج")
-            output = buffer.getvalue()
-            out_name = "نتائج_التصنيف.xlsx"
-            mime = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-
-        st.download_button(
-            "⬇️ تحميل الملف مع التصنيف والوقت المهدر",
-            data=output, file_name=out_name, mime=mime, use_container_width=True,
+        _download_df(
+            result_df, file_name, f"نتائج_التصنيف_{period_key}",
+            "⬇️ تحميل الملف مع التصنيف والوقت المهدر", key=f"{period_key}_download",
         )
+
+
+def render_merge_flow():
+    """تويب المجمع اليومي — بترفع ملفي الفترة الأولى والفترة الثانية (بعد ما يتصنّفوا)
+    وبيتم دمجهم في ملف واحد جاهز، من غير إعادة تصنيف لأنهم أصلًا متصنفين."""
+
+    st.markdown('<div class="chart-card-title">🧮 المجمع اليومي</div>', unsafe_allow_html=True)
+    st.caption("ارفع ملف الفترة الأولى وملف الفترة الثانية بعد ما يكونوا اتصنّفوا، وهيتم دمجهم في ملف واحد شامل.")
+
+    c1, c2 = st.columns(2)
+    with c1:
+        file1 = st.file_uploader("📗 ملف الفترة الأولى (مصنّف)", type=["csv", "xlsx", "xls"], key="merge_uploader_1")
+    with c2:
+        file2 = st.file_uploader("📘 ملف الفترة الثانية (مصنّف)", type=["csv", "xlsx", "xls"], key="merge_uploader_2")
+
+    if file1 is not None:
+        st.session_state["merge_file1_bytes"] = file1.getvalue()
+        st.session_state["merge_file1_name"] = file1.name
+    if file2 is not None:
+        st.session_state["merge_file2_bytes"] = file2.getvalue()
+        st.session_state["merge_file2_name"] = file2.name
+
+    has_both = "merge_file1_bytes" in st.session_state and "merge_file2_bytes" in st.session_state
+
+    if not has_both:
+        st.markdown(
+            '<div class="placeholder-card">📂 ارفع ملفي الفترة الأولى والفترة الثانية عشان يتجمعوا هنا</div>',
+            unsafe_allow_html=True,
+        )
+        return
+
+    try:
+        df1 = _read_data_file(st.session_state["merge_file1_bytes"], st.session_state["merge_file1_name"])
+        df2 = _read_data_file(st.session_state["merge_file2_bytes"], st.session_state["merge_file2_name"])
+    except Exception as e:
+        st.error(f"مش قادر أقرأ أحد الملفين: {e}")
+        return
+
+    combined_df = pd.concat([df1, df2], ignore_index=True)
+
+    sales_col = find_column(combined_df, SALES_PERSON_CANDIDATES)
+    time_col = find_column(combined_df, CREATED_ON_CANDIDATES)
+    class_col = CLASSIFICATION_COL if CLASSIFICATION_COL in combined_df.columns else None
+
+    if time_col:
+        try:
+            combined_df = combined_df.sort_values(
+                by=time_col, key=lambda s: pd.to_datetime(s, errors="coerce")
+            ).reset_index(drop=True)
+        except Exception:
+            pass
+
+    st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
+    st.success(f"تم دمج الملفين بنجاح ✅ — الإجمالي {len(combined_df)} صف ({len(df1)} + {len(df2)})")
+
+    if WASTED_TIME_COL in combined_df.columns:
+        try:
+            styled = combined_df.style.map(highlight_wasted, subset=[WASTED_TIME_COL])
+        except AttributeError:
+            styled = combined_df.style.applymap(highlight_wasted, subset=[WASTED_TIME_COL])
+        st.dataframe(styled, use_container_width=True)
+    else:
+        st.dataframe(combined_df, use_container_width=True)
+
+    st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
+
+    if class_col or sales_col or time_col:
+        render_quick_summary(combined_df, class_col=class_col, sales_col=sales_col, time_col=time_col)
+        st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
+
+    out_name_base = st.session_state["merge_file1_name"]
+    _download_df(
+        combined_df, out_name_base, "المجمع_اليومي",
+        "⬇️ تحميل الملف المجمع (الفترتين مع بعض)", key="merge_download",
+    )
+
+
+def page_classification():
+    page_header(
+        "CALL QUALITY CLASSIFIER",
+        "🎯 تصنيف المكالمات",
+        "اختار نوع النشاط: الفترة الأولى، الفترة الثانية، أو تجميع الفترتين في ملف يومي واحد",
+        show_wave=True,
+    )
+
+    tab1, tab2, tab3 = st.tabs(["📗 الفترة الأولى", "📘 الفترة الثانية", "🧮 المجمع اليومي"])
+
+    with tab1:
+        render_classification_flow("period1", "الفترة الأولى", "📗")
+
+    with tab2:
+        render_classification_flow("period2", "الفترة الثانية", "📘")
+
+    with tab3:
+        render_merge_flow()
 
 
 # ==========================================================

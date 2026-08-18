@@ -84,45 +84,43 @@ html, body, [class*="css"] {
     color: var(--text);
 }
 
-/* ===== الشريط الأبيض اللي فوق (Header / Top bar) ===== */
+/* ===== الهيدر الدارك زي الثيم بالظبط ===== */
 header[data-testid="stHeader"] {
-    background: #FFFFFF !important;
-    border-bottom: 1px solid rgba(0,0,0,0.08);
+    background: #0E1420 !important;
+    border-bottom: 1px solid rgba(255,255,255,0.06);
 }
 header[data-testid="stHeader"] * {
-    color: #101826 !important;
+    color: var(--text) !important;
 }
 header[data-testid="stHeader"] .stDeployButton button,
 header[data-testid="stHeader"] button {
-    color: #101826 !important;
+    color: var(--text) !important;
 }
 header[data-testid="stHeader"] [data-testid="stHeaderBlockToolbar"] svg {
-    fill: #101826 !important;
-    color: #101826 !important;
+    fill: var(--text) !important;
+    color: var(--text) !important;
 }
 header[data-testid="stHeader"] [class*="Toolbar"] svg,
 header[data-testid="stHeader"] a svg {
-    fill: #101826 !important;
-    color: #101826 !important;
+    fill: var(--text) !important;
+    color: var(--text) !important;
 }
 header[data-testid="stHeader"] svg path {
-    fill: #101826 !important;
-    stroke: #101826 !important;
-}
-header[data-testid="stHeader"] [data-testid="stHeaderBlockToolbar"] button {
-    background: rgba(0,0,0,0.05) !important;
-    border-radius: 8px;
+    fill: var(--text) !important;
+    stroke: var(--text) !important;
 }
 /* أيقونات الهيدر بتكون أحيانًا داخل span */
 header[data-testid="stHeader"] span[aria-label] svg,
 header[data-testid="stHeader"] div[role="button"] svg {
-    fill: #101826 !important;
-    stroke: #101826 !important;
+    fill: var(--text) !important;
+    stroke: var(--text) !important;
 }
-/* تظليل منطقة الأيقونات (الوضع/الأدوات) عشان تباينها يبان على الأبيض */
-header[data-testid="stHeader"] [data-testid="stHeaderBlockToolbar"] {
-    background: rgba(0,0,0,0.04);
+/* تنسيق زر Deploy في الهيدر دارك */
+header[data-testid="stHeader"] .stDeployButton button {
+    background: var(--surface-2) !important;
+    border: 1px solid rgba(255,255,255,0.12) !important;
     border-radius: 8px;
+    color: var(--accent) !important;
 }
 
 /* الاتجاه RTL على محتوى الصفحة الرئيسي والسايدبار بس — مش على الهيكل العام */
@@ -432,6 +430,29 @@ li[role="option"]:hover, li[aria-selected="true"] { background: var(--surface) !
     color: var(--text) !important;
     border-color: rgba(255,255,255,0.1) !important;
     border-radius: 10px !important;
+}
+
+/* حقول الوقت (الساعة والدقيقة) — دارك زي الثيم مع أرقام واضحة */
+[data-testid="stTimeInput"] [role="spinbutton"],
+[data-testid="stTimeInput"] [role="group"] span {
+    color: var(--text) !important;
+    font-weight: 700 !important;
+}
+[data-testid="stTimeInputTimeDisplay"] {
+    background: var(--surface-2) !important;
+    border-color: rgba(255,255,255,0.1) !important;
+    border-radius: 10px !important;
+    color: var(--text) !important;
+}
+[data-testid="stTimeInput"] input {
+    background: transparent !important;
+    color: var(--text) !important;
+    font-weight: 700 !important;
+    font-size: 1.05rem !important;
+}
+/* الفواصل (النقطتين) في حقل الوقت */
+[data-testid="stTimeInputTimeDisplay"] span {
+    color: var(--text-dim) !important;
 }
 
 .stTabs [data-baseweb="tab-list"] {

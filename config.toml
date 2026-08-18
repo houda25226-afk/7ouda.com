@@ -1,0 +1,10 @@
+# ضعي الملف ده في مسار .streamlit/config.toml جنب app.py بتاعك.
+# ده بيجبر Streamlit يستخدم ثيم غامق ثابت بغض النظر عن إعداد المتصفح/النظام
+# عند المستخدم، عشان الألوان تفضل زي ما هي بالظبط زي التصميم اللي في CSS_THEME.
+[theme]
+base = "dark"
+primaryColor = "#5EEAD4"
+backgroundColor = "#0E1420"
+secondaryBackgroundColor = "#151F30"
+textColor = "#E7ECF3"
+font = "sans serif"

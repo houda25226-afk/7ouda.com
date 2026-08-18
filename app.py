@@ -41,8 +41,272 @@ MODEL_TEXT_COL = "الافادة"          # الاسم اللي بيتحول ل
 CLASSIFICATION_COL = "التصنيف"      # عمود النتيجة: 1 = ناجحة / 0 = غير ناجحة
 WASTED_TIME_COL = "الوقت_المهدر_دقيقة"
 
-SALES_PERSON_CANDIDATES = ["Create By", "create by", "CreateBy", "Created By", "created by", "Sales Person", "sales person", "المحصل"]
+SALES_PERSON_CANDIDATES = ["Create By", "create by", "CreateBy", "Created By", "created by", "Sales Person", "sales person", "المحصل", "Salesperson", "salesperson", "SalesPerson"]
 CREATED_ON_CANDIDATES = ["Created On", "created on", "CreatedOn", "تاريخ الافادة"]
+
+# ========================================================== 
+# إعدادات تويب الوعود القائمة (المحفظة)
+# ==========================================================
+# أسماء الأعمدة المتوقعة في ملف المحفظة — لو اتغيرت غيّرها من هنا.
+PROMISE_SUB_STATE_CANDIDATES = ["Sub State", "sub state", "SubState", "الحالة الفرعية"]
+PROMISE_DUE_DATE_CANDIDATES = ["Follow up Due Date", "follow up due date", "FollowUpDueDate", "تاريخ المتابعة", "Due Date"]
+PROMISE_NET_AMOUNT_CANDIDATES = ["Net Amount", "net amount", "NetAmount", "صافي المبلغ", "مبلغ المديونية"]
+
+# قيمة Sub State اللي بتمثل وعد قائم
+PROMISE_SUB_STATE_VALUE = "واعد بالسداد"
+
+# المحصّلين اللي بنستبعدهم من الوعود القائمة
+PROMISE_EXCLUDED_SALES = [
+    "Archive Companies  II Anas",
+    "Closed payments  II Anas",
+    "Hold Companies  II Anas",
+    "Op II Ibrahim Qassem",
+    "قانونى -الوطنية",
+]
+
+# التاريخ المستهدف: تاريخ اليوم (بيتم تحديده مرة واحدة عند أول عرض للصفحة)
+TODAY_KEY = "promises_today"
+
+
+def _init_promises_today():
+    """بنحدد تاريخ اليوم مرة واحدة في أول رن للصفحة عشان ميترفرش مع كل إعادة تشغيل."""
+    if TODAY_KEY not in st.session_state:
+        st.session_state[TODAY_KEY] = datetime.now().date()
+
+
+def parse_date_cell(val):
+    """بيحول خلية التاريخ لـ date مهما كان شكلها (datetime / date / نص)."""
+    if pd.isna(val):
+        return None
+    if isinstance(val, datetime):
+        return val.date()
+    if isinstance(val, pd.Timestamp):
+        return val.date()
+    if hasattr(val, "date"):
+        return val.date()
+    txt = str(val).strip()
+    if not txt:
+        return None
+    for fmt in ("%Y-%m-%d", "%d/%m/%Y", "%m/%d/%Y", "%Y/%m/%d", "%d-%m-%Y", "%d %B %Y"):
+        try:
+            return datetime.strptime(txt, fmt).date()
+        except (ValueError, TypeError):
+            continue
+    try:
+        return pd.to_datetime(txt, errors="coerce").date()
+    except Exception:
+        return None
+
+
+def page_standing_promises():
+    """تويب الوعود القائمة: رفع المحفظة → فلترة → جدول الوعود + تنزيل + تجميع بالمحصل."""
+    _init_promises_today()
+
+    page_header(
+        "STANDING PROMISES",
+        "📗 الوعود القائمة",
+        "ارفع المحفظة (Excel) وهنفلتر واعد بالسداد لليوم بس — مع ملخص لكل محصّل وصافي المديونية",
+        show_wave=True,
+    )
+
+    # التاريخ المستهدف (اليوم) — المستخدم يقدر يغيّره لو حابب يشوف يوم تاني
+    target_date = st.date_input(
+        "📅 تاريخ الوعود المستهدف",
+        value=st.session_state[TODAY_KEY],
+        key="promises_date_input",
+    )
+    st.session_state[TODAY_KEY] = target_date
+
+    uploaded = st.file_uploader(
+        "📂 ارفع ملف المحفظة (Excel أو CSV)",
+        type=["xlsx", "xls", "csv"],
+        key="promises_portfolio_upload",
+    )
+    if uploaded is not None:
+        st.markdown(
+            f"<div class='upload-status'>📄 الملف المختار: <b>{uploaded.name}</b></div>",
+            unsafe_allow_html=True,
+        )
+        try:
+            df = read_uploaded_dataframe(uploaded)
+        except Exception as e:
+            st.error(f"مش قادر أقرأ الملف: {e}")
+            return
+
+        # 1) حذف أول صف بعد العناوين (زي قاعدة باقي الملفات في التطبيق)
+        if len(df) > 0:
+            df = df.iloc[1:].reset_index(drop=True)
+
+        # توحيد أسماء الأعمدة للبحث
+        cols_map = {str(c).strip(): c for c in df.columns}
+
+        sales_col = find_column(df, SALES_PERSON_CANDIDATES)
+        substate_col = find_column(df, PROMISE_SUB_STATE_CANDIDATES)
+        duedate_col = find_column(df, PROMISE_DUE_DATE_CANDIDATES)
+        net_col = find_column(df, PROMISE_NET_AMOUNT_CANDIDATES)
+
+        missing = [n for n, c in [
+            ("المحصّل (Salesperson)", sales_col),
+            ("الحالة الفرعية (Sub State)", substate_col),
+            ("تاريخ المتابعة (Follow up Due Date)", duedate_col),
+        ] if not c]
+        if missing:
+            st.error(
+                "مش لاقي أعمدة مهمة في الملف. الأعمدة المطلوبة: "
+                f"{', '.join(missing)}\n\nالأعمدة الموجودة في الملف: {', '.join(df.columns.astype(str))}"
+            )
+            return
+
+        # 2) فلترة Salesperson — نستبعد المحصّلين المحددين
+        sales_vals = df[sales_col].astype(str).str.strip()
+        keep_sales = ~sales_vals.isin(PROMISE_EXCLUDED_SALES)
+        dropped_sales = (~keep_sales).sum()
+        df = df[keep_sales].copy()
+
+        # 3) فلترة Sub State = واعد بالسداد
+        if substate_col:
+            sub_vals = df[substate_col].astype(str).str.strip()
+            keep_sub = sub_vals == PROMISE_SUB_STATE_VALUE
+            dropped_sub = (~keep_sub).sum()
+            df = df[keep_sub].copy()
+        else:
+            dropped_sub = 0
+
+        # 4) فلترة Follow up Due Date = تاريخ اليوم
+        df["_due"] = df[duedate_col].apply(parse_date_cell)
+        due_vals = pd.Series([parse_date_cell(v) for v in df[duedate_col]], index=df.index)
+        keep_due = due_vals == target_date
+        dropped_due = (~keep_due).sum()
+        df = df[keep_due].copy()
+
+        # عرض ملخص الفلترة
+        total_in_file = len(read_uploaded_dataframe(uploaded)) - 1  # قبل أي فلترة
+        st.markdown(
+            f"""
+            <div class='schedule-summary'>
+                <span>📌 الوعود القائمة بتاريخ</span> <b>{target_date.strftime("%Y-%m-%d")}</b>
+                <span>·</span> <b>{len(df)}</b> وعد قائم من <b>{max(total_in_file, 0)}</b> صف
+                <span>· تم استبعاد:</span>
+                <b>{dropped_sales}</b> (محصّلين مستبعدين) |
+                <b>{dropped_sub}</b> (الحالة ليست "{PROMISE_SUB_STATE_VALUE}") |
+                <b>{dropped_due}</b> (التاريخ لا يساوي اليوم)
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+        if len(df) == 0:
+            st.warning("⚠️ مفيش وعود قائمة لهذا التاريخ بعد تطبيق الفلاتر.")
+            return
+
+        # عرض الأعمدة المهمة بجانب الجدول لو المستخدم عايز يتأكد
+        cols_used = [n for n, c in [
+            ("المحصّل", sales_col),
+            ("الحالة الفرعية", substate_col),
+            ("تاريخ المتابعة", duedate_col),
+            ("صافي المبلغ", net_col),
+        ] if c]
+        st.caption("💡 الأعمدة المعتمدة في الفلترة: " + " · ".join(cols_used))
+
+        st.markdown("<div class='divider'></div>", unsafe_allow_html=True)
+
+        # 5) الجدول التجميعي لكل محصّل
+        summary = df.groupby(sales_col).agg(
+            **{
+                "عدد الوعود القائمة": (duedate_col, "count"),
+                "صافي المديونية (Net Amount)": (
+                    net_col if net_col else duedate_col,
+                    lambda s: 0,
+                ),
+            }
+        )
+        if net_col and net_col in df.columns:
+            summary = df.groupby(sales_col).agg(
+                **{
+                    "عدد الوعود القائمة": (duedate_col, "count"),
+                    "صافي المديونية (Net Amount)": (net_col, "sum"),
+                }
+            )
+        else:
+            summary = df.groupby(sales_col).agg(
+                **{"عدد الوعود القائمة": (duedate_col, "count")}
+            )
+        summary = summary.sort_values("عدد الوعود القائمة", ascending=False).reset_index()
+        summary.columns = ["المحصل " + str(sales_col), "عدد الوعود القائمة"] + (
+            ["صافي المديونية (Net Amount)"] if net_col and net_col in df.columns else []
+        )
+
+        st.markdown(
+            f"""
+            <div class="chart-card-title" style="margin-bottom:8px;">
+                📊 ملخص الوعود القائمة لكل محصّل — تاريخ {target_date.strftime("%Y-%m-%d")}
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+        st.dataframe(
+            summary,
+            use_container_width=True,
+            hide_index=True,
+            height=min(320, 60 * len(summary) + 100),
+        )
+
+        if net_col and net_col in df.columns:
+            total_amount = pd.to_numeric(df[net_col], errors="coerce").sum()
+            st.markdown(
+                f"""
+                <div class="daily-total-card">
+                    <div>
+                        <div class="daily-total-title">💰 إجمالي صافي المديونية للوعود القائمة</div>
+                        <div class="daily-total-sub">تاريخ {target_date.strftime("%Y-%m-%d")} · {len(summary)} محصّل</div>
+                    </div>
+                    <div class="daily-total-number">{total_amount:,.2f}</div>
+                    <div class="daily-total-label">صافي المبلغ (Net Amount)</div>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+
+        st.markdown("<div class='divider'></div>", unsafe_allow_html=True)
+
+        # 6) جدول الوعود التفصيلي
+        st.markdown(
+            '<div class="chart-card-title" style="margin-bottom:8px;">📋 جدول الوعود القائمة التفصيلي</div>',
+            unsafe_allow_html=True,
+        )
+        display_cols = [c for c in [sales_col, substate_col, duedate_col, net_col] if c]
+        st.dataframe(df[display_cols], use_container_width=True, hide_index=True)
+
+        # 7) أزرار التنزيل
+        today_str = target_date.strftime("%Y-%m-%d")
+        out_excel = io.BytesIO()
+        with pd.ExcelWriter(out_excel, engine="openpyxl") as writer:
+            summary.to_excel(writer, index=False, sheet_name="ملخص المحصلين")
+            df.to_excel(writer, index=False, sheet_name="الوعود القائمة")
+
+        out_csv = io.BytesIO()
+        df.to_csv(out_csv, index=False, encoding="utf-8-sig")
+
+        b1, b2 = st.columns(2)
+        with b1:
+            st.download_button(
+                "⬇️ تحميل الوعود القائمة (Excel)",
+                data=out_excel.getvalue(),
+                file_name=f"الوعود_القائمة_{today_str}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                use_container_width=True,
+                key="promises_excel_download",
+                type="primary",
+            )
+        with b2:
+            st.download_button(
+                "⬇️ تحميل الوعود القائمة (CSV)",
+                data=out_csv.getvalue(),
+                file_name=f"الوعود_القائمة_{today_str}.csv",
+                mime="text/csv",
+                use_container_width=True,
+                key="promises_csv_download",
+            )
 
 st.set_page_config(
     page_title="لوحة تحليل المكالمات | 7oudaModel",
@@ -2212,9 +2476,7 @@ def page_dashboard():
 
 PAGES = {
     "🎯 التصنيف": page_classification,
-    "📗 الوعود القائمة": lambda: page_placeholder(
-        "PENDING", "الوعود القائمة", "المكالمات اللي فيها وعد سداد لسه قائم", "📗"
-    ),
+    "📗 الوعود القائمة": page_standing_promises,
     "📕 الوعود المكسورة": lambda: page_placeholder(
         "BROKEN", "الوعود المكسورة", "المكالمات اللي فيها وعد سداد اتكسر", "📕"
     ),

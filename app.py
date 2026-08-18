@@ -109,6 +109,10 @@ header[data-testid="stHeader"] svg path {
     fill: #101826 !important;
     stroke: #101826 !important;
 }
+header[data-testid="stHeader"] [data-testid="stHeaderBlockToolbar"] button {
+    background: rgba(0,0,0,0.05) !important;
+    border-radius: 8px;
+}
 /* أيقونات الهيدر بتكون أحيانًا داخل span */
 header[data-testid="stHeader"] span[aria-label] svg,
 header[data-testid="stHeader"] div[role="button"] svg {
@@ -193,6 +197,7 @@ section[data-testid="stSidebar"] .stRadio input:checked + div {
     font-weight: 900;
     font-size: 1.75rem;
     margin: 0;
+    color: #F7FAFD !important;
 }
 .page-subtitle {
     color: var(--text-dim);
@@ -292,23 +297,61 @@ section[data-testid="stSidebar"] .stRadio input:checked + div {
     border: none;
     border-radius: 10px;
     padding: 0.6rem 1.2rem;
-    transition: transform 0.15s ease, box-shadow 0.15s ease;
+    transition: transform 0.15s ease, box-shadow 0.15s ease, background 0.15s ease;
 }
 .stButton > button:hover, .stDownloadButton > button:hover {
     transform: translateY(-1px);
     box-shadow: 0 6px 18px rgba(94, 234, 212, 0.25);
     color: #06251F;
 }
+.stButton > button:active, .stDownloadButton > button:active {
+    transform: translateY(0);
+}
+
+/* زرار الثانوي (secondary) — موحّد مع الكروت */
+.stButton > button[kind="secondary"] {
+    background: #17243A !important;
+    color: #E7ECF3 !important;
+    border: 1px solid rgba(94,234,212,.16) !important;
+}
+.stButton > button[kind="secondary"]:hover {
+    border-color: var(--accent) !important;
+    color: var(--accent) !important;
+    background: #1D304C !important;
+}
 
 /* ===== شريط التقدم ===== */
-[data-testid="stProgress"] > div > div { background: var(--accent); }
+[data-testid="stProgress"] > div > div {
+    background: linear-gradient(90deg, var(--accent), #3FD9C7);
+    border-radius: 6px;
+}
+
+/* ===== الـ Radio و Checkbox موحّدين ===== */
+.stApp [data-testid="stRadio"] [data-baseweb="radio-mark"] {
+    background: var(--surface-2) !important;
+    border-color: rgba(94,234,212,.45) !important;
+}
+.stApp [data-testid="stRadio"] input:checked + [data-baseweb="radio-mark"] {
+    background: var(--accent) !important;
+    border-color: var(--accent) !important;
+}
+.stApp [data-testid="stRadio"] input:checked + [data-baseweb="radio-mark"] + span {
+    color: var(--text) !important;
+    font-weight: 700;
+}
+.stApp [data-testid="stCheckbox"] [data-baseweb="checkbox-mark"] {
+    border-radius: 6px !important;
+    border-color: rgba(94,234,212,.45) !important;
+    background: var(--surface-2) !important;
+}
 
 /* ===== المؤشرات (Metrics) ===== */
 [data-testid="stMetric"] {
-    background: var(--surface);
-    border-radius: 12px;
-    padding: 0.8rem 1rem;
-    border: 1px solid rgba(255,255,255,0.06);
+    background: linear-gradient(135deg, #17243A, #121C2E);
+    border-radius: 14px;
+    padding: 0.9rem 1.1rem;
+    border: 1px solid rgba(255,255,255,0.07);
+    box-shadow: 0 6px 20px rgba(0,0,0,.15);
 }
 [data-testid="stMetricValue"] { font-family: 'JetBrains Mono', monospace; color: var(--accent); }
 
@@ -399,7 +442,12 @@ li[role="option"]:hover, li[aria-selected="true"] { background: var(--surface) !
     background: var(--surface);
     border-radius: 10px 10px 0 0;
     color: var(--text-dim);
-    padding: 0.5rem 1rem;
+    padding: 0.55rem 1.1rem;
+    transition: color 0.15s ease, background 0.15s ease;
+}
+.stTabs [data-baseweb="tab"]:hover {
+    color: var(--text);
+    background: var(--surface-2);
 }
 .stTabs [aria-selected="true"] {
     background: var(--surface-2) !important;
@@ -413,6 +461,10 @@ div[data-testid="stAlert"] {
     border-radius: 12px;
     color: var(--text) !important;
 }
+div[data-testid="stAlertWarning"] { border-right: 3px solid var(--warn) !important; }
+div[data-testid="stAlertError"] { border-right: 3px solid var(--danger) !important; }
+div[data-testid="stAlertInfo"] { border-right: 3px solid var(--accent) !important; }
+div[data-testid="stAlertSuccess"] { border-right: 3px solid var(--success) !important; }
 div[data-testid="stAlert"] p { color: var(--text) !important; }
 
 [data-testid="stCaptionContainer"] { color: var(--text-dim) !important; }
@@ -425,6 +477,11 @@ div[data-testid="stAlert"] p { color: var(--text) !important; }
 .actual-logo, .actual-company-logo { overflow:hidden !important; padding:5px !important; }
 .actual-logo img, .actual-company-logo img { width:100% !important; height:100% !important; object-fit:contain !important; display:block !important; border-radius:10px !important; }
 .upload-status { margin:.7rem 0 1rem; padding:.7rem .9rem; border-radius:10px; background:rgba(94,234,212,.08); border:1px solid rgba(94,234,212,.18); color:var(--text) !important; }
+
+/* ===== زرار تحميل الملف المرفوع ===== */
+.stApp [data-testid="stFileUploader"] [data-testid="stFileUploaderFile"] svg {
+    fill: var(--accent) !important;
+}
 </style>
 """
 
@@ -476,21 +533,15 @@ DARK_UI_FIX = """
 .stApp [data-testid="stMetricValue"] {
     color: var(--accent) !important;
 }
+.stApp [data-testid="stVerticalBlockBorderWrapper"] .stMarkdown p,
+.stApp [data-testid="stVerticalBlockBorderWrapper"] .stMarkdown div {
+    color: var(--text);
+}
 
 /* أزرار عامة */
 .stButton > button, .stDownloadButton > button {
     min-height: 44px;
     box-shadow: 0 5px 18px rgba(0,0,0,.18);
-}
-.stButton > button[kind="secondary"] {
-    background: #17243A !important;
-    color: #E7ECF3 !important;
-    border: 1px solid rgba(94,234,212,.16) !important;
-}
-.stButton > button[kind="secondary"]:hover {
-    border-color: var(--accent) !important;
-    color: var(--accent) !important;
-    background: #1D304C !important;
 }
 
 /* عنوانات الأقسام */
@@ -518,6 +569,12 @@ DARK_UI_FIX = """
     border-radius:18px;
     box-shadow:0 10px 30px rgba(0,0,0,.16);
     margin-bottom:9px;
+    transition:transform .18s ease, box-shadow .18s ease, border-color .18s ease;
+}
+.company-card:hover {
+    transform:translateY(-2px);
+    border-color:rgba(94,234,212,.22);
+    box-shadow:0 14px 36px rgba(0,0,0,.22);
 }
 .company-mark, .company-logo {
     display:flex;
@@ -563,9 +620,10 @@ DARK_UI_FIX = """
     gap:16px;
     margin:15px 0 8px;
     padding:14px 18px;
-    border:1px solid rgba(94,234,212,.18);
+    border:1px solid rgba(94,234,212,.22);
     background:linear-gradient(90deg,#132A2C,#151F30);
     border-radius:16px;
+    box-shadow:0 8px 26px rgba(94,234,212,.08);
 }
 .company-logo.large {
     width:70px !important;
@@ -813,7 +871,7 @@ CHART_COLORS = {"ناجحة": COLOR_SUCCESS, "غير ناجحة": COLOR_FAIL}
 PLOTLY_LAYOUT = dict(
     paper_bgcolor="rgba(0,0,0,0)",
     plot_bgcolor="rgba(0,0,0,0)",
-    font_color="#E7ECF3",
+    font_color="#F3F6FA",
     font_family="Tajawal, sans-serif",
     margin=dict(t=42, b=10, l=10, r=10),
 )
@@ -887,7 +945,7 @@ def render_pie_chart(df, class_col):
         fig.update_layout(
             **PLOTLY_LAYOUT, showlegend=True,
             legend=dict(orientation="h", yanchor="bottom", y=-0.15, x=0.5, xanchor="center"),
-            annotations=[dict(text=f"{success_rate}%<br><span style='font-size:11px;color:#8B96AC'>نجاح</span>",
+            annotations=[dict(text=f"{success_rate}%<br><span style='font-size:11px;color:#B9C6D6'>نجاح</span>",
                                x=0.5, y=0.5, font_size=22, font_color=COLOR_SUCCESS, showarrow=False)],
         )
         st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG)
@@ -1092,8 +1150,8 @@ def render_comparison_matrix(df, class_col, sales_col):
             )
             avg_success = perf["نسبة النجاح %"].mean()
             avg_wasted = perf["إجمالي الوقت المهدر"].mean()
-            fig.add_vline(x=avg_success, line_dash="dot", line_color="#8B96AC", opacity=0.5)
-            fig.add_hline(y=avg_wasted, line_dash="dot", line_color="#8B96AC", opacity=0.5)
+            fig.add_vline(x=avg_success, line_dash="dot", line_color="#B9C6D6", opacity=0.5)
+            fig.add_hline(y=avg_wasted, line_dash="dot", line_color="#B9C6D6", opacity=0.5)
             fig.update_traces(textposition="top center", textfont_size=10, marker=dict(line=dict(color="#0E1420", width=1)))
             fig.update_layout(
                 **PLOTLY_LAYOUT, coloraxis_showscale=False,
@@ -1224,7 +1282,7 @@ def build_dashboard_html(df, class_col, sales_col, time_col, source_name="") -> 
                                marker=dict(line=dict(color="#0E1420", width=3)))
         fig_pie.update_layout(showlegend=True,
                                legend=dict(orientation="h", yanchor="bottom", y=-0.15, x=0.5, xanchor="center"),
-                               annotations=[dict(text=f"{success_rate}%<br><span style='font-size:11px;color:#8B96AC'>نجاح</span>",
+                               annotations=[dict(text=f"{success_rate}%<br><span style='font-size:11px;color:#B9C6D6'>نجاح</span>",
                                                   x=0.5, y=0.5, font_size=22, font_color=COLOR_SUCCESS, showarrow=False)])
         chart_pie = ("🎯 توزيع نتائج التصنيف", _fig_to_div(fig_pie, "fig_pie"), False)
 
@@ -1279,8 +1337,8 @@ def build_dashboard_html(df, class_col, sales_col, time_col, source_name="") -> 
             fig_scatter = px.scatter(perf, x="نسبة النجاح %", y="إجمالي الوقت المهدر", size="إجمالي المكالمات",
                                       text=sales_col, color="نسبة النجاح %",
                                       color_continuous_scale=[COLOR_FAIL, COLOR_WARN, COLOR_SUCCESS])
-            fig_scatter.add_vline(x=perf["نسبة النجاح %"].mean(), line_dash="dot", line_color="#8B96AC", opacity=0.5)
-            fig_scatter.add_hline(y=perf["إجمالي الوقت المهدر"].mean(), line_dash="dot", line_color="#8B96AC", opacity=0.5)
+            fig_scatter.add_vline(x=perf["نسبة النجاح %"].mean(), line_dash="dot", line_color="#B9C6D6", opacity=0.5)
+            fig_scatter.add_hline(y=perf["إجمالي الوقت المهدر"].mean(), line_dash="dot", line_color="#B9C6D6", opacity=0.5)
             fig_scatter.update_traces(textposition="top center", textfont_size=10,
                                        marker=dict(line=dict(color="#0E1420", width=1)))
             fig_scatter.update_layout(coloraxis_showscale=False, xaxis_title="نسبة النجاح %",
@@ -1330,7 +1388,7 @@ def build_dashboard_html(df, class_col, sales_col, time_col, source_name="") -> 
 :root {{
     --bg: #0E1420; --surface: #151F30; --surface-2: #1B2A42;
     --accent: #5EEAD4; --success: #34D399; --danger: #FB7185; --warn: #FBBF24;
-    --text: #E7ECF3; --text-dim: #8B96AC;
+    --text: #F3F6FA; --text-dim: #B9C6D6;
 }}
 * {{ box-sizing: border-box; }}
 body {{

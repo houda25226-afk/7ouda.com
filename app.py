@@ -24,6 +24,7 @@ from datetime import datetime
 
 import pandas as pd
 import plotly.express as px
+import plotly.graph_objects as go
 import plotly.io as pio
 import streamlit as st
 import torch
@@ -43,6 +44,7 @@ WASTED_TIME_COL = "الوقت_المهدر_دقيقة"
 
 SALES_PERSON_CANDIDATES = ["Create By", "create by", "CreateBy", "Created By", "created by", "Sales Person", "sales person", "المحصل", "Salesperson", "salesperson", "SalesPerson"]
 CREATED_ON_CANDIDATES = ["Created On", "created on", "CreatedOn", "تاريخ الافادة"]
+DURATION_CANDIDATES = ["Call Duration", "call duration", "CallDuration", "Duration", "duration", "مدة المكالمة", "Call Time", "call time", "Talk Time", "talk time", "Duration (min)", "مدة"]
 
 # ========================================================== 
 # إعدادات تويب الوعود القائمة (المحفظة)
@@ -2305,6 +2307,25 @@ def build_agent_activity(df, sales_col):
         grouped["مغطاة"] / grouped["إجمالي المكالمات"] * 100
     ).round(1)
 
+    # ===== متوسط الفجوة/المدة لكل محصّل (دقيقة) =====
+    # لو الملف فيه عمود "مدة المكالمة" نستخدمه، وإلا نستخدم متوسط الوقت المهدر بين المكالمات.
+    dur_col = find_column(work, DURATION_CANDIDATES)
+    avg_key = "متوسط مدة المكالمة (دقيقة)"
+    if dur_col and dur_col in work.columns:
+        dur = pd.to_numeric(work[dur_col], errors="coerce")
+        avg = dur.groupby(work[sales_col]).mean()
+        grouped[avg_key] = avg.round(1)
+        grouped[avg_key] = grouped[avg_key].fillna(0)
+    else:
+        wt_col = WASTED_TIME_COL if WASTED_TIME_COL in work.columns else None
+        if wt_col:
+            wt = pd.to_numeric(work[wt_col], errors="coerce")
+            avg = wt.groupby(work[sales_col]).mean()
+            grouped[avg_key] = avg.round(1)
+            grouped[avg_key] = grouped[avg_key].fillna(0)
+        else:
+            grouped[avg_key] = 0.0
+
     return grouped.fillna(0).reset_index().rename(columns={sales_col: "المحصّل"})
 
 
@@ -2319,118 +2340,241 @@ def render_period_charts(df, sales_col, time_col, period_title):
 
     total = len(df)
     success = int((df[CLASSIFICATION_COL] == 1).sum())
-    covered = int(agent["مغطاة"].sum())
-    covered_rate = round(covered / total * 100, 1) if total else 0
+    num_agents = len(agent)
+    success_rate = round(success / total * 100, 1) if total else 0
 
     # ===== كروت الإحصائيات العامة =====
+    avg_dur_label = "⏱️ متوسط مدة المكالمات (دقيقة)"
+    avg_dur_total = round(pd.to_numeric(df[WASTED_TIME_COL], errors="coerce").mean(), 1) if WASTED_TIME_COL in df.columns and df[WASTED_TIME_COL].notna().any() else 0.0
+
     st.markdown(
         f"""
         <div class="section-kicker">📊 ملخص {period_title}</div>
-        <div style="display:grid; grid-template-columns: repeat(4, 1fr); gap: 0.9rem; margin-bottom: 1.4rem;">
+        <div style="display:grid; grid-template-columns: repeat(5, 1fr); gap: 0.9rem; margin-bottom: 1.4rem;">
             <div class="agent-card" style="text-align:center; padding:1.2rem 0.8rem;">
                 <div class="stat-num acc" style="font-family:'JetBrains Mono',monospace; font-weight:700; font-size:1.6rem; color:var(--accent);">{total:,}</div>
                 <div class="stat-label" style="color:var(--text-dim); margin-top:0.3rem;">📞 إجمالي المكالمات</div>
             </div>
             <div class="agent-card" style="text-align:center; padding:1.2rem 0.8rem;">
                 <div class="stat-num good" style="font-family:'JetBrains Mono',monospace; font-weight:700; font-size:1.6rem; color:var(--success);">{success:,}</div>
-                <div class="stat-label" style="color:var(--text-dim); margin-top:0.3rem;">✅ المكالمات الناجحة</div>
+                <div class="stat-label" style="color:var(--text-dim); margin-top:0.3rem;">✅ إجمالي المكالمات الناجحة</div>
             </div>
             <div class="agent-card" style="text-align:center; padding:1.2rem 0.8rem;">
-                <div class="stat-num" style="font-family:'JetBrains Mono',monospace; font-weight:700; font-size:1.6rem;">{covered:,}</div>
-                <div class="stat-label" style="color:var(--text-dim); margin-top:0.3rem;">📡 المكالمات المغطاة</div>
+                <div class="stat-num" style="font-family:'JetBrains Mono',monospace; font-weight:700; font-size:1.6rem;">{num_agents:,}</div>
+                <div class="stat-label" style="color:var(--text-dim); margin-top:0.3rem;">👥 عدد المحصلين</div>
             </div>
             <div class="agent-card" style="text-align:center; padding:1.2rem 0.8rem;">
-                <div class="stat-num acc" style="font-family:'JetBrains Mono',monospace; font-weight:700; font-size:1.6rem; color:var(--accent);">{covered_rate}%</div>
-                <div class="stat-label" style="color:var(--text-dim); margin-top:0.3rem;">📈 نسبة التغطية</div>
+                <div class="stat-num good" style="font-family:'JetBrains Mono',monospace; font-weight:700; font-size:1.6rem; color:var(--success);">{success_rate}%</div>
+                <div class="stat-label" style="color:var(--text-dim); margin-top:0.3rem;">📈 نسبة المكالمات الناجحة من الإجمالي</div>
+            </div>
+            <div class="agent-card" style="text-align:center; padding:1.2rem 0.8rem;">
+                <div class="stat-num acc" style="font-family:'JetBrains Mono',monospace; font-weight:700; font-size:1.6rem; color:var(--accent);">{avg_dur_total:,}</div>
+                <div class="stat-label" style="color:var(--text-dim); margin-top:0.3rem;">⏱️ متوسط مدة المكالمات (دقيقة)</div>
             </div>
         </div>
         """,
         unsafe_allow_html=True,
     )
 
-    # ===== كروت نشاط كل محصّل =====
-    render_agent_activity_cards(agent)
+    # ===== شارتات نشاط المحصلين =====
+    render_agent_activity_charts(agent, df, sales_col, period_title)
 
     with st.expander("📋 جدول تفاصيل كل محصّل", expanded=False):
         st.dataframe(agent, use_container_width=True, hide_index=True)
 
 
-def render_agent_activity_cards(agent):
-    """عرض نشاط المحصلين ككروت أنيقة: إجمالي / ناجحة / مغطاة / لايرد ومغلق وعدم التوصل + شريط نسبة التغطية."""
-    st.markdown('<div class="section-kicker">👥 نشاط المحصلين</div>', unsafe_allow_html=True)
-
+def render_agent_activity_charts(agent, df, sales_col, period_title):
+    """شارتات توضح نشاط كل المحصلين: مقارنة إجمالي المكالمات والمكالمات الناجحة ونسبة النجاح."""
     agent_sorted = agent.sort_values("ناجحة", ascending=False).reset_index(drop=True)
+    names = [str(n) for n in agent_sorted["المحصّل"]]
 
-    for rank, (_, row) in enumerate(agent_sorted.iterrows(), start=1):
-        name = row["المحصّل"]
-        total = int(row["إجمالي المكالمات"])
-        success = int(row["ناجحة"])
-        covered = int(row["مغطاة"])
-        noreply = int(row["لايرد"])
-        closed = int(row["مغلق"])
-        unreachable = int(row["عدم التوصل"])
-        rate = row["نسبة المكالمات المغطاة %"]
-
-        success_rate = round(success / total * 100, 1) if total else 0
-        initials = "".join(w[0] for w in name.split()[:2]).upper()[:2]
-        medal = "" if rank > 3 else {1: "🥇", 2: "🥈", 3: "🥉"}.get(rank, "")
-
-        # تصنيف المحصّل (أداء)
-        if rate >= 80:
-            perf_label, perf_color = "أداء ممتاز", "good"
-        elif rate >= 60:
-            perf_label, perf_color = "أداء جيد", "acc"
-        elif rate >= 40:
-            perf_label, perf_color = "أداء متوسط", "warn"
-        else:
-            perf_label, perf_color = "يحتاج متابعة", "bad"
-
-        st.markdown(
-            f"""
-            <div class="agent-card">
-                <div class="agent-name">
-                    <div class="name">
-                        <span class="avatar">{initials}</span>
-                        {name} {medal}
-                    </div>
-                    <span class="rank-badge">#{rank} · {perf_label}</span>
-                </div>
-                <div class="agent-stats">
-                    <div class="agent-stat">
-                        <div class="stat-num">{total:,}</div>
-                        <div class="stat-label">📞 إجمالي المكالمات</div>
-                    </div>
-                    <div class="agent-stat">
-                        <div class="stat-num good">{success:,}</div>
-                        <div class="stat-label">✅ ناجحة</div>
-                    </div>
-                    <div class="agent-stat">
-                        <div class="stat-num acc">{covered:,}</div>
-                        <div class="stat-label">📡 مغطاة</div>
-                    </div>
-                    <div class="agent-stat">
-                        <div class="stat-num bad">{noreply + closed + unreachable:,}</div>
-                        <div class="stat-label">❌ لايرد / مغلق / عدم التوصل</div>
-                    </div>
-                </div>
-                <div class="agent-progress-row">
-                    <span class="prog-label">نسبة النجاح</span>
-                    <div class="agent-progress-bar">
-                        <div class="agent-progress-fill" style="width:{success_rate}%;"></div>
-                    </div>
-                    <span class="prog-value">{success_rate}%</span>
-                </div>
-                <div class="agent-progress-row">
-                    <span class="prog-label">نسبة التغطية</span>
-                    <div class="agent-progress-bar">
-                        <div class="agent-progress-fill" style="width:{rate}%;"></div>
-                    </div>
-                    <span class="prog-value">{rate:.1f}%</span>
-                </div>
-            </div>
-            """,
-            unsafe_allow_html=True,
+    # ===== شارت 1: إجمالي المكالمات مقابل المكالمات الناجحة لكل محصّل =====
+    fig_total = go.Figure()
+    fig_total.add_trace(
+        go.Bar(
+            name="إجمالي المكالمات",
+            x=names,
+            y=agent_sorted["إجمالي المكالمات"],
+            marker_color="#4C6A92",
         )
+    )
+    fig_total.add_trace(
+        go.Bar(
+            name="المكالمات الناجحة",
+            x=names,
+            y=agent_sorted["ناجحة"],
+            marker_color="#4ADE9A",
+        )
+    )
+    fig_total.update_layout(
+        title=f"📞 إجمالي المكالمات والمكالمات الناجحة لكل محصّل ({period_title})",
+        barmode="group",
+        template="plotly_dark",
+        paper_bgcolor="#0E1420",
+        plot_bgcolor="#0E1420",
+        font=dict(color="#F3F6FA", size=13),
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+        margin=dict(l=10, r=10, t=45, b=10),
+        yaxis=dict(gridcolor="#1E2B42"),
+        xaxis=dict(gridcolor="#1E2B42"),
+    )
+    st.plotly_chart(fig_total, use_container_width=True)
+
+    # ===== شارت 2: نسبة نجاح كل محصّل =====
+    success_rates = []
+    for _, row in agent_sorted.iterrows():
+        t = int(row["إجمالي المكالمات"])
+        s = int(row["ناجحة"])
+        success_rates.append(round(s / t * 100, 1) if t else 0)
+
+    fig_rate = go.Figure(
+        go.Bar(
+            x=success_rates,
+            y=names,
+            orientation="h",
+            marker=dict(
+                color="#3DE0C9",
+                line=dict(color="#2BC7B4", width=1),
+            ),
+            text=[f"{r}%" for r in success_rates],
+            textposition="outside",
+        )
+    )
+    fig_rate.update_layout(
+        title="📈 نسبة نجاح كل محصّل من إجمالي مكالماته",
+        template="plotly_dark",
+        paper_bgcolor="#0E1420",
+        plot_bgcolor="#0E1420",
+        font=dict(color="#F3F6FA", size=13),
+        margin=dict(l=10, r=40, t=45, b=10),
+        xaxis=dict(gridcolor="#1E2B42", range=[0, 100]),
+        yaxis=dict(gridcolor="#1E2B42"),
+    )
+    st.plotly_chart(fig_rate, use_container_width=True)
+
+    # ===== شارت 3: أنواع المكالمات لكل محصّل =====
+    render_call_types_chart(df, sales_col, period_title)
+
+    # ===== شارت 4: متوسط مدة المكالمات لكل محصّل =====
+    render_avg_duration_chart(agent, period_title)
+
+    # ===== شارت 5: توزيع ثقة التصنيف لكل محصّل =====
+    render_confidence_chart(df, sales_col, period_title)
+
+
+def render_call_types_chart(df, sales_col, period_title):
+    """شارت تفصيلي لأنواع المكالمات (مغطاة / لايرد / مغلق / عدم التوصل) لكل محصّل."""
+    work = df.copy()
+    status_col, status_series = get_status_series(work)
+    work["_status_norm"] = status_series if status_col else "مغطاة"
+
+    types_order = ["مغطاة", "لايرد", "مغلق", "عدم التوصل"]
+    type_colors = {"مغطاة": "#4ADE9A", "لايرد": "#FB7185", "مغلق": "#FBBF24", "عدم التوصل": "#60A5FA"}
+
+    fig = go.Figure()
+    for t in types_order:
+        counts = work[work["_status_norm"] == t].groupby(sales_col).size()
+        fig.add_trace(
+            go.Bar(
+                name=t,
+                x=[str(n) for n in counts.index],
+                y=counts.values,
+                marker_color=type_colors[t],
+                text=[str(v) for v in counts.values],
+                textposition="outside",
+            )
+        )
+    fig.update_layout(
+        title=f"📑 أنواع المكالمات لكل محصّل ({period_title})",
+        barmode="stack",
+        template="plotly_dark",
+        paper_bgcolor="#0E1420",
+        plot_bgcolor="#0E1420",
+        font=dict(color="#F3F6FA", size=13),
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+        margin=dict(l=10, r=10, t=45, b=10),
+        yaxis=dict(gridcolor="#1E2B42"),
+        xaxis=dict(gridcolor="#1E2B42"),
+    )
+    st.plotly_chart(fig, use_container_width=True)
+
+
+def render_avg_duration_chart(agent, period_title):
+    """شارت متوسط مدة المكالمات لكل محصّل."""
+    dur_key = "متوسط مدة المكالمة (دقيقة)"
+    if dur_key not in agent.columns:
+        return
+
+    agent_sorted = agent.sort_values(dur_key, ascending=True).reset_index(drop=True)
+    names = [str(n) for n in agent_sorted["المحصّل"]]
+    values = [round(float(v), 1) for v in agent_sorted[dur_key]]
+
+    fig = go.Figure(
+        go.Bar(
+            x=values,
+            y=names,
+            orientation="h",
+            marker=dict(
+                color="#60A5FA",
+                line=dict(color="#3B82F6", width=1),
+            ),
+            text=[f"{v:,} دقيقة" for v in values],
+            textposition="outside",
+        )
+    )
+    fig.update_layout(
+        title=f"⏱️ متوسط مدة المكالمات لكل محصّل ({period_title})",
+        template="plotly_dark",
+        paper_bgcolor="#0E1420",
+        plot_bgcolor="#0E1420",
+        font=dict(color="#F3F6FA", size=13),
+        margin=dict(l=10, r=70, t=45, b=10),
+        xaxis=dict(gridcolor="#1E2B42"),
+        yaxis=dict(gridcolor="#1E2B42"),
+    )
+    st.plotly_chart(fig, use_container_width=True)
+
+
+def render_confidence_chart(df, sales_col, period_title):
+    """شارت توزيع نسبة الثقة في التصنيف لكل محصّل."""
+    conf_col = "نسبة_الثقة" if "نسبة_الثقة" in df.columns else None
+    if not conf_col:
+        return
+
+    conf = pd.to_numeric(df[conf_col], errors="coerce").dropna()
+    if conf.empty or sales_col not in df.columns:
+        return
+
+    work = df.copy()
+    work[conf_col] = pd.to_numeric(work[conf_col], errors="coerce")
+
+    fig = go.Figure()
+    agents_sorted = work[sales_col].value_counts().index.tolist()
+    palette = ["#3DE0C9", "#4ADE9A", "#60A5FA", "#FBBF24", "#FB7185", "#A78BFA"]
+    for i, a in enumerate(agents_sorted):
+        vals = work[work[sales_col] == a][conf_col].dropna()
+        if vals.empty:
+            continue
+        fig.add_trace(
+            go.Box(
+                name=str(a),
+                y=vals.values,
+                marker_color=palette[i % len(palette)],
+                boxmean=True,
+                boxpoints="outliers",
+            )
+        )
+    fig.update_layout(
+        title=f"🎯 توزيع نسبة الثقة في التصنيف لكل محصّل ({period_title})",
+        template="plotly_dark",
+        paper_bgcolor="#0E1420",
+        plot_bgcolor="#0E1420",
+        font=dict(color="#F3F6FA", size=13),
+        margin=dict(l=10, r=10, t=45, b=10),
+        yaxis=dict(gridcolor="#1E2B42", title="نسبة الثقة (%)", range=[0, 105]),
+        xaxis=dict(gridcolor="#1E2B42"),
+    )
+    st.plotly_chart(fig, use_container_width=True)
 
 
 def render_daily_aggregate():

@@ -645,6 +645,133 @@ div[data-testid="stVerticalBlockBorderWrapper"] {
     border-bottom: 1px solid rgba(255,255,255,0.06);
 }
 
+/* ===== كروت نشاط المحصلين (Agent Activity) ===== */
+.section-kicker {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.75rem;
+    letter-spacing: 0.12em;
+    color: var(--accent);
+    text-transform: uppercase;
+    margin: 0.6rem 0 1rem 0;
+    padding-bottom: 0.6rem;
+    border-bottom: 1px solid rgba(255,255,255,0.06);
+}
+
+.agent-card {
+    background: linear-gradient(135deg, #17243A 0%, #121C2E 100%);
+    border: 1px solid rgba(255,255,255,0.07);
+    border-radius: 16px;
+    padding: 1.1rem 1.3rem;
+    margin-bottom: 1rem;
+    box-shadow: 0 6px 20px rgba(0,0,0,.15);
+    transition: transform 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease;
+}
+.agent-card:hover {
+    transform: translateY(-2px);
+    border-color: rgba(94,234,212,0.35);
+    box-shadow: 0 10px 28px rgba(0,0,0,.22);
+}
+
+.agent-name {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.6rem;
+}
+.agent-name .name {
+    font-weight: 900;
+    font-size: 1.05rem;
+    color: var(--text);
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+.agent-name .avatar {
+    width: 34px;
+    height: 34px;
+    border-radius: 50%;
+    background: linear-gradient(135deg, var(--accent), #3FD9C7);
+    color: #06251F;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 900;
+    font-size: 0.85rem;
+    flex-shrink: 0;
+}
+.agent-name .rank-badge {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.65rem;
+    letter-spacing: 0.1em;
+    color: #06251F;
+    background: linear-gradient(90deg, var(--accent), #3FD9C7);
+    border-radius: 999px;
+    padding: 0.2rem 0.6rem;
+    font-weight: 900;
+}
+
+.agent-stats {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 0.55rem;
+    margin-top: 0.9rem;
+}
+.agent-stat {
+    background: rgba(255,255,255,0.04);
+    border: 1px solid rgba(255,255,255,0.06);
+    border-radius: 10px;
+    padding: 0.55rem 0.6rem;
+    text-align: center;
+}
+.agent-stat .stat-num {
+    font-family: 'JetBrains Mono', monospace;
+    font-weight: 700;
+    font-size: 1.1rem;
+    color: var(--text);
+    line-height: 1.2;
+}
+.agent-stat .stat-num.good { color: var(--success); }
+.agent-stat .stat-num.warn { color: var(--warn); }
+.agent-stat .stat-num.bad { color: var(--danger); }
+.agent-stat .stat-num.acc { color: var(--accent); }
+.agent-stat .stat-label {
+    font-size: 0.72rem;
+    color: var(--text-dim);
+    margin-top: 0.15rem;
+}
+
+.agent-progress-row {
+    display: flex;
+    align-items: center;
+    gap: 0.7rem;
+    margin-top: 0.8rem;
+}
+.agent-progress-row .prog-label {
+    font-size: 0.78rem;
+    color: var(--text-dim);
+    white-space: nowrap;
+}
+.agent-progress-bar {
+    flex: 1;
+    height: 8px;
+    background: rgba(255,255,255,0.08);
+    border-radius: 999px;
+    overflow: hidden;
+}
+.agent-progress-fill {
+    height: 100%;
+    border-radius: 999px;
+    background: linear-gradient(90deg, var(--accent), #3FD9C7);
+    transition: width 0.5s ease;
+}
+.agent-progress-row .prog-value {
+    font-family: 'JetBrains Mono', monospace;
+    font-weight: 700;
+    font-size: 0.85rem;
+    color: var(--accent);
+    white-space: nowrap;
+}
+
 /* ===== كروت أبرز النقاط (Highlights) ===== */
 .highlight-label {
     font-size: 0.82rem;
@@ -2190,74 +2317,120 @@ def render_period_charts(df, sales_col, time_col, period_title):
     if agent.empty:
         return
 
-    st.markdown(f'<div class="section-kicker">📊 تحليل نشاط {period_title}</div>', unsafe_allow_html=True)
-
-    m1, m2, m3, m4 = st.columns(4)
     total = len(df)
     success = int((df[CLASSIFICATION_COL] == 1).sum())
     covered = int(agent["مغطاة"].sum())
     covered_rate = round(covered / total * 100, 1) if total else 0
 
-    m1.metric("📞 إجمالي المكالمات", f"{total:,}")
-    m2.metric("✅ المكالمات الناجحة", f"{success:,}")
-    m3.metric("📡 المكالمات المغطاة", f"{covered:,}")
-    m4.metric("📈 نسبة التغطية", f"{covered_rate}%")
-
-    c1, c2 = st.columns(2)
-
-    with c1:
-        fig = px.bar(
-            agent,
-            x="المحصّل",
-            y=["ناجحة", "مغطاة"],
-            barmode="group",
-            color_discrete_sequence=[COLOR_SUCCESS, COLOR_ACCENT],
-            text_auto=True,
-        )
-        fig.update_layout(
-            **PLOTLY_LAYOUT,
-            xaxis_title="",
-            yaxis_title="عدد المكالمات",
-            legend_title_text="",
-        )
-        st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG)
-
-    with c2:
-        fig2 = px.bar(
-            agent,
-            x="المحصّل",
-            y=["لايرد", "مغلق", "عدم التوصل"],
-            barmode="stack",
-            color_discrete_sequence=[COLOR_WARN, COLOR_FAIL, "#A78BFA"],
-        )
-        fig2.update_layout(
-            **PLOTLY_LAYOUT,
-            xaxis_title="",
-            yaxis_title="عدد المكالمات",
-            legend_title_text="",
-        )
-        st.plotly_chart(fig2, use_container_width=True, config=PLOTLY_CONFIG)
-
-    fig3 = px.bar(
-        agent.sort_values("نسبة المكالمات المغطاة %"),
-        x="نسبة المكالمات المغطاة %",
-        y="المحصّل",
-        orientation="h",
-        color="نسبة المكالمات المغطاة %",
-        color_continuous_scale=[COLOR_FAIL, COLOR_WARN, COLOR_SUCCESS],
-        text="نسبة المكالمات المغطاة %",
+    # ===== كروت الإحصائيات العامة =====
+    st.markdown(
+        f"""
+        <div class="section-kicker">📊 ملخص {period_title}</div>
+        <div style="display:grid; grid-template-columns: repeat(4, 1fr); gap: 0.9rem; margin-bottom: 1.4rem;">
+            <div class="agent-card" style="text-align:center; padding:1.2rem 0.8rem;">
+                <div class="stat-num acc" style="font-family:'JetBrains Mono',monospace; font-weight:700; font-size:1.6rem; color:var(--accent);">{total:,}</div>
+                <div class="stat-label" style="color:var(--text-dim); margin-top:0.3rem;">📞 إجمالي المكالمات</div>
+            </div>
+            <div class="agent-card" style="text-align:center; padding:1.2rem 0.8rem;">
+                <div class="stat-num good" style="font-family:'JetBrains Mono',monospace; font-weight:700; font-size:1.6rem; color:var(--success);">{success:,}</div>
+                <div class="stat-label" style="color:var(--text-dim); margin-top:0.3rem;">✅ المكالمات الناجحة</div>
+            </div>
+            <div class="agent-card" style="text-align:center; padding:1.2rem 0.8rem;">
+                <div class="stat-num" style="font-family:'JetBrains Mono',monospace; font-weight:700; font-size:1.6rem;">{covered:,}</div>
+                <div class="stat-label" style="color:var(--text-dim); margin-top:0.3rem;">📡 المكالمات المغطاة</div>
+            </div>
+            <div class="agent-card" style="text-align:center; padding:1.2rem 0.8rem;">
+                <div class="stat-num acc" style="font-family:'JetBrains Mono',monospace; font-weight:700; font-size:1.6rem; color:var(--accent);">{covered_rate}%</div>
+                <div class="stat-label" style="color:var(--text-dim); margin-top:0.3rem;">📈 نسبة التغطية</div>
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
     )
-    fig3.update_traces(texttemplate="%{text:.1f}%", textposition="outside")
-    fig3.update_layout(
-        **PLOTLY_LAYOUT,
-        xaxis_title="نسبة المكالمات المغطاة %",
-        yaxis_title="",
-        coloraxis_showscale=False,
-    )
-    st.plotly_chart(fig3, use_container_width=True, config=PLOTLY_CONFIG)
 
-    with st.expander("📋 تفاصيل كل محصّل", expanded=False):
+    # ===== كروت نشاط كل محصّل =====
+    render_agent_activity_cards(agent)
+
+    with st.expander("📋 جدول تفاصيل كل محصّل", expanded=False):
         st.dataframe(agent, use_container_width=True, hide_index=True)
+
+
+def render_agent_activity_cards(agent):
+    """عرض نشاط المحصلين ككروت أنيقة: إجمالي / ناجحة / مغطاة / لايرد ومغلق وعدم التوصل + شريط نسبة التغطية."""
+    st.markdown('<div class="section-kicker">👥 نشاط المحصلين</div>', unsafe_allow_html=True)
+
+    agent_sorted = agent.sort_values("ناجحة", ascending=False).reset_index(drop=True)
+
+    for rank, (_, row) in enumerate(agent_sorted.iterrows(), start=1):
+        name = row["المحصّل"]
+        total = int(row["إجمالي المكالمات"])
+        success = int(row["ناجحة"])
+        covered = int(row["مغطاة"])
+        noreply = int(row["لايرد"])
+        closed = int(row["مغلق"])
+        unreachable = int(row["عدم التوصل"])
+        rate = row["نسبة المكالمات المغطاة %"]
+
+        success_rate = round(success / total * 100, 1) if total else 0
+        initials = "".join(w[0] for w in name.split()[:2]).upper()[:2]
+        medal = "" if rank > 3 else {1: "🥇", 2: "🥈", 3: "🥉"}.get(rank, "")
+
+        # تصنيف المحصّل (أداء)
+        if rate >= 80:
+            perf_label, perf_color = "أداء ممتاز", "good"
+        elif rate >= 60:
+            perf_label, perf_color = "أداء جيد", "acc"
+        elif rate >= 40:
+            perf_label, perf_color = "أداء متوسط", "warn"
+        else:
+            perf_label, perf_color = "يحتاج متابعة", "bad"
+
+        st.markdown(
+            f"""
+            <div class="agent-card">
+                <div class="agent-name">
+                    <div class="name">
+                        <span class="avatar">{initials}</span>
+                        {name} {medal}
+                    </div>
+                    <span class="rank-badge">#{rank} · {perf_label}</span>
+                </div>
+                <div class="agent-stats">
+                    <div class="agent-stat">
+                        <div class="stat-num">{total:,}</div>
+                        <div class="stat-label">📞 إجمالي المكالمات</div>
+                    </div>
+                    <div class="agent-stat">
+                        <div class="stat-num good">{success:,}</div>
+                        <div class="stat-label">✅ ناجحة</div>
+                    </div>
+                    <div class="agent-stat">
+                        <div class="stat-num acc">{covered:,}</div>
+                        <div class="stat-label">📡 مغطاة</div>
+                    </div>
+                    <div class="agent-stat">
+                        <div class="stat-num bad">{noreply + closed + unreachable:,}</div>
+                        <div class="stat-label">❌ لايرد / مغلق / عدم التوصل</div>
+                    </div>
+                </div>
+                <div class="agent-progress-row">
+                    <span class="prog-label">نسبة النجاح</span>
+                    <div class="agent-progress-bar">
+                        <div class="agent-progress-fill" style="width:{success_rate}%;"></div>
+                    </div>
+                    <span class="prog-value">{success_rate}%</span>
+                </div>
+                <div class="agent-progress-row">
+                    <span class="prog-label">نسبة التغطية</span>
+                    <div class="agent-progress-bar">
+                        <div class="agent-progress-fill" style="width:{rate}%;"></div>
+                    </div>
+                    <span class="prog-value">{rate:.1f}%</span>
+                </div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
 
 
 def render_daily_aggregate():

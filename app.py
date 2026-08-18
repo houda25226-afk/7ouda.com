@@ -2269,13 +2269,9 @@ def classify_period_file(uploaded_file, period_key):
 
 def normalize_status(value):
     text = str(value).strip().lower()
-    if any(word in text for word in NO_ANSWER_WORDS):
-        return "لايرد"
     if any(word in text for word in CLOSED_WORDS):
         return "مغلق"
-    if any(word in text for word in UNREACHABLE_WORDS):
-        return "عدم التوصل"
-    return "مغطاة"
+    return None
 
 
 def get_status_series(df):
@@ -2290,7 +2286,7 @@ def build_agent_activity(df, sales_col):
         return pd.DataFrame()
 
     work = df.copy()
-    work["_status_norm"] = "مغطاة"
+    work["_status_norm"] = None
     status_col, status_series = get_status_series(work)
     if status_col:
         work["_status_norm"] = status_series
@@ -2299,13 +2295,8 @@ def build_agent_activity(df, sales_col):
     grouped["ناجحة"] = work[work[CLASSIFICATION_COL] == 1].groupby(sales_col).size()
     grouped["ناجحة"] = grouped["ناجحة"].fillna(0).astype(int)
 
-    for status in ["مغطاة", "لايرد", "مغلق", "عدم التوصل"]:
-        counts = work[work["_status_norm"] == status].groupby(sales_col).size()
-        grouped[status] = counts.fillna(0).astype(int)
-
-    grouped["نسبة المكالمات المغطاة %"] = (
-        grouped["مغطاة"] / grouped["إجمالي المكالمات"] * 100
-    ).round(1)
+    counts = work[work["_status_norm"] == "مغلق"].groupby(sales_col).size()
+    grouped["مغلق"] = counts.fillna(0).astype(int)
 
     # ===== متوسط الفجوة/المدة لكل محصّل (دقيقة) =====
     # لو الملف فيه عمود "مدة المكالمة" نستخدمه، وإلا نستخدم متوسط الوقت المهدر بين المكالمات.
@@ -2463,27 +2454,22 @@ def render_agent_activity_charts(agent, df, sales_col, period_title):
 
 
 def render_call_types_chart(df, sales_col, period_title):
-    """شارت تفصيلي لأنواع المكالمات (مغطاة / لايرد / مغلق / عدم التوصل) لكل محصّل."""
+    """شارت تفصيلي: المكالمات المغلقة لكل محصّل."""
     work = df.copy()
     status_col, status_series = get_status_series(work)
-    work["_status_norm"] = status_series if status_col else "مغطاة"
+    work["_status_norm"] = status_series if status_col else None
 
-    types_order = ["مغطاة", "لايرد", "مغلق", "عدم التوصل"]
-    type_colors = {"مغطاة": "#4ADE9A", "لايرد": "#FB7185", "مغلق": "#FBBF24", "عدم التوصل": "#60A5FA"}
-
-    fig = go.Figure()
-    for t in types_order:
-        counts = work[work["_status_norm"] == t].groupby(sales_col).size()
-        fig.add_trace(
-            go.Bar(
-                name=t,
-                x=[str(n) for n in counts.index],
-                y=counts.values,
-                marker_color=type_colors[t],
-                text=[str(v) for v in counts.values],
-                textposition="outside",
-            )
+    counts = work[work["_status_norm"] == "مغلق"].groupby(sales_col).size()
+    fig = go.Figure(
+        go.Bar(
+            name="مغلق",
+            x=[str(n) for n in counts.index],
+            y=counts.values,
+            marker_color="#FBBF24",
+            text=[str(v) for v in counts.values],
+            textposition="outside",
         )
+    )
     fig.update_layout(
         title=f"📑 أنواع المكالمات لكل محصّل ({period_title})",
         barmode="stack",

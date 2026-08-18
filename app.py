@@ -390,6 +390,230 @@ div[data-testid="stAlert"] p { color: var(--text) !important; }
 st.markdown(CSS_THEME, unsafe_allow_html=True)
 
 
+# تحسينات إضافية للـ Dark Theme + كروت الشركات والفترات
+DARK_UI_FIX = """
+<style>
+/* نصوص Streamlit الافتراضية */
+.stApp, .stApp p, .stApp span, .stApp label, .stApp small,
+.stApp div, .stApp [data-testid="stMarkdownContainer"] {
+    color: var(--text);
+}
+.stApp [data-testid="stCaptionContainer"],
+.stApp .stCaption,
+.stApp [data-testid="stHelp"] {
+    color: var(--text-dim) !important;
+}
+.stApp input, .stApp textarea {
+    color: var(--text) !important;
+}
+.stApp input::placeholder, .stApp textarea::placeholder {
+    color: #9AA6BA !important;
+    opacity: 1 !important;
+}
+.stApp [data-baseweb="select"] span {
+    color: var(--text) !important;
+}
+.stApp [role="option"] {
+    color: var(--text) !important;
+}
+.stApp [data-testid="stRadio"] label,
+.stApp [data-testid="stCheckbox"] label {
+    color: var(--text) !important;
+}
+.stApp [data-testid="stFileUploader"] section {
+    color: var(--text) !important;
+}
+.stApp [data-testid="stFileUploader"] section * {
+    color: var(--text) !important;
+}
+.stApp [data-testid="stDataFrame"] * {
+    color: var(--text);
+}
+.stApp [data-testid="stMetricLabel"] {
+    color: var(--text-dim) !important;
+}
+.stApp [data-testid="stMetricValue"] {
+    color: var(--accent) !important;
+}
+
+/* أزرار عامة */
+.stButton > button, .stDownloadButton > button {
+    min-height: 44px;
+    box-shadow: 0 5px 18px rgba(0,0,0,.18);
+}
+.stButton > button[kind="secondary"] {
+    background: #17243A !important;
+    color: #E7ECF3 !important;
+    border: 1px solid rgba(94,234,212,.16) !important;
+}
+.stButton > button[kind="secondary"]:hover {
+    border-color: var(--accent) !important;
+    color: var(--accent) !important;
+    background: #1D304C !important;
+}
+
+/* عنوانات الأقسام */
+.section-kicker {
+    font-size: 1.05rem;
+    font-weight: 900;
+    color: #F3F7FB !important;
+    margin: .25rem 0 .15rem;
+}
+.section-help {
+    color: #AAB6C9 !important;
+    font-size: .88rem;
+    margin-bottom: .9rem;
+}
+
+/* كروت الشركات */
+.company-card {
+    display:flex;
+    align-items:center;
+    gap:14px;
+    min-height:100px;
+    padding:18px;
+    background:linear-gradient(135deg,#17243A,#121C2E);
+    border:1px solid rgba(255,255,255,.08);
+    border-radius:18px;
+    box-shadow:0 10px 30px rgba(0,0,0,.16);
+    margin-bottom:9px;
+}
+.company-mark, .company-logo {
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    border:2px solid;
+    border-radius:16px;
+    flex-shrink:0;
+    font-size:1.45rem;
+    font-weight:900;
+    box-shadow:0 0 24px rgba(0,0,0,.2);
+}
+.company-name {
+    font-size:1.05rem;
+    font-weight:900;
+    color:#F4F7FB !important;
+}
+.company-sub, .selected-company-sub {
+    font-size:.78rem;
+    color:#94A3B8 !important;
+    margin-top:4px;
+}
+.selected-company {
+    display:flex;
+    align-items:center;
+    gap:16px;
+    margin:15px 0 8px;
+    padding:14px 18px;
+    border:1px solid rgba(94,234,212,.18);
+    background:linear-gradient(90deg,#132A2C,#151F30);
+    border-radius:16px;
+}
+.company-logo.large {
+    width:70px !important;
+    height:70px !important;
+    border-radius:18px;
+}
+.company-logo.large span {
+    font-size:1.8rem;
+    font-weight:900;
+}
+.selected-company-label {
+    font-size:.75rem;
+    color:#94A3B8 !important;
+}
+.selected-company-name {
+    font-size:1.25rem;
+    font-weight:900;
+    color:#F8FAFC !important;
+    margin-top:2px;
+}
+
+/* بانر الفترة */
+.period-banner {
+    display:flex;
+    align-items:center;
+    gap:14px;
+    padding:15px 18px;
+    margin:12px 0;
+    background:linear-gradient(135deg,#182A43,#132136);
+    border:1px solid rgba(110,168,254,.18);
+    border-radius:16px;
+}
+.period-banner.daily {
+    border-color:rgba(94,234,212,.2);
+    background:linear-gradient(135deg,#142F2E,#142237);
+}
+.period-icon {
+    font-size:1.6rem;
+}
+.period-label {
+    color:#F5F8FC !important;
+    font-weight:900;
+    font-size:1.05rem;
+}
+.period-desc {
+    color:#9EACC0 !important;
+    font-size:.8rem;
+    margin-top:3px;
+}
+.schedule-summary {
+    margin:8px 0 14px;
+    padding:10px 14px;
+    background:#111B2C;
+    border:1px solid rgba(255,255,255,.06);
+    border-radius:10px;
+    color:#C8D2E0 !important;
+    font-size:.86rem;
+}
+.schedule-summary span {
+    color:#8FA0B7 !important;
+    margin:0 4px;
+}
+.schedule-summary b {
+    color:var(--accent) !important;
+}
+
+/* المجمع اليومي */
+.daily-total-card {
+    display:grid;
+    grid-template-columns:1fr auto auto;
+    align-items:center;
+    gap:18px;
+    padding:18px 22px;
+    margin:12px 0 18px;
+    background:linear-gradient(135deg,#122B2A,#17243A);
+    border:1px solid rgba(94,234,212,.2);
+    border-radius:18px;
+}
+.daily-total-title {
+    color:#F7FAFC !important;
+    font-size:1.15rem;
+    font-weight:900;
+}
+.daily-total-sub {
+    color:#94A3B8 !important;
+    font-size:.8rem;
+    margin-top:4px;
+}
+.daily-total-number {
+    color:var(--accent) !important;
+    font-family:'JetBrains Mono',monospace;
+    font-size:1.65rem;
+    font-weight:900;
+}
+.daily-total-label {
+    color:#8FA0B7 !important;
+    font-size:.75rem;
+}
+@media (max-width: 800px) {
+    .daily-total-card { grid-template-columns:1fr; }
+}
+</style>
+"""
+st.markdown(DARK_UI_FIX, unsafe_allow_html=True)
+
+
 def render_waveform(n_bars: int = 24):
     heights = [14, 22, 30, 18, 26, 30, 20, 26, 16, 22] * (n_bars // 10 + 1)
     bars = "".join(
@@ -1138,72 +1362,303 @@ h1 {{ font-weight: 900; font-size: 1.9rem; margin: 0; }}
 # تويب 1: التصنيف
 # ==========================================================
 
-def page_classification():
-    page_header(
-        "CALL QUALITY CLASSIFIER",
-        "🎯 تصنيف المكالمات",
-        "ارفع الملف، وهيتصنّف كل صف تلقائيًا (1 = ناجحة، 0 = غير ناجحة) ويتحسب الوقت المهدر لكل محصّل",
-        show_wave=True,
+
+# ==========================================================
+# أدوات اختيار الشركة / الفترة / التجميع اليومي
+# ==========================================================
+
+COMPANIES = {
+    "الوطنية للتأمين": {
+        "short": "الوطنية",
+        "mark": "و",
+        "accent": "#22C7A5",
+        "surface": "#102D2A",
+    },
+    "تري للتأمين": {
+        "short": "تري",
+        "mark": "ت",
+        "accent": "#6EA8FE",
+        "surface": "#17233B",
+    },
+}
+
+PERIODS = {
+    "الفترة الأولى": "period_1",
+    "الفترة الثانية": "period_2",
+    "المجمع اليومي": "daily",
+}
+
+STATUS_CANDIDATES = [
+    "Main State", "Final State", "Status", "State", "Call Status",
+    "الحالة الرئيسية", "الحالة النهائية", "الحالة", "حالة المكالمة",
+]
+
+NO_ANSWER_WORDS = ["لا يرد", "لايرد", "لم يرد", "لا رد", "no answer", "not answer"]
+CLOSED_WORDS = ["مغلق", "مغلقه", "مغلقه", "closed", "غير متاح"]
+UNREACHABLE_WORDS = ["عدم التوصل", "لم يتم التوصل", "غير متوصل", "unreachable", "تعذر الوصول"]
+
+
+def init_activity_state():
+    defaults = {
+        "selected_company": None,
+        "selected_period": None,
+        "period_1_start": dt_time(9, 0),
+        "period_1_end": dt_time(12, 30),
+        "period_2_start": dt_time(13, 0),
+        "period_2_end": dt_time(17, 0),
+        "period_1_has_break": False,
+        "period_2_has_break": False,
+        "period_1_break_start": dt_time(11, 0),
+        "period_1_break_end": dt_time(11, 15),
+        "period_2_break_start": dt_time(15, 0),
+        "period_2_break_end": dt_time(15, 15),
+        "period_results": {},
+    }
+    for key, value in defaults.items():
+        st.session_state.setdefault(key, value)
+
+
+def render_company_logo(company_name: str, size: int = 62):
+    cfg = COMPANIES[company_name]
+    st.markdown(
+        f"""
+        <div class="company-logo"
+             style="width:{size}px;height:{size}px;background:{cfg['surface']};
+                    border-color:{cfg['accent']};color:{cfg['accent']};">
+            <span>{cfg['mark']}</span>
+        </div>
+        """,
+        unsafe_allow_html=True,
     )
 
-    with st.expander("⚙️ إعدادات حساب الوقت المهدر (وقت البريك)", expanded=False):
-        c1, c2 = st.columns(2)
-        break_start = c1.time_input("بداية البريك", value=dt_time(13, 0))
-        break_end = c2.time_input("نهاية البريك", value=dt_time(13, 30))
 
-    uploaded_file = st.file_uploader("ارفع ملف البيانات (CSV أو Excel)", type=["csv", "xlsx", "xls"])
+def render_company_selector():
+    st.markdown('<div class="section-kicker">🏢 اختر شركة التصنيف</div>', unsafe_allow_html=True)
+    st.markdown(
+        '<div class="section-help">اختار الشركة الأول، وبعدها هنحدد فترة النشاط ومواعيدها.</div>',
+        unsafe_allow_html=True,
+    )
 
-    if uploaded_file is not None:
-        st.session_state["raw_file_bytes"] = uploaded_file.getvalue()
-        st.session_state["raw_file_name"] = uploaded_file.name
-        st.session_state["raw_file_size"] = uploaded_file.size
+    c1, c2 = st.columns(2)
+    for col, company_name in zip((c1, c2), COMPANIES.keys()):
+        cfg = COMPANIES[company_name]
+        with col:
+            st.markdown(
+                f"""
+                <div class="company-card">
+                    <div class="company-mark"
+                         style="background:{cfg['surface']};border-color:{cfg['accent']};
+                                color:{cfg['accent']};">{cfg['mark']}</div>
+                    <div>
+                        <div class="company-name">{company_name}</div>
+                        <div class="company-sub">تصنيف مكالمات الشركة</div>
+                    </div>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+            selected = st.session_state.get("selected_company") == company_name
+            label = "✓ الشركة المختارة" if selected else f"اختيار {company_name}"
+            if st.button(
+                label,
+                key=f"company_{company_name}",
+                use_container_width=True,
+                type="primary" if selected else "secondary",
+            ):
+                st.session_state["selected_company"] = company_name
+                st.session_state["selected_period"] = None
+                st.rerun()
 
-    has_cached_file = "raw_file_bytes" in st.session_state
-
-    if not has_cached_file:
+    if st.session_state.get("selected_company"):
+        company = st.session_state["selected_company"]
+        cfg = COMPANIES[company]
         st.markdown(
-            '<div class="placeholder-card">📂 ارفع ملف عشان تبدأ التصنيف</div>',
+            f"""
+            <div class="selected-company">
+                <div class="company-logo large"
+                     style="background:{cfg['surface']};border-color:{cfg['accent']};
+                            color:{cfg['accent']};"><span>{cfg['mark']}</span></div>
+                <div>
+                    <div class="selected-company-label">الشركة المختارة</div>
+                    <div class="selected-company-name">{company}</div>
+                    <div class="selected-company-sub">جاهزة لتحديد فترة النشاط</div>
+                </div>
+            </div>
+            """,
             unsafe_allow_html=True,
         )
+
+
+def render_period_selector():
+    if not st.session_state.get("selected_company"):
         return
 
-    file_bytes = st.session_state["raw_file_bytes"]
-    file_name = st.session_state["raw_file_name"]
-    file_size = st.session_state["raw_file_size"]
+    st.markdown('<div class="section-kicker">🕒 اختر فترة النشاط</div>', unsafe_allow_html=True)
+    p1, p2, pd = st.columns(3)
 
+    buttons = [
+        (p1, "الفترة الأولى", "🟢", "period_1"),
+        (p2, "الفترة الثانية", "🔵", "period_2"),
+        (pd, "المجمع اليومي", "📊", "daily"),
+    ]
+
+    for col, title, icon, key in buttons:
+        with col:
+            selected = st.session_state.get("selected_period") == key
+            if st.button(
+                f"{icon} {title}",
+                key=f"period_btn_{key}",
+                use_container_width=True,
+                type="primary" if selected else "secondary",
+            ):
+                st.session_state["selected_period"] = key
+                st.rerun()
+
+    selected_period = st.session_state.get("selected_period")
+    if not selected_period:
+        return
+
+    company = st.session_state["selected_company"]
+
+    if selected_period == "period_1":
+        render_period_settings("period_1", "الفترة الأولى")
+    elif selected_period == "period_2":
+        render_period_settings("period_2", "الفترة الثانية")
+    else:
+        st.markdown(
+            f"""
+            <div class="period-banner daily">
+                <div class="period-icon">📊</div>
+                <div>
+                    <div class="period-label">المجمع اليومي</div>
+                    <div class="period-desc">{company} · من بداية اليوم إلى نهايته</div>
+                </div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+        render_daily_aggregate()
+
+
+def render_period_settings(period_key: str, period_title: str):
+    company = st.session_state["selected_company"]
+    start_key = f"{period_key}_start"
+    end_key = f"{period_key}_end"
+    has_break_key = f"{period_key}_has_break"
+    break_start_key = f"{period_key}_break_start"
+    break_end_key = f"{period_key}_break_end"
+
+    st.markdown(
+        f"""
+        <div class="period-banner">
+            <div class="period-icon">⏱️</div>
+            <div>
+                <div class="period-label">{period_title}</div>
+                <div class="period-desc">نشاط {company} · حدّد الميعاد قبل رفع ملف الفترة</div>
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    c1, c2 = st.columns(2)
+    with c1:
+        st.session_state[start_key] = st.time_input(
+            f"بداية {period_title}",
+            value=st.session_state[start_key],
+            key=f"{start_key}_input",
+        )
+    with c2:
+        st.session_state[end_key] = st.time_input(
+            f"نهاية {period_title}",
+            value=st.session_state[end_key],
+            key=f"{end_key}_input",
+        )
+
+    if st.session_state[start_key] >= st.session_state[end_key]:
+        st.warning("⚠️ بداية الفترة لازم تكون قبل نهايتها.")
+
+    st.session_state[has_break_key] = st.radio(
+        f"هل يوجد بريك في {period_title}؟",
+        ["لا", "نعم"],
+        index=1 if st.session_state[has_break_key] else 0,
+        horizontal=True,
+        key=f"{has_break_key}_radio",
+    ) == "نعم"
+
+    if st.session_state[has_break_key]:
+        b1, b2 = st.columns(2)
+        with b1:
+            st.session_state[break_start_key] = st.time_input(
+                "بداية البريك",
+                value=st.session_state[break_start_key],
+                key=f"{break_start_key}_input",
+            )
+        with b2:
+            st.session_state[break_end_key] = st.time_input(
+                "نهاية البريك",
+                value=st.session_state[break_end_key],
+                key=f"{break_end_key}_input",
+            )
+        if st.session_state[break_start_key] >= st.session_state[break_end_key]:
+            st.warning("⚠️ بداية البريك لازم تكون قبل نهايته.")
+
+    st.markdown(
+        f"""
+        <div class="schedule-summary">
+            <span>📌 النشاط:</span> {period_title} {company}
+            <span>من</span> <b>{st.session_state[start_key].strftime("%H:%M")}</b>
+            <span>إلى</span> <b>{st.session_state[end_key].strftime("%H:%M")}</b>
+            <span>· البريك:</span>
+            <b>{"موجود" if st.session_state[has_break_key] else "لا يوجد"}</b>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    render_period_upload_and_classify(period_key, period_title)
+
+
+def read_uploaded_dataframe(uploaded_file):
+    data = uploaded_file.getvalue()
+    name = uploaded_file.name.lower()
+    if name.endswith(".csv"):
+        return pd.read_csv(io.BytesIO(data))
+    return pd.read_excel(io.BytesIO(data))
+
+
+def classify_period_file(uploaded_file, period_key):
+    period_title = {"period_1": "الفترة الأولى", "period_2": "الفترة الثانية"}[period_key]
     try:
-        if file_name.endswith(".csv"):
-            df = pd.read_csv(io.BytesIO(file_bytes))
-        else:
-            df = pd.read_excel(io.BytesIO(file_bytes))
+        df = read_uploaded_dataframe(uploaded_file)
     except Exception as e:
         st.error(f"مش قادر أقرأ الملف: {e}")
         return
 
+    # نفس قاعدة الملف الحالية: حذف أول صف بعد العناوين.
     if len(df) > 0:
         df = df.iloc[1:].reset_index(drop=True)
 
     if ORIGINAL_TEXT_COL in df.columns:
         df = df.rename(columns={ORIGINAL_TEXT_COL: MODEL_TEXT_COL})
 
-    st.dataframe(df.head(10), use_container_width=True)
-
     if MODEL_TEXT_COL not in df.columns:
         st.error(
-            f"عمود النص ('{ORIGINAL_TEXT_COL}' أو '{MODEL_TEXT_COL}') مش موجود في الملف. "
+            f"عمود النص ('{ORIGINAL_TEXT_COL}' أو '{MODEL_TEXT_COL}') مش موجود. "
             f"الأعمدة الموجودة: {', '.join(df.columns.astype(str))}"
         )
         return
 
-    st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
-
-    file_token = f"{file_name}_{file_size}"
-
-    if st.button("🚀 ابدأ التصنيف", type="primary", use_container_width=True):
-        tokenizer, model, device = load_model()
-
-        texts = df[MODEL_TEXT_COL].tolist()
-        preds, confidences = predict_batch(texts, tokenizer, model, device)
+    if st.button(
+        f"🚀 ابدأ تصنيف {period_title}",
+        key=f"classify_{period_key}",
+        type="primary",
+        use_container_width=True,
+    ):
+        with st.spinner("جاري تجهيز الموديل وتصنيف الملف..."):
+            tokenizer, model, device = load_model()
+            texts = df[MODEL_TEXT_COL].tolist()
+            preds, confidences = predict_batch(texts, tokenizer, model, device)
 
         result_df = df.copy()
         result_df[CLASSIFICATION_COL] = preds
@@ -1212,63 +1667,315 @@ def page_classification():
         sales_col = find_column(result_df, SALES_PERSON_CANDIDATES)
         time_col = find_column(result_df, CREATED_ON_CANDIDATES)
 
+        break_start = (
+            st.session_state[f"{period_key}_break_start"]
+            if st.session_state[f"{period_key}_has_break"]
+            else None
+        )
+        break_end = (
+            st.session_state[f"{period_key}_break_end"]
+            if st.session_state[f"{period_key}_has_break"]
+            else None
+        )
+
         if sales_col and time_col:
-            result_df = calculate_wasted_time(result_df, sales_col, time_col, break_start, break_end)
+            result_df = calculate_wasted_time(
+                result_df, sales_col, time_col, break_start, break_end
+            )
         else:
             st.warning(
-                "مش لاقي عمود المحصّل (Create By) أو عمود التاريخ (Created On) بنفس الاسم المتوقع، "
-                "فمش هينحسب الوقت المهدر. الأعمدة الموجودة: " + ", ".join(result_df.columns.astype(str))
+                "مش لاقي عمود المحصّل أو عمود التاريخ/الوقت، فمش هيتحسب الوقت المهدر. "
+                "تأكد من أسماء الأعمدة."
             )
 
         result_df = result_df.rename(columns={MODEL_TEXT_COL: ORIGINAL_TEXT_COL})
 
+        # معلومات الفترة والشركة تبقى مع النتيجة بدون التأثير على الموديل.
+        result_df["الشركة"] = st.session_state["selected_company"]
+        result_df["الفترة"] = period_title
+        result_df["بداية الفترة"] = st.session_state[f"{period_key}_start"].strftime("%H:%M")
+        result_df["نهاية الفترة"] = st.session_state[f"{period_key}_end"].strftime("%H:%M")
+
+        st.session_state["period_results"][period_key] = {
+            "df": result_df,
+            "sales_col": sales_col,
+            "time_col": time_col,
+            "company": st.session_state["selected_company"],
+            "period_title": period_title,
+        }
         st.session_state["last_result_df"] = result_df
         st.session_state["last_sales_col"] = sales_col
         st.session_state["last_time_col"] = time_col
-        st.session_state["last_file_token"] = file_token
+        st.rerun()
 
-    if st.session_state.get("last_file_token") == file_token and "last_result_df" in st.session_state:
-        result_df = st.session_state["last_result_df"]
-        sales_col = st.session_state.get("last_sales_col")
-        time_col = st.session_state.get("last_time_col")
+    stored = st.session_state["period_results"].get(period_key)
+    if stored:
+        result_df = stored["df"]
+        sales_col = stored["sales_col"]
+        time_col = stored["time_col"]
 
-        st.success("تم التصنيف وحساب الوقت المهدر بنجاح ✅")
+        st.success(f"تم تصنيف {period_title} بنجاح ✅ — {len(result_df):,} مكالمة")
+        st.dataframe(result_df, use_container_width=True, hide_index=True)
 
-        if WASTED_TIME_COL in result_df.columns:
-            try:
-                styled = result_df.style.map(highlight_wasted, subset=[WASTED_TIME_COL])
-            except AttributeError:
-                styled = result_df.style.applymap(highlight_wasted, subset=[WASTED_TIME_COL])
-            st.dataframe(styled, use_container_width=True)
-        else:
-            st.dataframe(result_df, use_container_width=True)
+        render_period_charts(result_df, sales_col, time_col, period_title)
 
-        st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
-
-        render_quick_summary(result_df, class_col=CLASSIFICATION_COL, sales_col=sales_col, time_col=time_col)
-
-        st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
-
-        if file_name.endswith(".csv"):
-            output = result_df.to_csv(index=False).encode("utf-8-sig")
-            out_name = "نتائج_التصنيف.csv"
-            mime = "text/csv"
-        else:
+        if result_df is not None:
             buffer = io.BytesIO()
             with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
                 result_df.to_excel(writer, index=False, sheet_name="النتائج")
-            output = buffer.getvalue()
-            out_name = "نتائج_التصنيف.xlsx"
-            mime = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            st.download_button(
+                f"⬇️ تحميل نتائج {period_title}",
+                data=buffer.getvalue(),
+                file_name=f"نتائج_{period_title}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                use_container_width=True,
+                key=f"download_{period_key}",
+            )
 
-        st.download_button(
-            "⬇️ تحميل الملف مع التصنيف والوقت المهدر",
-            data=output, file_name=out_name, mime=mime, use_container_width=True,
+
+def normalize_status(value):
+    text = str(value).strip().lower()
+    if any(word in text for word in NO_ANSWER_WORDS):
+        return "لايرد"
+    if any(word in text for word in CLOSED_WORDS):
+        return "مغلق"
+    if any(word in text for word in UNREACHABLE_WORDS):
+        return "عدم التوصل"
+    return "مغطاة"
+
+
+def get_status_series(df):
+    status_col = find_column(df, STATUS_CANDIDATES)
+    if not status_col:
+        return None, None
+    return status_col, df[status_col].fillna("").map(normalize_status)
+
+
+def build_agent_activity(df, sales_col):
+    if not sales_col or sales_col not in df.columns:
+        return pd.DataFrame()
+
+    work = df.copy()
+    work["_status_norm"] = "مغطاة"
+    status_col, status_series = get_status_series(work)
+    if status_col:
+        work["_status_norm"] = status_series
+
+    grouped = work.groupby(sales_col).size().rename("إجمالي المكالمات").to_frame()
+    grouped["ناجحة"] = work[work[CLASSIFICATION_COL] == 1].groupby(sales_col).size()
+    grouped["ناجحة"] = grouped["ناجحة"].fillna(0).astype(int)
+
+    for status in ["مغطاة", "لايرد", "مغلق", "عدم التوصل"]:
+        counts = work[work["_status_norm"] == status].groupby(sales_col).size()
+        grouped[status] = counts.fillna(0).astype(int)
+
+    grouped["نسبة المكالمات المغطاة %"] = (
+        grouped["مغطاة"] / grouped["إجمالي المكالمات"] * 100
+    ).round(1)
+
+    return grouped.fillna(0).reset_index().rename(columns={sales_col: "المحصّل"})
+
+
+def render_period_charts(df, sales_col, time_col, period_title):
+    if not sales_col or sales_col not in df.columns:
+        st.info("لا يوجد عمود واضح للمحصّل لعرض نشاط المحصلين.")
+        return
+
+    agent = build_agent_activity(df, sales_col)
+    if agent.empty:
+        return
+
+    st.markdown(f'<div class="section-kicker">📊 تحليل نشاط {period_title}</div>', unsafe_allow_html=True)
+
+    m1, m2, m3, m4 = st.columns(4)
+    total = len(df)
+    success = int((df[CLASSIFICATION_COL] == 1).sum())
+    covered = int(agent["مغطاة"].sum())
+    covered_rate = round(covered / total * 100, 1) if total else 0
+
+    m1.metric("📞 إجمالي المكالمات", f"{total:,}")
+    m2.metric("✅ المكالمات الناجحة", f"{success:,}")
+    m3.metric("📡 المكالمات المغطاة", f"{covered:,}")
+    m4.metric("📈 نسبة التغطية", f"{covered_rate}%")
+
+    c1, c2 = st.columns(2)
+
+    with c1:
+        fig = px.bar(
+            agent,
+            x="المحصّل",
+            y=["ناجحة", "مغطاة"],
+            barmode="group",
+            color_discrete_sequence=[COLOR_SUCCESS, COLOR_ACCENT],
+            text_auto=True,
         )
+        fig.update_layout(
+            **PLOTLY_LAYOUT,
+            xaxis_title="",
+            yaxis_title="عدد المكالمات",
+            legend_title_text="",
+        )
+        st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG)
+
+    with c2:
+        fig2 = px.bar(
+            agent,
+            x="المحصّل",
+            y=["لايرد", "مغلق", "عدم التوصل"],
+            barmode="stack",
+            color_discrete_sequence=[COLOR_WARN, COLOR_FAIL, "#A78BFA"],
+        )
+        fig2.update_layout(
+            **PLOTLY_LAYOUT,
+            xaxis_title="",
+            yaxis_title="عدد المكالمات",
+            legend_title_text="",
+        )
+        st.plotly_chart(fig2, use_container_width=True, config=PLOTLY_CONFIG)
+
+    fig3 = px.bar(
+        agent.sort_values("نسبة المكالمات المغطاة %"),
+        x="نسبة المكالمات المغطاة %",
+        y="المحصّل",
+        orientation="h",
+        color="نسبة المكالمات المغطاة %",
+        color_continuous_scale=[COLOR_FAIL, COLOR_WARN, COLOR_SUCCESS],
+        text="نسبة المكالمات المغطاة %",
+    )
+    fig3.update_traces(texttemplate="%{text:.1f}%", textposition="outside")
+    fig3.update_layout(
+        **PLOTLY_LAYOUT,
+        xaxis_title="نسبة المكالمات المغطاة %",
+        yaxis_title="",
+        coloraxis_showscale=False,
+    )
+    st.plotly_chart(fig3, use_container_width=True, config=PLOTLY_CONFIG)
+
+    with st.expander("📋 تفاصيل كل محصّل", expanded=False):
+        st.dataframe(agent, use_container_width=True, hide_index=True)
+
+
+def render_daily_aggregate():
+    company = st.session_state["selected_company"]
+    results = st.session_state.get("period_results", {})
+
+    p1 = results.get("period_1")
+    p2 = results.get("period_2")
+
+    # دعم إضافي: لو المستخدم عنده ملفات مصنفة بالفعل يقدر يرفعها هنا.
+    u1 = st.file_uploader(
+        "📥 رفع نتائج الفترة الأولى (اختياري)",
+        type=["csv", "xlsx", "xls"],
+        key="daily_p1_upload",
+    )
+    u2 = st.file_uploader(
+        "📥 رفع نتائج الفترة الثانية (اختياري)",
+        type=["csv", "xlsx", "xls"],
+        key="daily_p2_upload",
+    )
+
+    if u1 is not None:
+        try:
+            p1 = {
+                "df": read_uploaded_dataframe(u1),
+                "sales_col": find_column(read_uploaded_dataframe(u1), SALES_PERSON_CANDIDATES),
+                "time_col": find_column(read_uploaded_dataframe(u1), CREATED_ON_CANDIDATES),
+                "company": company,
+                "period_title": "الفترة الأولى",
+            }
+        except Exception as e:
+            st.error(f"تعذر قراءة ملف الفترة الأولى: {e}")
+
+    if u2 is not None:
+        try:
+            p2df = read_uploaded_dataframe(u2)
+            p2 = {
+                "df": p2df,
+                "sales_col": find_column(p2df, SALES_PERSON_CANDIDATES),
+                "time_col": find_column(p2df, CREATED_ON_CANDIDATES),
+                "company": company,
+                "period_title": "الفترة الثانية",
+            }
+        except Exception as e:
+            st.error(f"تعذر قراءة ملف الفترة الثانية: {e}")
+
+    if not p1 and not p2:
+        st.info("📂 صَنّف الفترة الأولى والثانية أولًا، أو ارفع نتيجتيهما هنا لتجميع اليوم.")
+        return
+
+    frames = []
+    for item in [p1, p2]:
+        if item and isinstance(item.get("df"), pd.DataFrame):
+            frame = item["df"].copy()
+            frame["الشركة"] = frame.get("الشركة", company)
+            frames.append(frame)
+
+    if not frames:
+        return
+
+    daily_df = pd.concat(frames, ignore_index=True)
+    daily_df["الشركة"] = company
+    daily_df["الفترة"] = daily_df["الفترة"] if "الفترة" in daily_df.columns else "المجمع اليومي"
+
+    st.markdown(
+        f"""
+        <div class="daily-total-card">
+            <div>
+                <div class="daily-total-title">📊 المجمع اليومي</div>
+                <div class="daily-total-sub">{company} · الفترة الأولى + الفترة الثانية</div>
+            </div>
+            <div class="daily-total-number">{len(daily_df):,}</div>
+            <div class="daily-total-label">إجمالي المكالمات</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    # نستخدم أول عمود محصّل صالح من النتائج.
+    sales_col = find_column(daily_df, SALES_PERSON_CANDIDATES)
+    time_col = find_column(daily_df, CREATED_ON_CANDIDATES)
+
+    render_period_charts(daily_df, sales_col, time_col, "المجمع اليومي")
+
+    st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
+    st.dataframe(daily_df, use_container_width=True, hide_index=True)
+
+    buffer = io.BytesIO()
+    with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
+        daily_df.to_excel(writer, index=False, sheet_name="المجمع اليومي")
+
+    st.download_button(
+        "⬇️ تحميل المجمع اليومي",
+        data=buffer.getvalue(),
+        file_name=f"المجمع_اليومي_{company}.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        use_container_width=True,
+        key="download_daily_aggregate",
+        type="primary",
+    )
 
 
 # ==========================================================
-# تويبات 2-5: هنبنيها واحدة واحدة لما نحدد منطق كل واحدة
+# تويب 1: التصنيف
+# ==========================================================
+
+def page_classification():
+    init_activity_state()
+
+    page_header(
+        "CALL QUALITY CLASSIFIER",
+        "🎯 تصنيف المكالمات",
+        "اختار الشركة → اختار الفترة → حدّد الميعاد والبريك → ارفع الملف → ابدأ التصنيف",
+        show_wave=True,
+    )
+
+    render_company_selector()
+    st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
+    render_period_selector()
+
+
+# ==========================================================
+# تويبات 2-5
 # ==========================================================
 
 def page_placeholder(eyebrow, title, subtitle, icon):
@@ -1277,8 +1984,7 @@ def page_placeholder(eyebrow, title, subtitle, icon):
         f"""
         <div class="placeholder-card">
             {icon}<br><br>
-            التويب ده لسه مننعمهاش — هنحدد سوا منطقها ومصدر بياناتها زي ما اتفقنا "حاجة حاجة"،
-            وهتتفعّل هنا أول ما نخلص عليها.
+            التويب ده لسه Placeholder — هنحدد منطقها ومصدر بياناتها خطوة خطوة.
         </div>
         """,
         unsafe_allow_html=True,
@@ -1286,74 +1992,67 @@ def page_placeholder(eyebrow, title, subtitle, icon):
 
 
 # ==========================================================
-# تويب 6: الداشبورد (رفع ملف مُصنّف جاهز وبناء الداشبورد تلقائي)
+# تويب 6: الداشبورد
 # ==========================================================
 
 def page_dashboard():
     page_header(
         "ACTIVITY DASHBOARD",
         "📊 داشبورد النشاط",
-        "ارفع الملف بعد ما يتصنّف، والداشبورد هيتبني تلقائي بكل تفاصيله",
+        "ارفع الملف المصنّف أو اعتمد على نتائج الفترتين الموجودة داخل التطبيق",
         show_wave=True,
     )
 
+    init_activity_state()
+
+    # لو فيه نتائج فترات، نعرضها تلقائيًا.
+    results = st.session_state.get("period_results", {})
+    if results:
+        company = st.session_state.get("selected_company") or "الشركة المختارة"
+        p1 = results.get("period_1")
+        p2 = results.get("period_2")
+
+        if p1 or p2:
+            frames = [x["df"] for x in (p1, p2) if x]
+            combined = pd.concat(frames, ignore_index=True)
+            sales_col = find_column(combined, SALES_PERSON_CANDIDATES)
+            time_col = find_column(combined, CREATED_ON_CANDIDATES)
+
+            st.success(f"تم تحميل نتائج الفترات الموجودة — {company} ✅")
+            render_period_charts(combined, sales_col, time_col, "نشاط اليوم")
+
+            st.download_button(
+                "⬇️ تحميل نتائج اليوم",
+                data=combined.to_csv(index=False).encode("utf-8-sig"),
+                file_name="نتائج_اليوم.csv",
+                mime="text/csv",
+                use_container_width=True,
+                key="dashboard_period_results_download",
+            )
+
     dash_file = st.file_uploader(
-        "ارفع الملف المصنّف (اللي فيه عمود 'التصنيف')", type=["csv", "xlsx", "xls"], key="dash_upload"
+        "📂 أو ارفع ملف مصنّف جاهز للداشبورد",
+        type=["csv", "xlsx", "xls"],
+        key="dash_upload_v2",
     )
 
-    if dash_file is not None:
-        st.session_state["dash_raw_bytes"] = dash_file.getvalue()
-        st.session_state["dash_raw_name"] = dash_file.name
-
-    has_cached = "dash_raw_bytes" in st.session_state
-
-    if not has_cached:
-        st.markdown(
-            '<div class="placeholder-card">📂 ارفع ملف مصنّف عشان يظهر الداشبورد هنا</div>',
-            unsafe_allow_html=True,
-        )
+    if dash_file is None:
         return
 
-    file_bytes = st.session_state["dash_raw_bytes"]
-    file_name = st.session_state["dash_raw_name"]
-
     try:
-        if file_name.endswith(".csv"):
-            df = pd.read_csv(io.BytesIO(file_bytes))
-        else:
-            df = pd.read_excel(io.BytesIO(file_bytes))
+        df = read_uploaded_dataframe(dash_file)
     except Exception as e:
         st.error(f"مش قادر أقرأ الملف: {e}")
         return
 
-    class_col_guess = CLASSIFICATION_COL if CLASSIFICATION_COL in df.columns else None
-    sales_col_guess = find_column(df, SALES_PERSON_CANDIDATES)
-    time_col_guess = find_column(df, CREATED_ON_CANDIDATES)
+    class_col = CLASSIFICATION_COL if CLASSIFICATION_COL in df.columns else None
+    sales_col = find_column(df, SALES_PERSON_CANDIDATES)
+    time_col = find_column(df, CREATED_ON_CANDIDATES)
 
-    with st.expander("⚙️ تأكيد الأعمدة", expanded=(class_col_guess is None or sales_col_guess is None)):
-        cols = ["— بدون —"] + list(df.columns.astype(str))
-        class_col_sel = st.selectbox(
-            "عمود التصنيف (1/0)", cols, index=cols.index(class_col_guess) if class_col_guess in cols else 0
-        )
-        sales_col_sel = st.selectbox(
-            "عمود المحصّل", cols, index=cols.index(sales_col_guess) if sales_col_guess in cols else 0
-        )
-        time_col_sel = st.selectbox(
-            "عمود التاريخ/الوقت", cols, index=cols.index(time_col_guess) if time_col_guess in cols else 0
-        )
-
-    class_col = None if class_col_sel == "— بدون —" else class_col_sel
-    sales_col = None if sales_col_sel == "— بدون —" else sales_col_sel
-    time_col = None if time_col_sel == "— بدون —" else time_col_sel
-
-    st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
     render_full_dashboard(df, class_col=class_col, sales_col=sales_col, time_col=time_col)
 
-    st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
-
-    # ---- تحميل الداشبورد نفسه كصفحة ويب مستقلة (HTML تفاعلية بنفس الشكل) ----
     dashboard_html = build_dashboard_html(
-        df, class_col=class_col, sales_col=sales_col, time_col=time_col, source_name=file_name
+        df, class_col=class_col, sales_col=sales_col, time_col=time_col, source_name=dash_file.name
     )
     st.download_button(
         "🌐 تحميل الداشبورد كصفحة ويب (HTML)",
@@ -1361,28 +2060,9 @@ def page_dashboard():
         file_name="داشبورد_النشاط.html",
         mime="text/html",
         use_container_width=True,
-        key="dash_html_download",
+        key="dash_html_download_v2",
         type="primary",
     )
-    st.caption("الملف ده صفحة ويب مستقلة فيها نفس الكروت والشارتس بتفاعليتها — تقدر تفتحها في أي متصفح أو تبعتها لحد تاني من غير ما يحتاج يشغّل التطبيق.")
-
-    with st.expander("⬇️ تحميل البيانات الخام بدل الداشبورد", expanded=False):
-        if file_name.endswith(".csv"):
-            output = df.to_csv(index=False).encode("utf-8-sig")
-            out_name = "بيانات_الداشبورد.csv"
-            mime = "text/csv"
-        else:
-            buffer = io.BytesIO()
-            with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
-                df.to_excel(writer, index=False, sheet_name="البيانات")
-            output = buffer.getvalue()
-            out_name = "بيانات_الداشبورد.xlsx"
-            mime = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-
-        st.download_button(
-            "⬇️ تحميل بيانات الداشبورد",
-            data=output, file_name=out_name, mime=mime, use_container_width=True, key="dash_download",
-        )
 
 
 # ==========================================================

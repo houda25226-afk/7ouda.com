@@ -2337,11 +2337,20 @@ def render_period_charts(df, sales_col, time_col, period_title):
     # ===== كروت الإحصائيات العامة =====
     avg_dur_label = "⏱️ متوسط مدة المكالمات (دقيقة)"
     avg_dur_total = round(pd.to_numeric(df[WASTED_TIME_COL], errors="coerce").mean(), 1) if WASTED_TIME_COL in df.columns and df[WASTED_TIME_COL].notna().any() else 0.0
+    num_grid_cols = 6 if WASTED_TIME_COL in df.columns and df[WASTED_TIME_COL].notna().any() else 5
+    total_wasted_card = ""
+    if num_grid_cols == 6:
+        total_wasted_val = round(pd.to_numeric(df[WASTED_TIME_COL], errors="coerce").sum(), 1)
+        total_wasted_card = f"""
+            <div class="agent-card" style="text-align:center; padding:1.2rem 0.8rem;">
+                <div class="stat-num" style="font-family:'JetBrains Mono',monospace; font-weight:700; font-size:1.6rem; color:#FBBF24;">{total_wasted_val:,}</div>
+                <div class="stat-label" style="color:var(--text-dim); margin-top:0.3rem;">🚨 إجمالي الوقت المهدر (دقيقة)</div>
+            </div>"""
 
     st.markdown(
         f"""
         <div class="section-kicker">📊 ملخص {period_title}</div>
-        <div style="display:grid; grid-template-columns: repeat(5, 1fr); gap: 0.9rem; margin-bottom: 1.4rem;">
+        <div style="display:grid; grid-template-columns: repeat({num_grid_cols}, 1fr); gap: 0.9rem; margin-bottom: 1.4rem;">{total_wasted_card}
             <div class="agent-card" style="text-align:center; padding:1.2rem 0.8rem;">
                 <div class="stat-num acc" style="font-family:'JetBrains Mono',monospace; font-weight:700; font-size:1.6rem; color:var(--accent);">{total:,}</div>
                 <div class="stat-label" style="color:var(--text-dim); margin-top:0.3rem;">📞 إجمالي المكالمات</div>
@@ -2443,8 +2452,8 @@ def render_agent_activity_charts(agent, df, sales_col, period_title):
     )
     st.plotly_chart(fig_rate, use_container_width=True)
 
-    # ===== شارت 3: أنواع المكالمات لكل محصّل =====
-    render_call_types_chart(df, sales_col, period_title)
+    # ===== شارت 3: المكالمات الناجحة مقابل غير الناجحة لكل محصّل =====
+    render_success_fail_chart(agent, period_title)
 
     # ===== شارت 4: متوسط مدة المكالمات لكل محصّل =====
     render_avg_duration_chart(agent, period_title)
@@ -2453,26 +2462,35 @@ def render_agent_activity_charts(agent, df, sales_col, period_title):
     render_confidence_chart(df, sales_col, period_title)
 
 
-def render_call_types_chart(df, sales_col, period_title):
-    """شارت تفصيلي: المكالمات المغلقة لكل محصّل."""
-    work = df.copy()
-    status_col, status_series = get_status_series(work)
-    work["_status_norm"] = status_series if status_col else None
+def render_success_fail_chart(agent, period_title):
+    """شارت تفصيلي: المكالمات الناجحة مقابل غير الناجحة لكل محصّل."""
+    agent_sorted = agent.sort_values("ناجحة", ascending=False).reset_index(drop=True)
+    names = [str(n) for n in agent_sorted["المحصّل"]]
 
-    counts = work[work["_status_norm"] == "مغلق"].groupby(sales_col).size()
-    fig = go.Figure(
+    fig = go.Figure()
+    fig.add_trace(
         go.Bar(
-            name="مغلق",
-            x=[str(n) for n in counts.index],
-            y=counts.values,
-            marker_color="#FBBF24",
-            text=[str(v) for v in counts.values],
+            name="المكالمات الناجحة",
+            x=names,
+            y=agent_sorted["ناجحة"],
+            marker_color="#4ADE9A",
+            text=[str(int(v)) for v in agent_sorted["ناجحة"]],
+            textposition="outside",
+        )
+    )
+    fig.add_trace(
+        go.Bar(
+            name="المكالمات غير الناجحة",
+            x=names,
+            y=agent_sorted["إجمالي المكالمات"] - agent_sorted["ناجحة"],
+            marker_color="#FB7185",
+            text=[str(int(v)) for v in (agent_sorted["إجمالي المكالمات"] - agent_sorted["ناجحة"])],
             textposition="outside",
         )
     )
     fig.update_layout(
-        title=f"📑 أنواع المكالمات لكل محصّل ({period_title})",
-        barmode="stack",
+        title=f"✅ المكالمات الناجحة مقابل غير الناجحة لكل محصّل ({period_title})",
+        barmode="group",
         template="plotly_dark",
         paper_bgcolor="#0E1420",
         plot_bgcolor="#0E1420",

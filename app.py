@@ -2298,6 +2298,21 @@ def build_agent_activity(df, sales_col):
     counts = work[work["_status_norm"] == "مغلق"].groupby(sales_col).size()
     grouped["مغلق"] = counts.fillna(0).astype(int)
 
+    # ===== عدد إفادات "لا يرد" في عمود Notes لكل محصّل =====
+    notes_col = ORIGINAL_TEXT_COL if ORIGINAL_TEXT_COL in work.columns else None
+    lrd_counts = None
+    if notes_col:
+        lrd = work[notes_col].astype(str).str.contains("لا يرد|لايرد|لا\\s*يرد", regex=True, na=False)
+        lrd_counts = work[lrd].groupby(sales_col).size()
+    grouped["إفادات لا يرد"] = lrd_counts.reindex(grouped.index, fill_value=0).astype(int) if lrd_counts is not None else 0
+    total_calls = work.groupby(sales_col).size()
+    lrd_pct = []
+    for _, r in grouped.iterrows():
+        lrd_n = int(r["إفادات لا يرد"])
+        total_n = int(r["إجمالي المكالمات"])
+        lrd_pct.append(round(lrd_n / total_n * 100, 1) if total_n else 0.0)
+    grouped["نسبة لا يرد (%)"] = lrd_pct
+
     # ===== متوسط الفجوة/المدة لكل محصّل (دقيقة) =====
     # لو الملف فيه عمود "مدة المكالمة" نستخدمه، وإلا نستخدم متوسط الوقت المهدر بين المكالمات.
     dur_col = find_column(work, DURATION_CANDIDATES)
@@ -2380,6 +2395,7 @@ def render_period_charts(df, sales_col, time_col, period_title):
     render_agent_activity_charts(agent, df, sales_col, period_title)
 
     with st.expander("📋 جدول تفاصيل كل محصّل", expanded=False):
+        # عمودا "إفادات لا يرد" و"نسبة لا يرد (%)" مضافان تلقائيًا في جدول التفاصيل
         st.dataframe(agent, use_container_width=True, hide_index=True)
 
 
@@ -2458,8 +2474,8 @@ def render_agent_activity_charts(agent, df, sales_col, period_title):
     # ===== شارت 4: متوسط مدة المكالمات لكل محصّل =====
     render_avg_duration_chart(agent, period_title)
 
-    # ===== شارت 5: توزيع ثقة التصنيف لكل محصّل =====
-    render_confidence_chart(df, sales_col, period_title)
+    # ===== شارت 5: عدد إفادات "لا يرد" لكل محصّل =====
+    render_no_answer_chart(df, sales_col, period_title)
 
 
 def render_success_fail_chart(agent, period_title):
@@ -2539,43 +2555,40 @@ def render_avg_duration_chart(agent, period_title):
     st.plotly_chart(fig, use_container_width=True)
 
 
-def render_confidence_chart(df, sales_col, period_title):
-    """شارت توزيع نسبة الثقة في التصنيف لكل محصّل."""
-    conf_col = "نسبة_الثقة" if "نسبة_الثقة" in df.columns else None
-    if not conf_col:
-        return
-
-    conf = pd.to_numeric(df[conf_col], errors="coerce").dropna()
-    if conf.empty or sales_col not in df.columns:
+def render_no_answer_chart(df, sales_col, period_title):
+    """شارت عدد إفادات \"لا يرد\" في عمود Notes لكل محصّل."""
+    notes_col = ORIGINAL_TEXT_COL if ORIGINAL_TEXT_COL in df.columns else None
+    if not notes_col or sales_col not in df.columns:
         return
 
     work = df.copy()
-    work[conf_col] = pd.to_numeric(work[conf_col], errors="coerce")
+    work["_lrd"] = work[notes_col].astype(str).str.contains("لا يرد|لايرد|لا\\s*يرد", regex=True, na=False)
+    lrd = work[work["_lrd"] == True].groupby(sales_col).size()
+    totals = work.groupby(sales_col).size()
+    agent_sorted = totals.sort_values(ascending=False).reset_index()
+    names = [str(n) for n in agent_sorted[sales_col]]
+    counts = [int(lrd.get(n, 0)) for n in agent_sorted[sales_col]]
 
-    fig = go.Figure()
-    agents_sorted = work[sales_col].value_counts().index.tolist()
-    palette = ["#3DE0C9", "#4ADE9A", "#60A5FA", "#FBBF24", "#FB7185", "#A78BFA"]
-    for i, a in enumerate(agents_sorted):
-        vals = work[work[sales_col] == a][conf_col].dropna()
-        if vals.empty:
-            continue
-        fig.add_trace(
-            go.Box(
-                name=str(a),
-                y=vals.values,
-                marker_color=palette[i % len(palette)],
-                boxmean=True,
-                boxpoints="outliers",
-            )
+    fig = go.Figure(
+        go.Bar(
+            x=names,
+            y=counts,
+            marker=dict(
+                color="#FB7185",
+                line=dict(color="#F43F5E", width=1),
+            ),
+            text=[str(c) for c in counts],
+            textposition="outside",
         )
+    )
     fig.update_layout(
-        title=f"🎯 توزيع نسبة الثقة في التصنيف لكل محصّل ({period_title})",
+        title=f"📝 عدد إفادات \"لا يرد\" في عمود Notes لكل محصّل ({period_title})",
         template="plotly_dark",
         paper_bgcolor="#0E1420",
         plot_bgcolor="#0E1420",
         font=dict(color="#F3F6FA", size=13),
         margin=dict(l=10, r=10, t=45, b=10),
-        yaxis=dict(gridcolor="#1E2B42", title="نسبة الثقة (%)", range=[0, 105]),
+        yaxis=dict(gridcolor="#1E2B42", title="عدد إفادات لا يرد"),
         xaxis=dict(gridcolor="#1E2B42"),
     )
     st.plotly_chart(fig, use_container_width=True)

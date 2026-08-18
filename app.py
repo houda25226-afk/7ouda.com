@@ -71,8 +71,8 @@ CSS_THEME = """
     --success: #34D399;
     --danger: #FB7185;
     --warn: #FBBF24;
-    --text: #E7ECF3;
-    --text-dim: #8B96AC;
+    --text: #F3F6FA;
+    --text-dim: #B9C6D6;
 }
 
 html, body, [class*="css"] {
@@ -82,6 +82,43 @@ html, body, [class*="css"] {
 .stApp {
     background: radial-gradient(circle at 20% 0%, #10192C 0%, var(--bg) 55%);
     color: var(--text);
+}
+
+/* ===== الشريط الأبيض اللي فوق (Header / Top bar) ===== */
+header[data-testid="stHeader"] {
+    background: #FFFFFF !important;
+    border-bottom: 1px solid rgba(0,0,0,0.08);
+}
+header[data-testid="stHeader"] * {
+    color: #101826 !important;
+}
+header[data-testid="stHeader"] .stDeployButton button,
+header[data-testid="stHeader"] button {
+    color: #101826 !important;
+}
+header[data-testid="stHeader"] [data-testid="stHeaderBlockToolbar"] svg {
+    fill: #101826 !important;
+    color: #101826 !important;
+}
+header[data-testid="stHeader"] [class*="Toolbar"] svg,
+header[data-testid="stHeader"] a svg {
+    fill: #101826 !important;
+    color: #101826 !important;
+}
+header[data-testid="stHeader"] svg path {
+    fill: #101826 !important;
+    stroke: #101826 !important;
+}
+/* أيقونات الهيدر بتكون أحيانًا داخل span */
+header[data-testid="stHeader"] span[aria-label] svg,
+header[data-testid="stHeader"] div[role="button"] svg {
+    fill: #101826 !important;
+    stroke: #101826 !important;
+}
+/* تظليل منطقة الأيقونات (الوضع/الأدوات) عشان تباينها يبان على الأبيض */
+header[data-testid="stHeader"] [data-testid="stHeaderBlockToolbar"] {
+    background: rgba(0,0,0,0.04);
+    border-radius: 8px;
 }
 
 /* الاتجاه RTL على محتوى الصفحة الرئيسي والسايدبار بس — مش على الهيكل العام */
@@ -411,7 +448,7 @@ DARK_UI_FIX = """
     color: var(--text) !important;
 }
 .stApp input::placeholder, .stApp textarea::placeholder {
-    color: #9AA6BA !important;
+    color: #C9D3E2 !important;
     opacity: 1 !important;
 }
 .stApp [data-baseweb="select"] span {
@@ -464,7 +501,7 @@ DARK_UI_FIX = """
     margin: .25rem 0 .15rem;
 }
 .section-help {
-    color: #AAB6C9 !important;
+    color: #C6D2E2 !important;
     font-size: .88rem;
     margin-bottom: .9rem;
 }
@@ -517,7 +554,7 @@ DARK_UI_FIX = """
 }
 .company-sub, .selected-company-sub {
     font-size:.78rem;
-    color:#94A3B8 !important;
+    color:#C3CEDC !important;
     margin-top:4px;
 }
 .selected-company {
@@ -542,7 +579,7 @@ DARK_UI_FIX = """
 }
 .selected-company-label {
     font-size:.75rem;
-    color:#94A3B8 !important;
+    color:#C3CEDC !important;
 }
 .selected-company-name {
     font-size:1.25rem;
@@ -575,7 +612,7 @@ DARK_UI_FIX = """
     font-size:1.05rem;
 }
 .period-desc {
-    color:#9EACC0 !important;
+    color:#C6D2E2 !important;
     font-size:.8rem;
     margin-top:3px;
 }
@@ -589,7 +626,7 @@ DARK_UI_FIX = """
     font-size:.86rem;
 }
 .schedule-summary span {
-    color:#8FA0B7 !important;
+    color:#B9C6D6 !important;
     margin:0 4px;
 }
 .schedule-summary b {
@@ -614,7 +651,7 @@ DARK_UI_FIX = """
     font-weight:900;
 }
 .daily-total-sub {
-    color:#94A3B8 !important;
+    color:#C3CEDC !important;
     font-size:.8rem;
     margin-top:4px;
 }
@@ -625,7 +662,7 @@ DARK_UI_FIX = """
     font-weight:900;
 }
 .daily-total-label {
-    color:#8FA0B7 !important;
+    color:#B9C6D6 !important;
     font-size:.75rem;
 }
 @media (max-width: 800px) {

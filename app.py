@@ -111,13 +111,8 @@ def page_standing_promises():
         show_wave=True,
     )
 
-    # التاريخ المستهدف (اليوم) — المستخدم يقدر يغيّره لو حابب يشوف يوم تاني
-    target_date = st.date_input(
-        "📅 تاريخ الوعود المستهدف",
-        value=st.session_state[TODAY_KEY],
-        key="promises_date_input",
-    )
-    st.session_state[TODAY_KEY] = target_date
+    # التاريخ المستهدف (اليوم) — ثابت، من غير كاليندر
+    target_date = st.session_state[TODAY_KEY]
 
     uploaded = st.file_uploader(
         "📂 ارفع ملف المحفظة (Excel أو CSV)",
@@ -212,6 +207,21 @@ def page_standing_promises():
 
         st.markdown("<div class='divider'></div>", unsafe_allow_html=True)
 
+        # 4.5) لمحة من بيانات الوعود القائمة بعد الفلترة
+        st.markdown(
+            f"""
+            <div class="chart-card-title" style="margin-bottom:8px;">
+                👀 لمحة من بيانات الوعود القائمة (أول {min(15, len(df))} وعد)
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+        preview_cols = [c for c in [sales_col, substate_col, duedate_col, net_col] if c]
+        preview_df = df[preview_cols].head(15)
+        st.dataframe(preview_df, use_container_width=True, hide_index=True, height=min(420, 40 * len(preview_df) + 100))
+
+        st.markdown("<div class='divider'></div>", unsafe_allow_html=True)
+
         # 5) الجدول التجميعي لكل محصّل
         summary = df.groupby(sales_col).agg(
             **{
@@ -283,7 +293,6 @@ def page_standing_promises():
         today_str = target_date.strftime("%Y-%m-%d")
         out_excel = io.BytesIO()
         with pd.ExcelWriter(out_excel, engine="openpyxl") as writer:
-            summary.to_excel(writer, index=False, sheet_name="ملخص المحصلين")
             df.to_excel(writer, index=False, sheet_name="الوعود القائمة")
 
         out_csv = io.BytesIO()
@@ -890,7 +899,6 @@ div[data-testid="stAlert"] p { color: var(--text) !important; }
 ::-webkit-scrollbar-thumb:hover { background: var(--accent); }
 .actual-logo, .actual-company-logo { overflow:hidden !important; padding:5px !important; }
 .actual-logo img, .actual-company-logo img { width:100% !important; height:100% !important; object-fit:contain !important; display:block !important; border-radius:10px !important; }
-.upload-status { margin:.7rem 0 1rem; padding:.7rem .9rem; border-radius:10px; background:rgba(94,234,212,.08); border:1px solid rgba(94,234,212,.18); color:var(--text) !important; }
 
 /* ===== زرار تحميل الملف المرفوع ===== */
 .stApp [data-testid="stFileUploader"] [data-testid="stFileUploaderFile"] svg {
@@ -937,6 +945,41 @@ DARK_UI_FIX = """
 }
 .stApp [data-testid="stFileUploader"] section * {
     color: var(--text) !important;
+}
+/* اسم الملف المرفوع — بارز وواضح في الدارك ثيم */
+.stApp [data-testid="stFileUploader"] [data-testid="stFileUploaderFile"] {
+    background: linear-gradient(135deg, #15203a, #1a2a47) !important;
+    border: 1px solid rgba(94, 234, 212, .35) !important;
+    border-radius: 10px !important;
+    padding: 8px 12px !important;
+}
+.stApp [data-testid="stFileUploader"] [data-testid="stFileUploaderFile"] svg {
+    fill: var(--accent) !important;
+    color: var(--accent) !important;
+}
+.stApp [data-testid="stFileUploader"] [data-testid="stFileUploaderFile"] button {
+    color: var(--text) !important;
+}
+.stApp [data-testid="stFileUploader"] [data-testid="stFileUploaderFile"] button:hover svg {
+    fill: #F87171 !important;
+    color: #F87171 !important;
+}
+/* رسالة "الملف المختار" — أكبر وأوضح */
+.upload-status {
+    margin:.7rem 0 1rem;
+    padding:.85rem 1rem;
+    border-radius:12px;
+    background:linear-gradient(135deg, rgba(94,234,212,.12), rgba(94,234,212,.05)) !important;
+    border:1px solid rgba(94,234,212,.3) !important;
+    border-right:4px solid var(--accent) !important;
+    color: var(--text) !important;
+    font-size: 1.05rem !important;
+    font-weight: 600 !important;
+    box-shadow: 0 4px 14px rgba(0,0,0,.22);
+}
+.upload-status b {
+    color: var(--accent) !important;
+    font-weight: 800 !important;
 }
 .stApp [data-testid="stDataFrame"] * {
     color: var(--text);

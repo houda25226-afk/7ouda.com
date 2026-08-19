@@ -1420,6 +1420,28 @@ DARK_UI_FIX = """
     color:var(--accent) !important;
 }
 
+/* سويتش البريك */
+.break-switch-row {
+    display:flex;
+    align-items:center;
+    gap:12px;
+    margin:10px 0 14px;
+    padding:10px 14px;
+    background:#111B2C;
+    border:1px solid rgba(255,255,255,.06);
+    border-radius:10px;
+}
+.break-switch-label {
+    color:#E8EEF6 !important;
+    font-weight:800;
+    font-size:.92rem;
+    flex:1;
+}
+.break-switch-text {
+    color:#9FB0C6 !important;
+    font-size:.82rem;
+}
+
 /* المجمع اليومي */
 .daily-total-card {
     display:grid;
@@ -2251,6 +2273,12 @@ def init_activity_state():
         "period_1_break_end": dt_time(11, 15),
         "period_2_break_start": dt_time(15, 0),
         "period_2_break_end": dt_time(15, 15),
+        "period_1_break_duration": 15,
+        "period_2_break_duration": 15,
+        "daily_has_break": False,
+        "daily_break_start": dt_time(13, 0),
+        "daily_break_end": dt_time(13, 15),
+        "daily_break_duration": 15,
         "period_results": {},
         "daily_result": None,  # 📊 نتيجة تصنيف المجمع اليومي (رفع واحد لنشاط اليوم كله)
     }
@@ -2393,6 +2421,30 @@ def render_period_upload_and_classify(period_key: str, period_title: str):
         _show_period_results_from_cache(period_key)
 
 
+def _render_break_switch(label: str, has_break_key: str):
+    """سويتش البريك: بدل نعم/لا — سويتش لو فيه بريك بيظهر بداية البريك ومدته.
+
+    تنفيذ Streamlit-native: st.toggle فعلي متخزن في الـ session state
+    (بدون label مرئي)، وبنعرض سطر مخصص فيه السويتش وشكله ونص الحالة.
+    """
+    # السويتش الفعلي — بيتحفظ في session state مباشرة
+    st.session_state[has_break_key] = st.toggle(
+        label,
+        value=st.session_state[has_break_key],
+        key=f"{has_break_key}_switch",
+        label_visibility="hidden",
+    )
+    st.markdown(
+        f"""
+        <div class='break-switch-row'>
+            <span class='break-switch-label'>{label}</span>
+            <span class='break-switch-text'>{"✅ نعم — فيه بريك" if st.session_state[has_break_key] else "لا — مفيش بريك"}</span>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
 def render_period_settings(period_key: str, period_title: str):
     company = st.session_state["selected_company"]
     start_key = f"{period_key}_start"
@@ -2431,30 +2483,44 @@ def render_period_settings(period_key: str, period_title: str):
     if st.session_state[start_key] >= st.session_state[end_key]:
         st.warning("⚠️ بداية الفترة لازم تكون قبل نهايتها.")
 
-    st.session_state[has_break_key] = st.radio(
-        f"هل يوجد بريك في {period_title}؟",
-        ["لا", "نعم"],
-        index=1 if st.session_state[has_break_key] else 0,
-        horizontal=True,
-        key=f"{has_break_key}_radio",
-    ) == "نعم"
+    # 🕐 سويتش البريك: لو مفعّل بيظهر بداية البريك ومدته
+    _render_break_switch(f"هل يوجد بريك في {period_title}؟", has_break_key)
 
     if st.session_state[has_break_key]:
         b1, b2 = st.columns(2)
         with b1:
             st.session_state[break_start_key] = st.time_input(
-                "بداية البريك",
+                "🕐 بداية البريك",
                 value=st.session_state[break_start_key],
                 key=f"{break_start_key}_input",
             )
         with b2:
-            st.session_state[break_end_key] = st.time_input(
-                "نهاية البريك",
-                value=st.session_state[break_end_key],
-                key=f"{break_end_key}_input",
+            duration_min_key = f"{period_key}_break_duration"
+            st.session_state[duration_min_key] = st.slider(
+                "⏳ مدة البريك (دقيقة)",
+                min_value=5,
+                max_value=120,
+                step=5,
+                value=int(
+                    max(5, (st.session_state[break_end_key].hour * 60 + st.session_state[break_end_key].minute)
+                        - (st.session_state[break_start_key].hour * 60 + st.session_state[break_start_key].minute))
+                ),
+                key=f"{duration_min_key}_slider",
             )
+            total = (st.session_state[break_start_key].hour * 60 + st.session_state[break_start_key].minute)
+            end_min = total + st.session_state[duration_min_key]
+            st.session_state[break_end_key] = dt_time(end_min // 60, end_min % 60)
+
         if st.session_state[break_start_key] >= st.session_state[break_end_key]:
             st.warning("⚠️ بداية البريك لازم تكون قبل نهايته.")
+
+        st.markdown(
+            f"<div class='schedule-summary' style='margin-top:-8px;margin-bottom:10px;'>"
+            f"☕ البريك من <b>{st.session_state[break_start_key].strftime('%H:%M')}</b> "
+            f"ل<b>{st.session_state[break_end_key].strftime('%H:%M')}</b> "
+            f"(المدة <b>{st.session_state[duration_min_key]} دقيقة</b>)</div>",
+            unsafe_allow_html=True,
+        )
 
     st.markdown(
         f"""
@@ -2942,8 +3008,56 @@ def render_no_answer_chart(df, sales_col, period_title):
     st.plotly_chart(fig, use_container_width=True)
 
 
+def _render_daily_break_settings():
+    """إعدادات البريك لتبويبة المجمع اليومي: سويتش + بداية البريك + مدته."""
+    has_break_key = "daily_has_break"
+    break_start_key = "daily_break_start"
+    break_end_key = "daily_break_end"
+
+    _render_break_switch("🕐 هل يوجد بريك في نشاط اليوم؟", has_break_key)
+
+    if st.session_state[has_break_key]:
+        b1, b2 = st.columns(2)
+        with b1:
+            st.session_state[break_start_key] = st.time_input(
+                "🕐 بداية البريك",
+                value=st.session_state[break_start_key],
+                key=f"{break_start_key}_input",
+            )
+        with b2:
+            duration_key = "daily_break_duration"
+            st.session_state[duration_key] = st.slider(
+                "⏳ مدة البريك (دقيقة)",
+                min_value=5,
+                max_value=120,
+                step=5,
+                value=int(
+                    max(5, (st.session_state[break_end_key].hour * 60 + st.session_state[break_end_key].minute)
+                        - (st.session_state[break_start_key].hour * 60 + st.session_state[break_start_key].minute))
+                ),
+                key=f"{duration_key}_slider",
+            )
+            total = (st.session_state[break_start_key].hour * 60 + st.session_state[break_start_key].minute)
+            end_min = total + st.session_state[duration_key]
+            st.session_state[break_end_key] = dt_time(end_min // 60, end_min % 60)
+
+        if st.session_state[break_start_key] >= st.session_state[break_end_key]:
+            st.warning("⚠️ بداية البريك لازم تكون قبل نهايته.")
+
+        st.markdown(
+            f"<div class='schedule-summary' style='margin-top:-8px;margin-bottom:10px;'>"
+            f"☕ البريك من <b>{st.session_state[break_start_key].strftime('%H:%M')}</b> "
+            f"ل<b>{st.session_state[break_end_key].strftime('%H:%M')}</b> "
+            f"(المدة <b>{st.session_state[duration_key]} دقيقة</b>)</div>",
+            unsafe_allow_html=True,
+        )
+
+
 def render_daily_aggregate():
     company = st.session_state["selected_company"]
+
+    # 📊 المجمع اليومي: إعدادات البريك (سويتش + بداية البريك + مدته) زي الفترتين
+    _render_daily_break_settings()
 
     # 📊 المجمع اليومي الجديد: رفع واحد لملف نشاط اليوم كله والموديل يصفّنه دفعة واحدة
     uploaded_file = st.file_uploader(
@@ -3008,8 +3122,17 @@ def _classify_daily_file(uploaded_file, company):
         sales_col = find_column(result_df, SALES_PERSON_CANDIDATES)
         time_col = find_column(result_df, CREATED_ON_CANDIDATES)
 
+        daily_break_start = (
+            st.session_state["daily_break_start"] if st.session_state["daily_has_break"] else None
+        )
+        daily_break_end = (
+            st.session_state["daily_break_end"] if st.session_state["daily_has_break"] else None
+        )
+
         if sales_col and time_col:
-            result_df = calculate_wasted_time(result_df, sales_col, time_col, None, None)
+            result_df = calculate_wasted_time(
+                result_df, sales_col, time_col, daily_break_start, daily_break_end
+            )
         else:
             st.warning(
                 "مش لاقي عمود المحصّل أو عمود التاريخ/الوقت، فمش هيتحسب الوقت المهدر. "
@@ -3019,6 +3142,10 @@ def _classify_daily_file(uploaded_file, company):
         result_df = result_df.rename(columns={MODEL_TEXT_COL: ORIGINAL_TEXT_COL})
         result_df["الشركة"] = company
         result_df["الفترة"] = "المجمع اليومي"
+        if st.session_state["daily_has_break"]:
+            result_df["بداية البريك"] = st.session_state["daily_break_start"].strftime("%H:%M")
+            result_df["نهاية البريك"] = st.session_state["daily_break_end"].strftime("%H:%M")
+            result_df["مدة البريك_دقيقة"] = st.session_state["daily_break_duration"]
 
         st.session_state["daily_result"] = {
             "df": result_df,

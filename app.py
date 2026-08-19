@@ -737,6 +737,16 @@ section[data-testid="stSidebar"] .stRadio input:checked + div {
     font-size: 0.95rem;
     margin-top: 0.3rem;
 }
+.page-header-centered .page-eyebrow,
+.page-header-centered .page-title,
+.page-header-centered .page-subtitle {
+    text-align: center;
+}
+.filter-badge {
+    display: inline-block; padding: 0.35rem 0.9rem; border-radius: 999px;
+    background: rgba(94,234,212,0.08); border: 1px solid rgba(94,234,212,0.25);
+    color: var(--accent); font-size: 0.8rem; font-weight: 500; margin-bottom: 0.5rem;
+}
 
 /* موجة صوتية بسيطة */
 .waveform {
@@ -1491,12 +1501,15 @@ def render_waveform(n_bars: int = 24):
     st.markdown(f'<div class="waveform">{bars}</div>', unsafe_allow_html=True)
 
 
-def page_header(eyebrow: str, title: str, subtitle: str, show_wave: bool = False):
+def page_header(eyebrow: str, title: str, subtitle: str, show_wave: bool = False, centered: bool = False):
+    centered_class = "page-header-centered" if centered else ""
     st.markdown(
         f"""
-        <div class="page-eyebrow">{eyebrow}</div>
-        <p class="page-title">{title}</p>
-        <p class="page-subtitle">{subtitle}</p>
+        <div class="{centered_class}">
+            <div class="page-eyebrow">{eyebrow}</div>
+            <p class="page-title">{title}</p>
+            <p class="page-subtitle">{subtitle}</p>
+        </div>
         """,
         unsafe_allow_html=True,
     )
@@ -1624,7 +1637,7 @@ PLOTLY_LAYOUT = dict(
     plot_bgcolor="rgba(0,0,0,0)",
     font_color="#F3F6FA",
     font_family="Tajawal, sans-serif",
-    margin=dict(t=42, b=10, l=10, r=10),
+    margin=dict(t=55, b=60, l=15, r=15),
 )
 PLOTLY_CONFIG = {"displayModeBar": False}
 
@@ -1716,7 +1729,7 @@ def render_wasted_bar(df, sales_col, top_n=10):
         if top_n:
             wasted_by_agent = wasted_by_agent.head(top_n)
         wasted_by_agent = wasted_by_agent.reset_index()
-        chart_height = max(300, 28 * len(wasted_by_agent))
+        chart_height = max(300, 32 * len(wasted_by_agent))
         fig2 = px.bar(
             wasted_by_agent, x=WASTED_TIME_COL, y=sales_col, orientation="h",
             color=WASTED_TIME_COL, color_continuous_scale=[COLOR_ACCENT, COLOR_WARN, COLOR_FAIL],
@@ -1744,7 +1757,9 @@ def render_agent_perf_chart(df, class_col, sales_col, with_table=True):
             agent_perf, x=sales_col, y=["ناجحة", "غير ناجحة"],
             color_discrete_sequence=[COLOR_SUCCESS, COLOR_FAIL], barmode="stack",
         )
-        fig3.update_layout(**PLOTLY_LAYOUT, legend_title_text="", xaxis_title="", yaxis_title="عدد المكالمات")
+        fig3.update_layout(**PLOTLY_LAYOUT, legend_title_text="", xaxis_title="", yaxis_title="عدد المكالمات",
+                           legend=dict(orientation="h", yanchor="bottom", y=-0.28, x=0.5, xanchor="center"),
+                           height=430)
         fig3.update_traces(marker_line_width=0)
         st.plotly_chart(fig3, use_container_width=True, config=PLOTLY_CONFIG)
         if with_table:
@@ -1787,7 +1802,8 @@ def render_trend_chart(df, class_col, time_col):
             daily = trend_df.groupby("اليوم").size().reset_index(name="عدد المكالمات")
             fig5 = px.area(daily, x="اليوم", y="عدد المكالمات", color_discrete_sequence=[COLOR_ACCENT])
         fig5.update_traces(line_width=2)
-        fig5.update_layout(**PLOTLY_LAYOUT, legend_title_text="", xaxis_title="", yaxis_title="عدد المكالمات")
+        fig5.update_layout(**PLOTLY_LAYOUT, legend_title_text="", xaxis_title="", yaxis_title="عدد المكالمات",
+                           xaxis=dict(tickformat="%Y-%m-%d", nticks=8))
         st.plotly_chart(fig5, use_container_width=True, config=PLOTLY_CONFIG)
 
     chart_card("📅 اتجاه عدد المكالمات يوميًا", _trend)
@@ -1896,17 +1912,18 @@ def render_comparison_matrix(df, class_col, sales_col):
         def _scatter():
             fig = px.scatter(
                 perf, x="نسبة النجاح %", y="إجمالي الوقت المهدر", size="إجمالي المكالمات",
-                text=sales_col, color="نسبة النجاح %",
+                hover_name=sales_col, color="نسبة النجاح %",
                 color_continuous_scale=[COLOR_FAIL, COLOR_WARN, COLOR_SUCCESS],
             )
             avg_success = perf["نسبة النجاح %"].mean()
             avg_wasted = perf["إجمالي الوقت المهدر"].mean()
             fig.add_vline(x=avg_success, line_dash="dot", line_color="#B9C6D6", opacity=0.5)
             fig.add_hline(y=avg_wasted, line_dash="dot", line_color="#B9C6D6", opacity=0.5)
-            fig.update_traces(textposition="top center", textfont_size=10, marker=dict(line=dict(color="#0E1420", width=1)))
+            fig.update_traces(hovertemplate=f"%{{text}}<br>نسبة النجاح: %{{x:.1f}}%<br>الوقت المهدر: %{{y:.1f}} دقيقة<extra></extra>",
+                              marker=dict(line=dict(color="#0E1420", width=1)))
             fig.update_layout(
                 **PLOTLY_LAYOUT, coloraxis_showscale=False,
-                xaxis_title="نسبة النجاح %", yaxis_title="إجمالي الوقت المهدر (دقيقة)",
+                xaxis_title="نسبة النجاح %", yaxis_title="إجمالي الوقت المهدر (دقيقة)", height=520,
             )
             st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG)
             st.caption(
@@ -2008,7 +2025,7 @@ def _fig_to_div(fig, div_id, height=420):
     )
 
 
-def build_dashboard_html(df, class_col, sales_col, time_col, source_name="") -> str:
+def build_dashboard_html(df, class_col, sales_col, time_col, source_name="", filter_hint="") -> str:
     """بيبني صفحة HTML مستقلة (تفتح في أي متصفح، تفاعلية زي الأصل)
     فيها نفس تصميم وألوان الداشبورد جوه التطبيق، عشان تتبعت أو تتحفظ كصفحة ويب."""
 
@@ -2096,7 +2113,8 @@ def build_dashboard_html(df, class_col, sales_col, time_col, source_name="") -> 
             daily = trend_df.groupby("اليوم").size().reset_index(name="عدد المكالمات")
             fig_trend = px.area(daily, x="اليوم", y="عدد المكالمات", color_discrete_sequence=[COLOR_ACCENT])
         fig_trend.update_traces(line_width=2)
-        fig_trend.update_layout(legend_title_text="", xaxis_title="", yaxis_title="عدد المكالمات")
+        fig_trend.update_layout(legend_title_text="", xaxis_title="", yaxis_title="عدد المكالمات",
+                                 xaxis=dict(tickformat="%Y-%m-%d", nticks=8))
         chart_trend = ("📅 اتجاه عدد المكالمات يوميًا", _fig_to_div(fig_trend, "fig_trend"), True)
 
     if has_class and has_sales:
@@ -2128,15 +2146,15 @@ def build_dashboard_html(df, class_col, sales_col, time_col, source_name="") -> 
             perf = perf.merge(wasted_agg, left_on=sales_col, right_index=True, how="left")
 
             fig_scatter = px.scatter(perf, x="نسبة النجاح %", y="إجمالي الوقت المهدر", size="إجمالي المكالمات",
-                                      text=sales_col, color="نسبة النجاح %",
+                                      hover_name=sales_col, color="نسبة النجاح %",
                                       color_continuous_scale=[COLOR_FAIL, COLOR_WARN, COLOR_SUCCESS])
             fig_scatter.add_vline(x=perf["نسبة النجاح %"].mean(), line_dash="dot", line_color="#B9C6D6", opacity=0.5)
             fig_scatter.add_hline(y=perf["إجمالي الوقت المهدر"].mean(), line_dash="dot", line_color="#B9C6D6", opacity=0.5)
-            fig_scatter.update_traces(textposition="top center", textfont_size=10,
+            fig_scatter.update_traces(hovertemplate=f"%{{hovertext}}<br>نسبة النجاح: %{{x:.1f}}%<br>الوقت المهدر: %{{y:.1f}} دقيقة<extra></extra>",
                                        marker=dict(line=dict(color="#0E1420", width=1)))
             fig_scatter.update_layout(coloraxis_showscale=False, xaxis_title="نسبة النجاح %",
-                                       yaxis_title="إجمالي الوقت المهدر (دقيقة)")
-            chart_scatter = ("🧭 خريطة الأداء: نسبة النجاح مقابل الوقت المهدر", _fig_to_div(fig_scatter, "fig_scatter", height=460), True)
+                                       yaxis_title="إجمالي الوقت المهدر (دقيقة)", height=520)
+            chart_scatter = ("🧭 خريطة الأداء: نسبة النجاح مقابل الوقت المهدر", _fig_to_div(fig_scatter, "fig_scatter", height=520), True)
 
         comparison_table_html = perf.rename(columns={sales_col: "المحصّل"}).to_html(
             index=False, classes="comp-table", border=0, justify="right"
@@ -2193,12 +2211,14 @@ def build_dashboard_html(df, class_col, sales_col, time_col, source_name="") -> 
 
     generated_at = datetime.now().strftime("%Y-%m-%d %H:%M")
 
+    filter_html = f'<div class="filters-chip">🎚️ {filter_hint}</div>' if filter_hint else ''
+
     return f"""<!DOCTYPE html>
 <html lang="ar" dir="rtl">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>داشبورد نشاط المحصّلين | 7oudaModel</title>
+<title>تحليل نشاط المحصّلين | 7oudaModel</title>
 <script src="https://cdn.plot.ly/plotly-2.32.0.min.js"></script>
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Tajawal:wght@400;500;700;900&family=JetBrains+Mono:wght@500;700&display=swap');
@@ -2214,7 +2234,7 @@ body {{
     min-height: 100vh;
 }}
 .wrap {{ max-width: 1280px; margin: 0 auto; padding: 2rem 1.5rem 4rem; }}
-.header {{ margin-bottom: 1.5rem; }}
+.header {{ margin-bottom: 1.5rem; text-align: center; }}
 .eyebrow {{
     font-family: 'JetBrains Mono', monospace; font-size: 0.72rem; letter-spacing: 0.14em;
     color: var(--accent); text-transform: uppercase; margin-bottom: 0.3rem;
@@ -2263,6 +2283,11 @@ h1 {{ font-weight: 900; font-size: 1.9rem; margin: 0; }}
 .comp-table td {{ padding: 0.5rem 0.7rem; border-bottom: 1px solid rgba(255,255,255,0.05); }}
 .comp-table tr:hover td {{ background: rgba(94,234,212,0.05); }}
 .footer {{ text-align: center; color: var(--text-dim); font-size: 0.78rem; margin-top: 2.5rem; }}
+.filters-chip {{
+    display: inline-block; margin-top: 0.6rem; padding: 0.35rem 0.9rem; border-radius: 999px;
+    background: rgba(94,234,212,0.08); border: 1px solid rgba(94,234,212,0.25);
+    color: var(--accent); font-size: 0.8rem; font-weight: 500;
+}}
 @media (max-width: 900px) {{
     .metrics-grid, .highlights-grid, .charts-grid {{ grid-template-columns: 1fr; }}
 }}
@@ -2272,8 +2297,9 @@ h1 {{ font-weight: 900; font-size: 1.9rem; margin: 0; }}
 <div class="wrap">
     <div class="header">
         <div class="eyebrow">ACTIVITY DASHBOARD · SNAPSHOT</div>
-        <h1>📊 داشبورد نشاط المحصّلين</h1>
+        <h1>📊 تحليل نشاط المحصّلين</h1>
         <div class="subtitle">{('مصدر البيانات: ' + source_name) if source_name else ''} · تم إنشاؤه في {generated_at}</div>
+        {filter_html}
     </div>
     <div class="divider"></div>
     <div class="metrics-grid">{metrics_html}</div>
@@ -3311,9 +3337,9 @@ def page_dashboard():
     وممكن تتنزّل كصفحة ويب HTML مستقلة تفتحها في أي متصفح."""
     page_header(
         "ACTIVITY DASHBOARD",
-        "📊 داشبورد النشاط",
+        "📊 تحليل نشاط المحصّلين",
         "ارفع ملف النشاط المصنّف بعد التصنيف وهنبني لك داشبورد احترافية كاملة",
-        show_wave=True,
+        show_wave=True, centered=True,
     )
 
     init_activity_state()
@@ -3339,8 +3365,9 @@ def page_dashboard():
 
     # 💾 لو الملف ده اتعرج قبل كده — نعرض الكاش من غير إعادة معالجة
     if current_source == dash_file.name and cached is not None:
-        _render_dashboard(cached["df"], cached["class_col"], cached["sales_col"],
-                          cached["time_col"], dash_file.name)
+        df_show, hint = _render_slicers(cached["df"], cached["sales_col"], cached["time_col"])
+        _render_dashboard(df_show, cached["class_col"], cached["sales_col"],
+                          cached["time_col"], dash_file.name, filter_hint=hint)
         return
 
     try:
@@ -3366,14 +3393,19 @@ def page_dashboard():
         "time_col": time_col, "source_name": dash_file.name,
     }
 
-    _render_dashboard(df, class_col, sales_col, time_col, dash_file.name)
+    # 🎚️ السلايسرز: فلتر المحصّلين + فلتر التواريخ (للعرض فقط — الكاش محفوظ)
+    df_show, hint = _render_slicers(df, sales_col, time_col)
+    _render_dashboard(df_show, class_col, sales_col, time_col, dash_file.name, filter_hint=hint)
 
 
-def _render_dashboard(df, class_col, sales_col, time_col, source_name):
+def _render_dashboard(df, class_col, sales_col, time_col, source_name, filter_hint=""):
+    if filter_hint:
+        st.markdown(f'<div class="filter-badge">{filter_hint}</div>', unsafe_allow_html=True)
     render_full_dashboard(df, class_col=class_col, sales_col=sales_col, time_col=time_col)
 
     dashboard_html = build_dashboard_html(
-        df, class_col=class_col, sales_col=sales_col, time_col=time_col, source_name=source_name
+        df, class_col=class_col, sales_col=sales_col, time_col=time_col,
+        source_name=source_name, filter_hint=filter_hint
     )
     st.download_button(
         "🌐 تحميل الداشبورد كصفحة ويب (HTML) — تفتحها كأي موقع",
@@ -3394,14 +3426,63 @@ def _render_dashboard(df, class_col, sales_col, time_col, source_name):
     )
 
 
+def _render_slicers(df, sales_col, time_col):
+    """سلايسرز الداشبورد: فلتر المحصّلين (multiselect) + فلتر التواريخ (كاليندر range).
+    بتشتغل على الـ df المفلتر للعرض فقط — الكاش الأصلي مبيتلووش."""
+    agents, date_min, date_max, selected = [], None, None, None
+    if sales_col and sales_col in df.columns:
+        agents = sorted([str(a) for a in df[sales_col].dropna().unique()])
+    if time_col and time_col in df.columns:
+        ts = pd.to_datetime(df[time_col], errors="coerce")
+        if ts.notna().any():
+            date_min, date_max = ts.min().date(), ts.max().date()
+
+    col1, col2 = st.columns(2)
+    with col1:
+        selected_agents = st.multiselect(
+            "👤 فلتر المحصّلين",
+            options=agents, default=agents, key="dash_agent_filter",
+        )
+    with col2:
+        if date_min is not None:
+            date_range = st.date_input(
+                "📅 فلتر التواريخ",
+                value=(date_min, date_max), min_value=date_min, max_value=date_max,
+                key="dash_date_filter",
+            )
+        else:
+            date_range = None
+            st.info("مفيش تواريخ صالحة في عمود التاريخ — فلتر التواريخ مش شغّال.")
+
+    filtered = df.copy()
+    hint_parts = []
+    if sales_col and selected_agents != agents:
+        if selected_agents:
+            filtered = filtered[filtered[sales_col].astype(str).isin(selected_agents)]
+            hint_parts.append(f"المحصّلين: {len(selected_agents)} من {len(agents)}")
+        else:
+            hint_parts.append("مفيش محصّلين مختارين")
+    if time_col and isinstance(date_range, tuple) and len(date_range) == 2:
+        d0, d1 = date_range
+        if d0 != date_min or d1 != date_max:
+            ts = pd.to_datetime(filtered[time_col], errors="coerce")
+            keep = ts.notna() & (ts.dt.date >= d0) & (ts.dt.date <= d1)
+            filtered = filtered[keep]
+            hint_parts.append(f"التاريخ من {d0} إلى {d1}")
+
+    hint = " · ".join(hint_parts)
+    return filtered, hint
+
+
 def _show_dashboard_from_cache():
     """عرض الداشبورد المحفوظة بعد شيل الملف — من الكاش بدون إعادة معالجة."""
     cached = st.session_state.get("dashboard_result")
     if cached is None:
         return
     st.info(f"📌 الداشبورد لسه متخزنة في الذاكرة — آخر ملف مرفوع: {cached['source_name']}")
-    _render_dashboard(cached["df"], cached["class_col"], cached["sales_col"],
-                      cached["time_col"], cached["source_name"])
+    df, hint = _render_slicers(cached["df"], cached["sales_col"], cached["time_col"])
+    _render_dashboard(df, cached["class_col"], cached["sales_col"],
+                      cached["time_col"], cached["source_name"], filter_hint=hint)
 
 
 # ==========================================================

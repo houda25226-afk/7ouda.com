@@ -101,9 +101,6 @@ def parse_date_cell(val):
         return None
 
 
-PROMISES_RESULT_KEY = "promises_result"  # كاش نتائج تبويبة الوعود القائمة
-
-
 def _show_promises_results(df, target_date, summary, filename=None, from_cache=False):
     """عرض نتائج الوعود القائمة (الجدول + الملخص + التنزيل) — من رفع جديد أو من الكاش."""
     total_in_file = summary.get("total_in_file", len(df))
@@ -235,6 +232,146 @@ def _show_promises_results(df, target_date, summary, filename=None, from_cache=F
         )
 
 
+PROMISES_RESULT_KEY = "promises_result"  # كاش نتائج الوعود القائمة (فلتر: اليوم)
+BROKEN_RESULT_KEY = "promises_broken_result"  # كاش نتائج الوعود المكسورة (فلتر: قبل اليوم)
+
+
+def _run_promises_pipeline(
+    uploaded,
+    result_key,
+    due_mode,
+    count_label,
+):
+    """معالجة ملف المحفظة (فلترة + تجميع) وحفظ النتيجة في كاش الصفحة.
+
+    - ``due_mode='today'``: Follow up Due Date == تاريخ اليوم (وعود قائمة).
+    - ``due_mode='before'``: Follow up Due Date < تاريخ اليوم (وعود مكسورة).
+    - ``count_label``: نص ملصق التجميع (مثلًا \"الوعود القائمة\" أو \"الوعود المكسورة\").
+
+    بترجع ``True`` لو تم الحفظ في الكاش، و``False`` لو اتعرضت من الكاش مباشرة.
+    """
+    _file_hash = hashlib.sha256(uploaded.getvalue()).hexdigest()
+    cached = st.session_state.get(result_key)
+    if cached and cached.get("file_hash") == _file_hash:
+        return False  # النتيجة موجودة في الكاش من رفع الملف ده — مش محتاجين إعادة معالجة
+
+    try:
+        raw_df = read_uploaded_dataframe(uploaded)
+    except Exception as e:
+        st.error(f"مش قادر أقرأ الملف: {e}")
+        return False
+
+    total_in_file = len(raw_df) - 1  # قبل حذف أول صف
+    df = raw_df
+
+    # 1) حذف أول صف بعد العناوين (زي قاعدة باقي الملفات في التطبيق)
+    if len(df) > 0:
+        df = df.iloc[1:].reset_index(drop=True)
+
+    sales_col = find_column(df, SALES_PERSON_CANDIDATES)
+    substate_col = find_column(df, PROMISE_SUB_STATE_CANDIDATES)
+    duedate_col = find_column(df, PROMISE_DUE_DATE_CANDIDATES)
+    net_col = find_column(df, PROMISE_NET_AMOUNT_CANDIDATES)
+
+    missing = [n for n, c in [
+        ("المحصّل (Salesperson)", sales_col),
+        ("الحالة الفرعية (Sub State)", substate_col),
+        ("تاريخ المتابعة (Follow up Due Date)", duedate_col),
+    ] if not c]
+    if missing:
+        st.error(
+            "مش لاقي أعمدة مهمة في الملف. الأعمدة المطلوبة: "
+            f"{', '.join(missing)}\n\nالأعمدة الموجودة في الملف: {', '.join(df.columns.astype(str))}"
+        )
+        return False
+
+    # 2) فلترة Salesperson — نستبعد المحصّلين المحددين
+    sales_vals = df[sales_col].astype(str).str.strip()
+    keep_sales = ~sales_vals.isin(PROMISE_EXCLUDED_SALES)
+    dropped_sales = int((~keep_sales).sum())
+    df = df[keep_sales].copy()
+
+    # 3) فلترة Sub State = واعد بالسداد
+    if substate_col:
+        sub_vals = df[substate_col].astype(str).str.strip()
+        keep_sub = sub_vals == PROMISE_SUB_STATE_VALUE
+        dropped_sub = int((~keep_sub).sum())
+        df = df[keep_sub].copy()
+    else:
+        dropped_sub = 0
+
+    # 4) فلترة Follow up Due Date حسب وضع التبويبة
+    target_date = st.session_state[TODAY_KEY]
+    due_vals = pd.Series([parse_date_cell(v) for v in df[duedate_col]], index=df.index)
+    if due_mode == "before":
+        keep_due = due_vals.apply(lambda d: d is not None and d < target_date)
+        due_desc = f"التاريخ قبل اليوم (< {target_date.strftime('%Y-%m-%d')})"
+    else:
+        keep_due = due_vals == target_date
+        due_desc = f"التاريخ يساوي اليوم ({target_date.strftime('%Y-%m-%d')})"
+    dropped_due = int((~keep_due).sum())
+    df = df[keep_due].copy()
+
+    # 5) الجدول التجميعي لكل محصّل
+    if net_col and net_col in df.columns:
+        summary_df = df.groupby(sales_col).agg(
+            **{
+                count_label: (duedate_col, "count"),
+                "صافي المديونية (Net Amount)": (net_col, "sum"),
+            }
+        )
+    else:
+        summary_df = df.groupby(sales_col).agg(
+            **{count_label: (duedate_col, "count")}
+        )
+    summary_df = summary_df.sort_values(count_label, ascending=False).reset_index()
+    summary_df.columns = ["المحصل " + str(sales_col), count_label] + (
+        ["صافي المديونية (Net Amount)"] if net_col and net_col in df.columns else []
+    )
+
+    # 💾 حفظ النتائج في الكاش — تفضل موجودة لحد ما نعمل reload أو نشيل الملف
+    st.session_state[result_key] = {
+        "df": df,
+        "summary_df": summary_df,
+        "target_date": target_date,
+        "filename": uploaded.name,
+        "file_hash": _file_hash,
+        "sales_col": sales_col,
+        "substate_col": substate_col,
+        "duedate_col": duedate_col,
+        "net_col": net_col,
+        "total_in_file": total_in_file,
+        "dropped_sales": dropped_sales,
+        "dropped_sub": dropped_sub,
+        "dropped_due": dropped_due,
+        "due_mode": due_mode,
+        "due_desc": due_desc,
+    }
+    return True
+
+
+def _render_cached_promises_page(result_key, placeholder_text):
+    """عرض صفحة وعود من الكاش — سواء اتعملت دلوقتي أو محفوظة من رفع سابق قبل شيل الملف."""
+    cached = st.session_state.get(result_key)
+    if cached:
+        if cached.get("due_mode") == "before":
+            _show_broken_results(
+                cached["df"],
+                cached["target_date"],
+                cached,
+                filename=cached.get("filename"),
+            )
+        else:
+            _show_promises_results(
+                cached["df"],
+                cached["target_date"],
+                cached,
+                filename=cached.get("filename"),
+            )
+    else:
+        st.info(f"📂 ارفع ملف المحفظة (Excel أو CSV) عشان نعرض النتائج — النتائج هتفضل محفوظة لحد ما تعمل reload للصفحة. {placeholder_text}")
+
+
 def page_standing_promises():
     """تويب الوعود القائمة: رفع المحفظة → فلترة → جدول الوعود + تنزيل + تجميع بالمحصل."""
     _init_promises_today()
@@ -245,9 +382,6 @@ def page_standing_promises():
         "ارفع المحفظة (Excel) وهنفلتر واعد بالسداد لليوم بس — مع ملخص لكل محصّل وصافي المديونية",
         show_wave=True,
     )
-
-    # التاريخ المستهدف (اليوم) — ثابت، من غير كاليندر
-    target_date = st.session_state[TODAY_KEY]
 
     uploaded = st.file_uploader(
         "📂 ارفع ملف المحفظة (Excel أو CSV)",
@@ -260,116 +394,190 @@ def page_standing_promises():
             f"<div class='upload-status'>📄 الملف المختار: <b>{uploaded.name}</b></div>",
             unsafe_allow_html=True,
         )
-        # 💾 كاش على محتوى الملف نفسه (هاش البايتات) — مش بس الاسم عشان نفس الاسم بمحتوى مختلف ما يسترجعش نتائج قديمة
-        _file_hash = hashlib.sha256(uploaded.getvalue()).hexdigest()
-        cached = st.session_state.get(PROMISES_RESULT_KEY)
-        if cached and cached.get("file_hash") == _file_hash:
-            # 💾 النتائج موجودة في الكاش من رفع الملف ده — نعرضها من الكاش بدون إعادة معالجة
+        processed = _run_promises_pipeline(
+            uploaded, PROMISES_RESULT_KEY, due_mode="today", count_label="عدد الوعود القائمة"
+        )
+        if not processed:
+            # النتيجة جاية من الكاش — نعرضها مباشرة من غير إعادة معالجة
+            cached = st.session_state[PROMISES_RESULT_KEY]
             _show_promises_results(
                 cached["df"],
                 cached["target_date"],
                 cached,
                 filename=cached.get("filename"),
-                from_cache=False,
             )
             return
 
-        try:
-            raw_df = read_uploaded_dataframe(uploaded)
-        except Exception as e:
-            st.error(f"مش قادر أقرأ الملف: {e}")
-            return
+    _render_cached_promises_page(PROMISES_RESULT_KEY, "")
 
-        total_in_file = len(raw_df) - 1  # قبل حذف أول صف
-        df = raw_df
 
-        # 1) حذف أول صف بعد العناوين (زي قاعدة باقي الملفات في التطبيق)
-        if len(df) > 0:
-            df = df.iloc[1:].reset_index(drop=True)
+def page_broken_promises():
+    """تويب الوعود المكسورة: نفس منطق القائمة بس فلتر تاريخ المتابعة = قبل تاريخ اليوم."""
+    _init_promises_today()
 
-        sales_col = find_column(df, SALES_PERSON_CANDIDATES)
-        substate_col = find_column(df, PROMISE_SUB_STATE_CANDIDATES)
-        duedate_col = find_column(df, PROMISE_DUE_DATE_CANDIDATES)
-        net_col = find_column(df, PROMISE_NET_AMOUNT_CANDIDATES)
+    page_header(
+        "BROKEN PROMISES",
+        "📕 الوعود المكسورة",
+        "ارفع المحفظة (Excel) وهنفلتر واعد بالسداد اللي تاريخ متابعتها فات — يعني الوعد اتكسر — مع ملخص لكل محصّل وصافي المديونية",
+        show_wave=True,
+    )
 
-        missing = [n for n, c in [
-            ("المحصّل (Salesperson)", sales_col),
-            ("الحالة الفرعية (Sub State)", substate_col),
-            ("تاريخ المتابعة (Follow up Due Date)", duedate_col),
-        ] if not c]
-        if missing:
-            st.error(
-                "مش لاقي أعمدة مهمة في الملف. الأعمدة المطلوبة: "
-                f"{', '.join(missing)}\n\nالأعمدة الموجودة في الملف: {', '.join(df.columns.astype(str))}"
+    uploaded = st.file_uploader(
+        "📂 ارفع ملف المحفظة (Excel أو CSV)",
+        type=["xlsx", "xls", "csv"],
+        key="broken_portfolio_upload",
+    )
+
+    if uploaded is not None:
+        st.markdown(
+            f"<div class='upload-status'>📄 الملف المختار: <b>{uploaded.name}</b></div>",
+            unsafe_allow_html=True,
+        )
+        processed = _run_promises_pipeline(
+            uploaded, BROKEN_RESULT_KEY, due_mode="before", count_label="عدد الوعود المكسورة"
+        )
+        if not processed:
+            cached = st.session_state[BROKEN_RESULT_KEY]
+            _show_broken_results(
+                cached["df"],
+                cached["target_date"],
+                cached,
+                filename=cached.get("filename"),
             )
             return
 
-        # 2) فلترة Salesperson — نستبعد المحصّلين المحددين
-        sales_vals = df[sales_col].astype(str).str.strip()
-        keep_sales = ~sales_vals.isin(PROMISE_EXCLUDED_SALES)
-        dropped_sales = int((~keep_sales).sum())
-        df = df[keep_sales].copy()
+    _render_cached_promises_page(BROKEN_RESULT_KEY, "")
 
-        # 3) فلترة Sub State = واعد بالسداد
-        if substate_col:
-            sub_vals = df[substate_col].astype(str).str.strip()
-            keep_sub = sub_vals == PROMISE_SUB_STATE_VALUE
-            dropped_sub = int((~keep_sub).sum())
-            df = df[keep_sub].copy()
-        else:
-            dropped_sub = 0
 
-        # 4) فلترة Follow up Due Date = تاريخ اليوم
-        due_vals = pd.Series([parse_date_cell(v) for v in df[duedate_col]], index=df.index)
-        keep_due = due_vals == target_date
-        dropped_due = int((~keep_due).sum())
-        df = df[keep_due].copy()
+def _show_broken_results(df, target_date, summary, filename=None):
+    """عرض نتائج الوعود المكسورة — نفس شكل الوعود القائمة مع نصوص مكسورة."""
+    total_in_file = summary.get("total_in_file", len(df))
+    dropped_sales = summary.get("dropped_sales", 0)
+    dropped_sub = summary.get("dropped_sub", 0)
+    dropped_due = summary.get("dropped_due", 0)
 
-        # 5) الجدول التجميعي لكل محصّل
-        if net_col and net_col in df.columns:
-            summary_df = df.groupby(sales_col).agg(
-                **{
-                    "عدد الوعود القائمة": (duedate_col, "count"),
-                    "صافي المديونية (Net Amount)": (net_col, "sum"),
-                }
-            )
-        else:
-            summary_df = df.groupby(sales_col).agg(
-                **{"عدد الوعود القائمة": (duedate_col, "count")}
-            )
-        summary_df = summary_df.sort_values("عدد الوعود القائمة", ascending=False).reset_index()
-        summary_df.columns = ["المحصل " + str(sales_col), "عدد الوعود القائمة"] + (
-            ["صافي المديونية (Net Amount)"] if net_col and net_col in df.columns else []
+    # عرض ملخص الفلترة
+    st.markdown(
+        f"""
+        <div class='schedule-summary'>
+            <span>📌 الوعود المكسورة — كل التواريخ</span> <b>قبل {target_date.strftime('%Y-%m-%d')}</b>
+            <span>·</span> <b>{len(df)}</b> وعد مكسور من <b>{max(total_in_file, 0)}</b> صف
+            <span>· تم استبعاد:</span>
+            <b>{dropped_sales}</b> (محصّلين مستبعدين) |
+            <b>{dropped_sub}</b> (الحالة ليست "{PROMISE_SUB_STATE_VALUE}") |
+            <b>{dropped_due}</b> (التاريخ مش قبل اليوم)
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    if len(df) == 0:
+        st.warning("⚠️ مفيش وعود مكسورة (تواريخ متابعة قبل اليوم) بعد تطبيق الفلاتر.")
+        return
+
+    # الأعمدة المهمة
+    sales_col = summary.get("sales_col")
+    substate_col = summary.get("substate_col")
+    duedate_col = summary.get("duedate_col")
+    net_col = summary.get("net_col")
+    cols_used = [n for n, c in [
+        ("المحصّل", sales_col),
+        ("الحالة الفرعية", substate_col),
+        ("تاريخ المتابعة", duedate_col),
+        ("صافي المبلغ", net_col),
+    ] if c]
+    st.caption("💡 الأعمدة المعتمدة في الفلترة: " + " · ".join(cols_used))
+
+    st.markdown("<div class='divider'></div>", unsafe_allow_html=True)
+
+    # لمحة من البيانات
+    st.markdown(
+        f"""
+        <div class="chart-card-title" style="margin-bottom:8px;">
+            👀 لمحة من بيانات الوعود المكسورة (أول {min(15, len(df))} وعد)
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+    preview_cols = [c for c in [sales_col, substate_col, duedate_col, net_col] if c]
+    preview_df = df[preview_cols].head(15)
+    st.dataframe(preview_df, use_container_width=True, hide_index=True, height=min(420, 40 * len(preview_df) + 100))
+
+    st.markdown("<div class='divider'></div>", unsafe_allow_html=True)
+
+    # الجدول التجميعي لكل محصّل
+    st.markdown(
+        f"""
+        <div class="chart-card-title" style="margin-bottom:8px;">
+            📊 ملخص الوعود المكسورة لكل محصّل — كل التواريخ قبل {target_date.strftime('%Y-%m-%d')}
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+    summary_df = summary.get("summary_df")
+    if summary_df is not None:
+        st.dataframe(
+            summary_df,
+            use_container_width=True,
+            hide_index=True,
+            height=min(320, 60 * len(summary_df) + 100),
         )
 
-        # 💾 حفظ النتائج في الكاش — تفضل موجودة لحد ما نعمل reload أو نشيل الملف
-        st.session_state[PROMISES_RESULT_KEY] = {
-            "df": df,
-            "summary_df": summary_df,
-            "target_date": target_date,
-            "filename": uploaded.name,
-            "file_hash": _file_hash,
-            "sales_col": sales_col,
-            "substate_col": substate_col,
-            "duedate_col": duedate_col,
-            "net_col": net_col,
-            "total_in_file": total_in_file,
-            "dropped_sales": dropped_sales,
-            "dropped_sub": dropped_sub,
-            "dropped_due": dropped_due,
-        }
-
-    # ✨ عرض النتائج — من الكاش (سواء اتعملت دلوقتي أو محفوظة من رفع سابق قبل شيل الملف)
-    cached = st.session_state.get(PROMISES_RESULT_KEY)
-    if cached:
-        _show_promises_results(
-            cached["df"],
-            cached["target_date"],
-            cached,
-            filename=cached.get("filename"),
+    if net_col and net_col in df.columns:
+        total_amount = pd.to_numeric(df[net_col], errors="coerce").sum()
+        st.markdown(
+            f"""
+            <div class="daily-total-card">
+                <div>
+                    <div class="daily-total-title">💰 إجمالي صافي المديونية للوعود المكسورة</div>
+                    <div class="daily-total-sub">كل التواريخ قبل {target_date.strftime('%Y-%m-%d')} · {len(summary_df) if summary_df is not None else 0} محصّل</div>
+                </div>
+                <div class="daily-total-number">{total_amount:,.2f}</div>
+                <div class="daily-total-label">صافي المبلغ (Net Amount)</div>
+            </div>
+            """,
+            unsafe_allow_html=True,
         )
-    else:
-        st.info("📂 ارفع ملف المحفظة (Excel أو CSV) عشان نعرض الوعود القائمة — النتائج هتفضل محفوظة لحد ما تعمل reload للصفحة.")
+
+    st.markdown("<div class='divider'></div>", unsafe_allow_html=True)
+
+    # جدول الوعود التفصيلي
+    st.markdown(
+        '<div class="chart-card-title" style="margin-bottom:8px;">📋 جدول الوعود المكسورة التفصيلي</div>',
+        unsafe_allow_html=True,
+    )
+    display_cols = [c for c in [sales_col, substate_col, duedate_col, net_col] if c]
+    st.dataframe(df[display_cols], use_container_width=True, hide_index=True)
+
+    # أزرار التنزيل
+    today_str = target_date.strftime("%Y-%m-%d")
+    out_excel = io.BytesIO()
+    with pd.ExcelWriter(out_excel, engine="openpyxl") as writer:
+        df.to_excel(writer, index=False, sheet_name="الوعود المكسورة")
+
+    out_csv = io.BytesIO()
+    df.to_csv(out_csv, index=False, encoding="utf-8-sig")
+
+    b1, b2 = st.columns(2)
+    with b1:
+        st.download_button(
+            "⬇️ تحميل الوعود المكسورة (Excel)",
+            data=out_excel.getvalue(),
+            file_name=f"الوعود_المكسورة_{today_str}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            use_container_width=True,
+            key="broken_excel_download",
+            type="primary",
+        )
+    with b2:
+        st.download_button(
+            "⬇️ تحميل الوعود المكسورة (CSV)",
+            data=out_csv.getvalue(),
+            file_name=f"الوعود_المكسورة_{today_str}.csv",
+            mime="text/csv",
+            use_container_width=True,
+            key="broken_csv_download",
+        )
 
 st.set_page_config(
     page_title="لوحة تحليل المكالمات | 7oudaModel",
@@ -2951,9 +3159,7 @@ def page_dashboard():
 PAGES = {
     "🎯 التصنيف": page_classification,
     "📗 الوعود القائمة": page_standing_promises,
-    "📕 الوعود المكسورة": lambda: page_placeholder(
-        "BROKEN", "الوعود المكسورة", "المكالمات اللي فيها وعد سداد اتكسر", "📕"
-    ),
+    "📕 الوعود المكسورة": page_broken_promises,
     "⚠️ الإهمال": lambda: page_placeholder(
         "NEGLECT", "الإهمال", "حالات الإهمال في المتابعة", "⚠️"
     ),

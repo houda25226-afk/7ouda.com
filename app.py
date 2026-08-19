@@ -1487,6 +1487,83 @@ DARK_UI_FIX = """
 @media (max-width: 800px) {
     .daily-total-card { grid-template-columns:1fr; }
 }
+/* ===== لوحة سلايسرز الداشبورد ===== */
+.slicer-panel {
+    background: linear-gradient(135deg, rgba(19,35,46,0.95), rgba(18,30,44,0.95));
+    border: 1px solid rgba(94,234,212,0.18);
+    border-radius: 16px;
+    padding: 18px 20px 14px;
+    margin-bottom: 18px;
+}
+.slicer-panel-title {
+    color: #F7FAFC !important;
+    font-size: 0.95rem !important;
+    font-weight: 800 !important;
+    margin-bottom: 12px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+}
+.slicer-section-title {
+    color: var(--accent) !important;
+    font-size: 0.78rem !important;
+    font-weight: 700 !important;
+    text-align: center !important;
+    margin-bottom: 6px;
+}
+/* تقليص ارتفاع قوائم multiselect */
+div[data-testid="stMultiSelect"] > div > div > div:last-child {
+    max-height: 200px;
+    overflow-y: auto;
+}
+/* تاريخ input داكن بدل الأبيض — wrapper div اللي فوق الـ input نفسه هو اللي لونه أبيض */
+div[data-testid="stDateInput"] > div > div > div,
+.stDateInputField > div,
+div[data-testid="stDateInput"] div[data-testid] {
+    background: rgba(255,255,255,0.06) !important;
+    border-radius: 10px !important;
+    box-shadow: none !important;
+}
+/* المربع الأبيض: الـ div اللي فوق الـ input مباشرة واللي بيعرض "2026/08/10 – 2026/08/17" */
+div[data-testid="stDateInput"] > div > div:not(> div),
+div[data-testid="stDateInput"] > div > div {
+    background: rgba(255,255,255,0.06) !important;
+    border-radius: 10px !important;
+    box-shadow: none !important;
+}
+/* تاريخ input داكن بدل الأبيض — العنصر الفعلي هو stDateInputField */
+div[data-testid="stDateInputField"],
+input[data-testid="stDateInputField"],
+input[placeholder*="YYYY"],
+.slicer-panel input[type="text"] {
+    background: rgba(255,255,255,0.06) !important;
+    border: 1px solid rgba(94,234,212,0.3) !important;
+    color: #E7EEF6 !important;
+    border-radius: 10px !important;
+    box-shadow: none !important;
+}
+input[data-testid="stDateInputField"]::placeholder,
+input[placeholder*="YYYY"]::placeholder {
+    color: #8FA3B8 !important;
+    opacity: 1 !important;
+}
+input[data-testid="stDateInputField"]:focus {
+    border-color: rgba(94,234,212,0.55) !important;
+    outline: none !important;
+    box-shadow: 0 0 0 3px rgba(94,234,212,0.12) !important;
+}
+/* radio buttons داخل السلايسرز */
+div[data-testid="stRadio"] label {
+    color: var(--text) !important;
+    font-size: 0.82rem !important;
+}
+.slicer-summary {
+    text-align: center;
+    color: #B9C6D6 !important;
+    font-size: 0.75rem !important;
+    margin-top: 2px;
+}
 </style>
 """
 st.markdown(DARK_UI_FIX, unsafe_allow_html=True)
@@ -3427,33 +3504,122 @@ def _render_dashboard(df, class_col, sales_col, time_col, source_name, filter_hi
 
 
 def _render_slicers(df, sales_col, time_col):
-    """سلايسرز الداشبورد: فلتر المحصّلين (multiselect) + فلتر التواريخ (كاليندر range).
+    """سلايسرز الداشبورد في لوحة منسقة: المحصّلين + التواريخ + الحالة (Sub State) + التصنيف.
     بتشتغل على الـ df المفلتر للعرض فقط — الكاش الأصلي مبيتلووش."""
-    agents, date_min, date_max, selected = [], None, None, None
+    # ---------- استخراج القيم المتاحة ----------
+    agents = []
     if sales_col and sales_col in df.columns:
         agents = sorted([str(a) for a in df[sales_col].dropna().unique()])
+    date_min, date_max = None, None
     if time_col and time_col in df.columns:
         ts = pd.to_datetime(df[time_col], errors="coerce")
         if ts.notna().any():
             date_min, date_max = ts.min().date(), ts.max().date()
+    substates = []
+    sub_col = find_column(df, PROMISE_SUB_STATE_CANDIDATES)
+    if sub_col and sub_col in df.columns:
+        substates = sorted([str(s) for s in df[sub_col].dropna().unique()])
+    class_col = CLASSIFICATION_COL if CLASSIFICATION_COL in df.columns else None
 
-    col1, col2 = st.columns(2)
-    with col1:
+    # ---------- اللوحة ----------
+    # حقن ستايل داكن لستخدام تاريخ input اللي streamlit بيرسمه بخلفية بيضاء
+    st.markdown(
+        """<style>
+        .stDateInputField, input[data-testid="stDateInputField"], input[placeholder*="YYYY"], input[placeholder*="YYYY/MM/DD"] {
+            background: rgba(255,255,255,0.06) !important;
+            border: 1px solid rgba(94,234,212,0.3) !important;
+            color: #E7EEF6 !important;
+            border-radius: 10px !important;
+            box-shadow: none !important;
+        }
+        input[data-testid="stDateInputField"]::placeholder,
+        input[placeholder*="YYYY"]::placeholder {
+            color: #8FA3B8 !important;
+            opacity: 1 !important;
+        }
+        input[data-testid="stDateInputField"]:focus {
+            border-color: rgba(94,234,212,0.55) !important;
+            box-shadow: 0 0 0 3px rgba(94,234,212,0.12) !important;
+            outline: none !important;
+        }
+        </style>""",
+        unsafe_allow_html=True,
+    )
+    st.markdown('<div class="slicer-panel">', unsafe_allow_html=True)
+    st.markdown('<div class="slicer-panel-title">🎚️ فلاتر عرض الداشبورد</div>', unsafe_allow_html=True)
+    st.markdown(
+        """<style>
+        div[data-testid="stDateInput"] .stDateInputField, div[data-testid="stDateInput"] .stDateInputField div {
+            background: rgba(255,255,255,0.06) !important;
+        }
+        div[data-testid="stDateInput"] div[class*="st-"] { background: rgba(255,255,255,0.06) !important; border-radius: 10px; }
+        div[data-testid="stDateInput"] input[type="text"], div[data-testid="stDateInput"] input {
+            background: rgba(255,255,255,0.06) !important; color: #F3F6FA !important;
+        }
+        </style>""",
+        unsafe_allow_html=True,
+    )
+    st.components.v1.html(
+        """<script>
+        (function(){
+            function darkDate(){
+                var wrap = document.querySelector('div[data-testid="stDateInput"]');
+                if(!wrap) return;
+                wrap.querySelectorAll('div').forEach(function(x){
+                    if(getComputedStyle(x).backgroundColor === 'rgb(240, 242, 246)'){
+                        x.style.background = 'rgba(255,255,255,0.06)';
+                        x.style.borderRadius = '10px';
+                    }
+                });
+            }
+            darkDate();
+            var iv = setInterval(function(){ darkDate(); }, 400);
+            var obs = new MutationObserver(function(){ darkDate(); });
+            obs.observe(document.body, {childList: true, subtree: true});
+        })();
+        </script>""",
+        height=0,
+    )
+
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        st.markdown('<div class="slicer-section-title">👤 المحصّلين</div>', unsafe_allow_html=True)
         selected_agents = st.multiselect(
-            "👤 فلتر المحصّلين",
-            options=agents, default=agents, key="dash_agent_filter",
+            "المحصّلين", options=agents, default=agents,
+            key="dash_agent_filter",
         )
-    with col2:
+        if agents:
+            st.caption(f"{len(selected_agents)} من {len(agents)} محصّل", )
+    with c2:
+        st.markdown('<div class="slicer-section-title">📅 التواريخ</div>', unsafe_allow_html=True)
         if date_min is not None:
             date_range = st.date_input(
-                "📅 فلتر التواريخ",
+                "التواريخ",
                 value=(date_min, date_max), min_value=date_min, max_value=date_max,
                 key="dash_date_filter",
             )
         else:
             date_range = None
-            st.info("مفيش تواريخ صالحة في عمود التاريخ — فلتر التواريخ مش شغّال.")
+            st.caption("مفيش تواريخ صالحة في عمود التاريخ.")
+    with c3:
+        st.markdown('<div class="slicer-section-title">📊 الحالة والتصنيف</div>', unsafe_allow_html=True)
+        class_options = {"ناجحة (1)": 1, "غير ناجحة (0)": 0, "الكل": None}
+        selected_class = st.radio(
+            "التصنيف",
+            options=list(class_options.keys()),
+            index=2,
+            key="dash_class_filter",
+            horizontal=True,
+        )
+        selected_substates = []
+        if substates:
+            selected_substates = st.multiselect(
+                "الحالة (Sub State)", options=substates, default=substates,
+                key="dash_substate_filter",
+            )
+    st.markdown('</div>', unsafe_allow_html=True)
 
+    # ---------- التطبيق ----------
     filtered = df.copy()
     hint_parts = []
     if sales_col and selected_agents != agents:
@@ -3469,6 +3635,16 @@ def _render_slicers(df, sales_col, time_col):
             keep = ts.notna() & (ts.dt.date >= d0) & (ts.dt.date <= d1)
             filtered = filtered[keep]
             hint_parts.append(f"التاريخ من {d0} إلى {d1}")
+    if class_col and selected_class and selected_class in class_options and class_options[selected_class] is not None:
+        target = class_options[selected_class]
+        filtered = filtered[filtered[class_col] == target]
+        hint_parts.append(f"التصنيف: {selected_class}")
+    if sub_col and selected_substates != substates:
+        if selected_substates:
+            filtered = filtered[filtered[sub_col].astype(str).isin(selected_substates)]
+            hint_parts.append(f"الحالة: {len(selected_substates)} من {len(substates)}")
+        else:
+            hint_parts.append("مفيش حالات مختارة")
 
     hint = " · ".join(hint_parts)
     return filtered, hint

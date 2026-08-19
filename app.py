@@ -543,15 +543,7 @@ section[data-testid="stSidebar"] .stRadio input:checked + div {
     border-color: var(--accent) !important;
     color: var(--accent) !important;
 }
-/* اسم الملف بعد الرفع + حجمه + زرار الحذف */
-[data-testid="stFileUploaderFile"] {
-    background: var(--surface-2) !important;
-    border-radius: 10px !important;
-}
-[data-testid="stFileUploaderFile"] div, [data-testid="stFileUploaderFile"] span {
-    color: var(--text) !important;
-}
-[data-testid="stFileUploaderFileName"] { color: var(--text) !important; }
+/* اسم الملف بعد الرفع + حجمه + زرار الحذف — الشريط الفعلي اسمه .stFileChip (يعاد تصميمه في الأسفل) */
 [data-testid="stFileUploaderFileErrorMessage"] { color: var(--danger) !important; }
 
 /* عناوين كل ودجت (label) — كانت أحيانًا بلون باهت جدًا */
@@ -946,12 +938,32 @@ DARK_UI_FIX = """
 .stApp [data-testid="stFileUploader"] section * {
     color: var(--text) !important;
 }
-/* اسم الملف المرفوع — بارز وواضح في الدارك ثيم */
-.stApp [data-testid="stFileUploader"] [data-testid="stFileUploaderFile"] {
+/* الشريط الأبيض الداخلي للـ file uploader — إعادة تصميم كاملة على الثيم الداكن */
+.stApp [data-testid="stFileUploader"] .stFileChip {
     background: linear-gradient(135deg, #15203a, #1a2a47) !important;
-    border: 1px solid rgba(94, 234, 212, .35) !important;
+    border: 1px solid rgba(94, 234, 212, .4) !important;
     border-radius: 10px !important;
-    padding: 8px 12px !important;
+    box-shadow: 0 2px 8px rgba(0,0,0,.25);
+}
+.stApp [data-testid="stFileUploader"] .stFileChipName {
+    color: #F3F6FA !important;
+    font-weight: 700 !important;
+    font-size: .95rem !important;
+    direction: ltr !important;
+    text-align: right !important;
+}
+.stApp [data-testid="stFileUploader"] .stFileChipName ~ div {
+    color: #B9C6D6 !important;
+    direction: ltr !important;
+}
+.stApp [data-testid="stFileUploader"] .stFileChip svg {
+    fill: #5EEAD4 !important;
+    color: #5EEAD4 !important;
+}
+.stApp [data-testid="stFileUploader"] [data-testid="stFileChipDeleteBtn"] button svg,
+.stApp [data-testid="stFileUploader"] [data-testid="stFileChipDeleteBtn"] svg {
+    fill: #F3F6FA !important;
+    color: #F3F6FA !important;
 }
 .stApp [data-testid="stFileUploader"] [data-testid="stFileUploaderFile"] svg {
     fill: var(--accent) !important;

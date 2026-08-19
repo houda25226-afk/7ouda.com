@@ -2252,6 +2252,7 @@ def init_activity_state():
         "period_2_break_start": dt_time(15, 0),
         "period_2_break_end": dt_time(15, 15),
         "period_results": {},
+        "daily_result": None,  # 📊 نتيجة تصنيف المجمع اليومي (رفع واحد لنشاط اليوم كله)
     }
     for key, value in defaults.items():
         st.session_state.setdefault(key, value)
@@ -2943,103 +2944,128 @@ def render_no_answer_chart(df, sales_col, period_title):
 
 def render_daily_aggregate():
     company = st.session_state["selected_company"]
-    results = st.session_state.get("period_results", {})
 
-    p1 = results.get("period_1")
-    p2 = results.get("period_2")
-
-    # دعم إضافي: لو المستخدم عنده ملفات مصنفة بالفعل يقدر يرفعها هنا.
-    u1 = st.file_uploader(
-        "📥 رفع نتائج الفترة الأولى (اختياري)",
+    # 📊 المجمع اليومي الجديد: رفع واحد لملف نشاط اليوم كله والموديل يصفّنه دفعة واحدة
+    uploaded_file = st.file_uploader(
+        "📂 ارفع ملف نشاط اليوم كله (CSV أو Excel) — الموديل هيصفّنه دفعة واحدة",
         type=["csv", "xlsx", "xls"],
-        key="daily_p1_upload",
+        key="upload_daily",
     )
-    u2 = st.file_uploader(
-        "📥 رفع نتائج الفترة الثانية (اختياري)",
-        type=["csv", "xlsx", "xls"],
-        key="daily_p2_upload",
-    )
+    if uploaded_file is not None:
+        st.markdown(
+            f"<div class='upload-status'>📄 الملف المختار: <b>{uploaded_file.name}</b></div>",
+            unsafe_allow_html=True,
+        )
+        _classify_daily_file(uploaded_file, company)
+    else:
+        # 💾 مفيش ملف مرفوع — لو فيه نتيجة محفوظة من آخر تصنيف نعرضها بصمت
+        _show_daily_results_from_cache()
 
-    if u1 is not None:
-        try:
-            u1_df = read_uploaded_dataframe(u1)
-            p1 = {
-                "df": u1_df,
-                "sales_col": find_column(u1_df, SALES_PERSON_CANDIDATES),
-                "time_col": find_column(u1_df, CREATED_ON_CANDIDATES),
-                "company": company,
-                "period_title": "الفترة الأولى",
-            }
-        except Exception as e:
-            st.error(f"تعذر قراءة ملف الفترة الأولى: {e}")
 
-    if u2 is not None:
-        try:
-            p2df = read_uploaded_dataframe(u2)
-            p2 = {
-                "df": p2df,
-                "sales_col": find_column(p2df, SALES_PERSON_CANDIDATES),
-                "time_col": find_column(p2df, CREATED_ON_CANDIDATES),
-                "company": company,
-                "period_title": "الفترة الثانية",
-            }
-        except Exception as e:
-            st.error(f"تعذر قراءة ملف الفترة الثانية: {e}")
-
-    if not p1 and not p2:
-        st.info("📂 صَنّف الفترة الأولى والثانية أولًا، أو ارفع نتيجتيهما هنا لتجميع اليوم.")
+def _classify_daily_file(uploaded_file, company):
+    """تصنيف ملف نشاط اليوم كله دفعة واحدة وحفظ النتيجة في الكاش."""
+    # 💾 لو الملف ده اتصنّف قبل كده والنتيجة لسه في الذاكرة — نعرضها من الكاش
+    stored = st.session_state.get("daily_result")
+    if stored and stored.get("uploaded_filename") == uploaded_file.name:
+        _render_daily_results(stored)
         return
 
-    frames = []
-    for item in [p1, p2]:
-        if item and isinstance(item.get("df"), pd.DataFrame):
-            frame = item["df"].copy()
-            frame["الشركة"] = frame.get("الشركة", company)
-            frames.append(frame)
-
-    if not frames:
+    try:
+        df = read_uploaded_dataframe(uploaded_file)
+    except Exception as e:
+        st.error(f"مش قادر أقرأ الملف: {e}")
         return
 
-    daily_df = pd.concat(frames, ignore_index=True)
-    daily_df["الشركة"] = company
-    daily_df["الفترة"] = daily_df["الفترة"] if "الفترة" in daily_df.columns else "المجمع اليومي"
+    # نفس قاعدة الملف الحالية: حذف أول صف بعد العناوين.
+    if len(df) > 0:
+        df = df.iloc[1:].reset_index(drop=True)
 
-    st.markdown(
-        f"""
-        <div class="daily-total-card">
-            <div>
-                <div class="daily-total-title">📊 المجمع اليومي</div>
-                <div class="daily-total-sub">{company} · الفترة الأولى + الفترة الثانية</div>
-            </div>
-            <div class="daily-total-number">{len(daily_df):,}</div>
-            <div class="daily-total-label">إجمالي المكالمات</div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
+    if ORIGINAL_TEXT_COL in df.columns:
+        df = df.rename(columns={ORIGINAL_TEXT_COL: MODEL_TEXT_COL})
 
-    # نستخدم أول عمود محصّل صالح من النتائج.
-    sales_col = find_column(daily_df, SALES_PERSON_CANDIDATES)
-    time_col = find_column(daily_df, CREATED_ON_CANDIDATES)
+    if MODEL_TEXT_COL not in df.columns:
+        st.error(
+            f"عمود النص ('{ORIGINAL_TEXT_COL}' أو '{MODEL_TEXT_COL}') مش موجود. "
+            f"الأعمدة الموجودة: {', '.join(df.columns.astype(str))}"
+        )
+        return
 
-    render_period_charts(daily_df, sales_col, time_col, "المجمع اليومي")
-
-    st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
-    st.dataframe(daily_df, use_container_width=True, hide_index=True)
-
-    buffer = io.BytesIO()
-    with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
-        daily_df.to_excel(writer, index=False, sheet_name="المجمع اليومي")
-
-    st.download_button(
-        "⬇️ تحميل المجمع اليومي",
-        data=buffer.getvalue(),
-        file_name=f"المجمع_اليومي_{company}.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        use_container_width=True,
-        key="download_daily_aggregate",
+    if st.button(
+        "🚀 ابدأ تصنيف نشاط اليوم",
+        key="classify_daily",
         type="primary",
-    )
+        use_container_width=True,
+    ):
+        with st.spinner("جاري تجهيز الموديل وتصنيف الملف — ممكن ياخد دقايق حسب حجم الملف..."):
+            tokenizer, model, device = load_model()
+            texts = df[MODEL_TEXT_COL].tolist()
+            preds, confidences = predict_batch(texts, tokenizer, model, device)
+
+        result_df = df.copy()
+        result_df[CLASSIFICATION_COL] = preds
+        result_df["نسبة_الثقة"] = [round(c * 100, 1) for c in confidences]
+
+        sales_col = find_column(result_df, SALES_PERSON_CANDIDATES)
+        time_col = find_column(result_df, CREATED_ON_CANDIDATES)
+
+        if sales_col and time_col:
+            result_df = calculate_wasted_time(result_df, sales_col, time_col, None, None)
+        else:
+            st.warning(
+                "مش لاقي عمود المحصّل أو عمود التاريخ/الوقت، فمش هيتحسب الوقت المهدر. "
+                "تأكد من أسماء الأعمدة."
+            )
+
+        result_df = result_df.rename(columns={MODEL_TEXT_COL: ORIGINAL_TEXT_COL})
+        result_df["الشركة"] = company
+        result_df["الفترة"] = "المجمع اليومي"
+
+        st.session_state["daily_result"] = {
+            "df": result_df,
+            "sales_col": sales_col,
+            "time_col": time_col,
+            "company": company,
+            "uploaded_filename": uploaded_file.name,
+        }
+        st.rerun()
+
+    stored = st.session_state.get("daily_result")
+    if stored:
+        st.success(f"تم تصنيف نشاط اليوم بنجاح ✅ — {len(stored['df']):,} مكالمة")
+        _render_daily_results(stored)
+
+
+def _render_daily_results(stored):
+    """عرض نتائج المجمع اليومي (جدول + كروت + شارتات + تنزيل) — بعد التصنيف أو من الكاش."""
+    result_df = stored["df"]
+    sales_col = stored["sales_col"]
+    time_col = stored["time_col"]
+
+    st.dataframe(result_df, use_container_width=True, hide_index=True)
+
+    render_period_charts(result_df, sales_col, time_col, "المجمع اليومي")
+
+    if result_df is not None:
+        buffer = io.BytesIO()
+        with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
+            result_df.to_excel(writer, index=False, sheet_name="المجمع اليومي")
+        st.download_button(
+            "⬇️ تحميل نتائج المجمع اليومي",
+            data=buffer.getvalue(),
+            file_name=f"نتائج_المجمع_اليومي_{stored['company']}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            use_container_width=True,
+            key="download_daily_result",
+            type="primary",
+        )
+
+
+def _show_daily_results_from_cache():
+    """عرض النتائج المحفوظة بصمت لما يكون مفيش ملف مرفوع — بدون أي رسائل أو أزرار."""
+    stored = st.session_state.get("daily_result")
+    if stored:
+        st.success(f"تم تصنيف نشاط اليوم بنجاح ✅ — {len(stored['df']):,} مكالمة")
+        _render_daily_results(stored)
 
 
 # ==========================================================

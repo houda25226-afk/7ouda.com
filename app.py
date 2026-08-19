@@ -1917,36 +1917,78 @@ def render_comparison_matrix(df, class_col, sales_col):
         chart_card("🧭 خريطة الأداء: نسبة النجاح مقابل الوقت المهدر", _scatter)
 
 
+def render_kpi_cards(df, class_col, sales_col, time_col):
+    """كروت الـ KPI الرئيسية للداشبورد — 8 كروت في صفين."""
+    has_class = class_col and class_col in df.columns
+    has_sales = sales_col and sales_col in df.columns
+    has_wasted = WASTED_TIME_COL in df.columns
+
+    total_calls = len(df)
+    success_count = int((df[class_col] == 1).sum()) if has_class else None
+    fail_count = int((df[class_col] == 0).sum()) if has_class else None
+    success_rate = round(success_count / total_calls * 100, 1) if has_class and total_calls else None
+    total_wasted = round(df[WASTED_TIME_COL].sum(), 1) if has_wasted else None
+    n_agents = df[sales_col].nunique() if has_sales else None
+
+    with st.container(border=True):
+        st.markdown('<div class="chart-card-title">📌 مؤشرات الأداء الرئيسية</div>', unsafe_allow_html=True)
+        row1 = st.columns(4)
+        row1[0].metric("📞 إجمالي المكالمات", total_calls)
+        row1[1].metric("✅ ناجحة", success_count if has_class else "—", f"{success_rate}%" if has_class else "")
+        row1[2].metric("⛔ غير ناجحة", fail_count if has_class else "—")
+        row1[3].metric("👥 عدد المحصّلين", n_agents if has_sales else "—")
+
+        row2 = st.columns(4)
+        if has_class and has_sales:
+            perf_all = _compute_agent_perf(df, class_col, sales_col)
+            perf_qualified = perf_all[perf_all["إجمالي المكالمات"] >= 3]
+            top = perf_qualified.iloc[0] if len(perf_qualified) else (perf_all.iloc[0] if len(perf_all) else None)
+            top_val = f"{top['نسبة النجاح %']}% نجاح" if top is not None else "—"
+            top_name = str(top[sales_col]) if top is not None else "—"
+            row2[0].metric("🏅 نسبة النجاح الإجمالية", f"{success_rate}%" if has_class else "—", top_val)
+        else:
+            row2[0].metric("🏅 نسبة النجاح الإجمالية", f"{success_rate}%" if has_class else "—")
+
+        if has_sales and has_wasted:
+            wasted_sum = df.groupby(sales_col)[WASTED_TIME_COL].sum()
+            row2[1].metric("🐌 أعلى إهدار للوقت", f"{wasted_sum.idxmax()}", f"{round(wasted_sum.max(), 1)} دقيقة")
+        else:
+            row2[1].metric("🐌 أعلى إهدار للوقت", "—")
+
+        if has_wasted:
+            avg_dur = round(df[WASTED_TIME_COL].mean(), 1) if total_calls else 0
+            row2[2].metric("⏱️ إجمالي الوقت المهدر (دقيقة)", total_wasted, f"متوسط {avg_dur} د/مكالمة")
+        else:
+            row2[2].metric("⏱️ الوقت المهدر", "—")
+
+        if has_class:
+            row2[3].metric("🎯 نسبة النجاح الإجمالية", f"{success_rate}%")
+        else:
+            row2[3].metric("🎯 نسبة النجاح", "—")
+
+
 def render_full_dashboard(df, class_col=None, sales_col=None, time_col=None):
-    """النسخة الكاملة — تويب «الداشبورد» بس، منظّمة في تبويبات فرعية."""
-    render_metric_cards(df, class_col, sales_col, time_col)
+    """الداشبورد الاحترافية — كروت KPI + أبرز النقاط + شبكة شارتات + جدول مقارنة."""
+    render_kpi_cards(df, class_col, sales_col, time_col)
     st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
     render_highlights(df, class_col, sales_col, time_col)
     st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
 
-    sub_tab1, sub_tab2, sub_tab3, sub_tab4 = st.tabs(
-        ["📈 نظرة عامة", "👥 أداء المحصّلين", "⏱️ الوقت المهدر", "🔍 مقارنة شاملة"]
-    )
+    col_a, col_b = st.columns(2)
+    with col_a:
+        render_pie_chart(df, class_col)
+    with col_b:
+        render_trend_chart(df, class_col, time_col)
 
-    with sub_tab1:
-        col_a, col_b = st.columns(2)
-        with col_a:
-            render_pie_chart(df, class_col)
-        with col_b:
-            render_trend_chart(df, class_col, time_col)
+    render_agent_perf_chart(df, class_col, sales_col, with_table=True)
 
-    with sub_tab2:
-        render_agent_perf_chart(df, class_col, sales_col, with_table=False)
+    col_c, col_d = st.columns(2)
+    with col_c:
+        render_wasted_bar(df, sales_col, top_n=None)
+    with col_d:
+        render_wasted_hist(df)
 
-    with sub_tab3:
-        col_c, col_d = st.columns(2)
-        with col_c:
-            render_wasted_bar(df, sales_col, top_n=None)
-        with col_d:
-            render_wasted_hist(df)
-
-    with sub_tab4:
-        render_comparison_matrix(df, class_col, sales_col)
+    render_comparison_matrix(df, class_col, sales_col)
 
 
 # ==========================================================
@@ -2110,10 +2152,34 @@ def build_dashboard_html(df, class_col, sales_col, time_col, source_name="") -> 
             <div class="metric-sub">{sub}</div>
         </div>'''
 
+    n_agents = df[sales_col].nunique() if has_sales else None
+
+    # كارت أفضل محصّل (نفس منطق كروت الداشبورد)
+    top_agent_value, top_agent_sub = "—", ""
+    if has_class and has_sales:
+        perf_all = _compute_agent_perf(df, class_col, sales_col)
+        perf_qualified = perf_all[perf_all["إجمالي المكالمات"] >= 3]
+        top = perf_qualified.iloc[0] if len(perf_qualified) else (perf_all.iloc[0] if len(perf_all) else None)
+        if top is not None:
+            top_agent_value = str(top[sales_col])
+            top_agent_sub = f"{top['نسبة النجاح %']}% نجاح ({int(top['إجمالي المكالمات'])} مكالمة)"
+
+    # كارت أعلى إهدار للوقت
+    max_wasted_value, max_wasted_sub = "—", ""
+    if has_wasted and has_sales:
+        wasted_sum = df.groupby(sales_col)[WASTED_TIME_COL].sum()
+        if len(wasted_sum):
+            max_wasted_value = str(wasted_sum.idxmax())
+            max_wasted_sub = f"{round(wasted_sum.max(), 1)} دقيقة مهدرة"
+
     metrics_html = "".join([
         metric_card("📞 إجمالي المكالمات", total_calls),
         metric_card("✅ ناجحة", success_count if has_class else "—", f"{success_rate}%" if has_class else ""),
         metric_card("⛔ غير ناجحة", fail_count if has_class else "—"),
+        metric_card("👥 عدد المحصّلين", n_agents if has_sales else "—"),
+        metric_card("🎯 نسبة النجاح الإجمالية", f"{success_rate}%" if has_class else "—"),
+        metric_card("🏅 أفضل محصّل", top_agent_value, top_agent_sub),
+        metric_card("🐌 أعلى إهدار للوقت", max_wasted_value, max_wasted_sub),
         metric_card("⏱️ إجمالي الوقت المهدر (دقيقة)", total_wasted if has_wasted else "—",
                      f"متوسط {avg_wasted} د/مكالمة" if has_wasted else ""),
     ])
@@ -2281,6 +2347,7 @@ def init_activity_state():
         "daily_break_duration": 15,
         "period_results": {},
         "daily_result": None,  # 📊 نتيجة تصنيف المجمع اليومي (رفع واحد لنشاط اليوم كله)
+        "dashboard_result": None,  # 📊 نتيجة داشبورد النشاط المصنّف (مستقلة عن التصنيف)
     }
     for key, value in defaults.items():
         st.session_state.setdefault(key, value)
@@ -3235,48 +3302,45 @@ def page_placeholder(eyebrow, title, subtitle, icon):
 # تويب 6: الداشبورد
 # ==========================================================
 
+DASHBOARD_SOURCE_KEY = "dashboard_uploaded_source"
+
+
 def page_dashboard():
+    """تويب داشبورد مستقلة تمامًا عن التصنيف — ترفع فيها ملف النشاط بعد التصنيف
+    (فيه عمود التصنيف جاهز) وتعرض لك داشبورد كاملة بالكروت والشارتات،
+    وممكن تتنزّل كصفحة ويب HTML مستقلة تفتحها في أي متصفح."""
     page_header(
         "ACTIVITY DASHBOARD",
         "📊 داشبورد النشاط",
-        "ارفع الملف المصنّف أو اعتمد على نتائج الفترتين الموجودة داخل التطبيق",
+        "ارفع ملف النشاط المصنّف بعد التصنيف وهنبني لك داشبورد احترافية كاملة",
         show_wave=True,
     )
 
     init_activity_state()
 
-    # لو فيه نتائج فترات، نعرضها تلقائيًا.
-    results = st.session_state.get("period_results", {})
-    if results:
-        company = st.session_state.get("selected_company") or "الشركة المختارة"
-        p1 = results.get("period_1")
-        p2 = results.get("period_2")
-
-        if p1 or p2:
-            frames = [x["df"] for x in (p1, p2) if x]
-            combined = pd.concat(frames, ignore_index=True)
-            sales_col = find_column(combined, SALES_PERSON_CANDIDATES)
-            time_col = find_column(combined, CREATED_ON_CANDIDATES)
-
-            st.success(f"تم تحميل نتائج الفترات الموجودة — {company} ✅")
-            render_period_charts(combined, sales_col, time_col, "نشاط اليوم")
-
-            st.download_button(
-                "⬇️ تحميل نتائج اليوم",
-                data=combined.to_csv(index=False).encode("utf-8-sig"),
-                file_name="نتائج_اليوم.csv",
-                mime="text/csv",
-                use_container_width=True,
-                key="dashboard_period_results_download",
-            )
+    # 💾 الكاش الشفاف: لو فيه داشبورد محفوظة لآخر ملف مرفوع — نعرضها من غير إعادة معالجة
+    cached = st.session_state.get("dashboard_result")
+    current_source = st.session_state.get(DASHBOARD_SOURCE_KEY)
 
     dash_file = st.file_uploader(
-        "📂 أو ارفع ملف مصنّف جاهز للداشبورد",
+        "📂 ارفع ملف النشاط المصنّف (بعد التصنيف) — CSV أو Excel",
         type=["csv", "xlsx", "xls"],
-        key="dash_upload_v2",
+        key="dash_upload_v3",
     )
 
+    if dash_file is None and cached is None:
+        st.info("ارفع ملف النشاط بعد ما يتصنّف، وهنبني لك الداشبورد الاحترافية فورًا.")
+        return
+
+    # لو اتشال الملف والنتيجة لسه في الذاكرة — نعرضها من الكاش
     if dash_file is None:
+        _show_dashboard_from_cache()
+        return
+
+    # 💾 لو الملف ده اتعرج قبل كده — نعرض الكاش من غير إعادة معالجة
+    if current_source == dash_file.name and cached is not None:
+        _render_dashboard(cached["df"], cached["class_col"], cached["sales_col"],
+                          cached["time_col"], dash_file.name)
         return
 
     try:
@@ -3289,20 +3353,55 @@ def page_dashboard():
     sales_col = find_column(df, SALES_PERSON_CANDIDATES)
     time_col = find_column(df, CREATED_ON_CANDIDATES)
 
+    if class_col is None:
+        st.warning(
+            f"⚠️ مفيش عمود '{CLASSIFICATION_COL}' في الملف — الداشبورد هتعرض المكالمات بدون تفاصيل النجاح/الفشل. "
+            "تأكد إنك رفعت الملف بعد التصنيف."
+        )
+
+    # 💾 نحفظ النتيجة في الكاش (شفاف — من غير أي كروت أو أزرار إضافية)
+    st.session_state[DASHBOARD_SOURCE_KEY] = dash_file.name
+    st.session_state["dashboard_result"] = {
+        "df": df, "class_col": class_col, "sales_col": sales_col,
+        "time_col": time_col, "source_name": dash_file.name,
+    }
+
+    _render_dashboard(df, class_col, sales_col, time_col, dash_file.name)
+
+
+def _render_dashboard(df, class_col, sales_col, time_col, source_name):
     render_full_dashboard(df, class_col=class_col, sales_col=sales_col, time_col=time_col)
 
     dashboard_html = build_dashboard_html(
-        df, class_col=class_col, sales_col=sales_col, time_col=time_col, source_name=dash_file.name
+        df, class_col=class_col, sales_col=sales_col, time_col=time_col, source_name=source_name
     )
     st.download_button(
-        "🌐 تحميل الداشبورد كصفحة ويب (HTML)",
+        "🌐 تحميل الداشبورد كصفحة ويب (HTML) — تفتحها كأي موقع",
         data=dashboard_html.encode("utf-8"),
         file_name="داشبورد_النشاط.html",
         mime="text/html",
         use_container_width=True,
-        key="dash_html_download_v2",
+        key="dash_html_download_v3",
         type="primary",
     )
+    st.download_button(
+        "⬇️ تحميل البيانات كـ CSV",
+        data=df.to_csv(index=False).encode("utf-8-sig"),
+        file_name="بيانات_النشاط.csv",
+        mime="text/csv",
+        use_container_width=True,
+        key="dash_csv_download_v3",
+    )
+
+
+def _show_dashboard_from_cache():
+    """عرض الداشبورد المحفوظة بعد شيل الملف — من الكاش بدون إعادة معالجة."""
+    cached = st.session_state.get("dashboard_result")
+    if cached is None:
+        return
+    st.info(f"📌 الداشبورد لسه متخزنة في الذاكرة — آخر ملف مرفوع: {cached['source_name']}")
+    _render_dashboard(cached["df"], cached["class_col"], cached["sales_col"],
+                      cached["time_col"], cached["source_name"])
 
 
 # ==========================================================

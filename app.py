@@ -1558,6 +1558,53 @@ div[data-testid="stRadio"] label {
     color: var(--text) !important;
     font-size: 0.82rem !important;
 }
+/* ===== شبكة الفلاتر الموحدة: 4 أعمدة متساوية الارتفاع ===== */
+.slicer-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 14px;
+    align-items: stretch;
+}
+@media (max-width: 1100px) {
+    .slicer-grid { grid-template-columns: repeat(2, 1fr); }
+}
+@media (max-width: 620px) {
+    .slicer-grid { grid-template-columns: 1fr; }
+}
+.slicer-cell {
+    background: rgba(255,255,255,0.025);
+    border: 1px solid rgba(94,234,212,0.12);
+    border-radius: 12px;
+    padding: 12px 12px 10px;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    min-height: 118px;
+}
+.slicer-cell-count {
+    color: var(--text-dim) !important;
+    font-size: 0.75rem !important;
+    text-align: center !important;
+    margin-top: 6px;
+    margin-bottom: 2px;
+}
+/* رسالة "لا توجد نتائج" أنيقة لما الفلاتر تفرغ العرض */
+.slicer-empty {
+    text-align: center;
+    padding: 34px 20px 28px;
+    margin-bottom: 16px;
+    background: linear-gradient(135deg, rgba(19,35,46,0.95), rgba(18,30,44,0.95));
+    border: 1px dashed rgba(251,113,133,0.45);
+    border-radius: 16px;
+    color: #F3F6FA;
+}
+.slicer-empty-icon { font-size: 1.9rem; margin-bottom: 8px; }
+.slicer-empty-title {
+    font-size: 1.05rem; font-weight: 700; color: #F7FAFC; margin-bottom: 6px;
+}
+.slicer-empty-sub {
+    font-size: 0.85rem; color: var(--text-dim);
+}
 .slicer-summary {
     text-align: center;
     color: #B9C6D6 !important;
@@ -2287,8 +2334,21 @@ def build_dashboard_html(df, class_col, sales_col, time_col, source_name="", fil
     )
 
     generated_at = datetime.now().strftime("%Y-%m-%d %H:%M")
-
-    filter_html = f'<div class="filters-chip">🎚️ {filter_hint}</div>' if filter_hint else ''
+    
+    # بناء لوحة الفلاتر في الـ HTML
+    filter_tags_html = ""
+    if filter_hint:
+        parts = filter_hint.split(" · ")
+        icons = {"المحصّلين": "👤", "التاريخ": "📅", "التصنيف": "🏷️", "الحالة": "📊"}
+        for p in parts:
+            icon = "🔍"
+            for k, ic in icons.items():
+                if k in p:
+                    icon = ic
+                    break
+            filter_tags_html += f'<div class="filter-tag"><span>{icon}</span> {p}</div>'
+    
+    filter_panel_html = f'<div class="filter-panel">{filter_tags_html}</div>' if filter_tags_html else ''
 
     return f"""<!DOCTYPE html>
 <html lang="ar" dir="rtl">
@@ -2310,14 +2370,42 @@ body {{
     background: radial-gradient(circle at 20% 0%, #10192C 0%, var(--bg) 55%);
     min-height: 100vh;
 }}
-.wrap {{ max-width: 1280px; margin: 0 auto; padding: 2rem 1.5rem 4rem; }}
-.header {{ margin-bottom: 1.5rem; text-align: center; }}
+.wrap {{ max-width: 1280px; margin: 0 auto; padding: 1.5rem 1.5rem 4rem; }}
+.header {{ margin-bottom: 1rem; text-align: center; }}
 .eyebrow {{
     font-family: 'JetBrains Mono', monospace; font-size: 0.72rem; letter-spacing: 0.14em;
     color: var(--accent); text-transform: uppercase; margin-bottom: 0.3rem;
 }}
 h1 {{ font-weight: 900; font-size: 1.9rem; margin: 0; }}
 .subtitle {{ color: var(--text-dim); font-size: 0.95rem; margin-top: 0.4rem; }}
+
+/* لوحة الفلاتر المطبقة */
+.filter-panel {{
+    background: rgba(94, 234, 212, 0.04);
+    border: 1px solid rgba(94, 234, 212, 0.15);
+    border-radius: 12px;
+    padding: 0.8rem 1.2rem;
+    margin-bottom: 1.5rem;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.8rem;
+    align-items: center;
+    justify-content: center;
+}}
+.filter-tag {{
+    background: var(--surface-2);
+    border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 6px;
+    padding: 0.3rem 0.7rem;
+    font-size: 0.8rem;
+    color: var(--accent);
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+}}
+.filter-label {{ color: var(--text-dim); font-size: 0.75rem; margin-left: 4px; }}
+.export-info {{ font-size: 0.7rem; color: var(--text-dim); margin-top: 1.5rem; text-align: center; opacity: 0.6; }}
+
 .divider {{
     height: 1px; background: linear-gradient(90deg, transparent, rgba(94,234,212,0.35), transparent);
     margin: 1.6rem 0; border: none;
@@ -2373,14 +2461,18 @@ h1 {{ font-weight: 900; font-size: 1.9rem; margin: 0; }}
 <body>
 <div class="wrap">
     <div class="header">
-        <div class="eyebrow">ACTIVITY DASHBOARD · SNAPSHOT</div>
+        <div class="eyebrow">7oudaModel Activity Analytics</div>
         <h1>📊 تحليل نشاط المحصّلين</h1>
-        <div class="subtitle">{('مصدر البيانات: ' + source_name) if source_name else ''} · تم إنشاؤه في {generated_at}</div>
-        {filter_html}
+        <div class="subtitle">تقرير شامل لتحليل الأداء وجودة المكالمات {('· ' + source_name) if source_name else ''}</div>
     </div>
+
+    {filter_panel_html}
+
     <div class="divider"></div>
+    <div class="chart-box-title" style="margin-bottom: 1rem; border-bottom: 2px solid var(--accent); display: inline-block;">📈 مؤشرات الأداء الرئيسية</div>
     <div class="metrics-grid">{metrics_html}</div>
     <div class="divider"></div>
+    <div class="chart-box-title" style="margin-bottom: 1rem; border-bottom: 2px solid var(--accent); display: inline-block;">💡 أهم الملاحظات والتميز</div>
     <div class="highlights-grid">
         <div class="highlight-box"><div class="highlight-label">🏅 أفضل محصّل (نسبة نجاح)</div>{top_agent_html}</div>
         <div class="highlight-box"><div class="highlight-label">🐌 الأكثر إهدارًا للوقت</div>{slow_agent_html}</div>
@@ -2389,7 +2481,9 @@ h1 {{ font-weight: 900; font-size: 1.9rem; margin: 0; }}
     <div class="divider"></div>
     <div class="charts-grid">{charts_grid_html}</div>
     {f'<div class="table-box"><div class="chart-box-title">📋 جدول المقارنة الشامل — كل المحصّلين</div>{comparison_table_html}</div>' if comparison_table_html else ''}
-    <div class="footer">تم إنشاء هذه الصفحة تلقائيًا من لوحة تحليل المكالمات · 7oudaModel</div>
+    <div class="export-info">
+        تقرير نشاط مصدّر بتاريخ: <b>{generated_at}</b> · جميع الحقوق محفوظة لـ 7oudaModel
+    </div>
 </div>
 </body>
 </html>"""
@@ -3581,53 +3675,89 @@ def _render_slicers(df, sales_col, time_col):
         height=0,
     )
 
-    c1, c2, c3 = st.columns(3)
-    with c1:
+    # ---------- شبكة الفلاتر: 4 أعمدة متساوية ومنسقة ----------
+    class_options = {"ناجحة (1)": 1, "غير ناجحة (0)": 0, "الكل": None}
+    s1, s2, s3, s4 = st.columns(4)
+    with s1:
+        st.markdown('<div class="slicer-cell">', unsafe_allow_html=True)
         st.markdown('<div class="slicer-section-title">👤 المحصّلين</div>', unsafe_allow_html=True)
         selected_agents = st.multiselect(
             "المحصّلين", options=agents, default=agents,
+            label_visibility="collapsed",
             key="dash_agent_filter",
+            help="حدد المحصّلين اللي عايز تعرض نشاطهم",
         )
         if agents:
-            st.caption(f"{len(selected_agents)} من {len(agents)} محصّل", )
-    with c2:
+            st.markdown(
+                f'<div class="slicer-cell-count">{len(selected_agents) or 0} من {len(agents)} محصّل</div>',
+                unsafe_allow_html=True,
+            )
+        st.markdown('</div>', unsafe_allow_html=True)
+    with s2:
+        st.markdown('<div class="slicer-cell">', unsafe_allow_html=True)
         st.markdown('<div class="slicer-section-title">📅 التواريخ</div>', unsafe_allow_html=True)
         if date_min is not None:
             date_range = st.date_input(
                 "التواريخ",
                 value=(date_min, date_max), min_value=date_min, max_value=date_max,
+                label_visibility="collapsed",
                 key="dash_date_filter",
+                help="حدد نطاق التاريخ من عمود Created On",
             )
         else:
             date_range = None
-            st.caption("مفيش تواريخ صالحة في عمود التاريخ.")
-    with c3:
-        st.markdown('<div class="slicer-section-title">📊 الحالة والتصنيف</div>', unsafe_allow_html=True)
-        class_options = {"ناجحة (1)": 1, "غير ناجحة (0)": 0, "الكل": None}
+        st.markdown('</div>', unsafe_allow_html=True)
+    with s3:
+        st.markdown('<div class="slicer-cell">', unsafe_allow_html=True)
+        st.markdown('<div class="slicer-section-title">🏷️ التصنيف</div>', unsafe_allow_html=True)
         selected_class = st.radio(
             "التصنيف",
             options=list(class_options.keys()),
             index=2,
             key="dash_class_filter",
             horizontal=True,
+            label_visibility="collapsed",
+            help="فلترة حسب نتيجة التصنيف (عمود التصنيف)",
         )
+        st.markdown('</div>', unsafe_allow_html=True)
+    with s4:
+        st.markdown('<div class="slicer-cell">', unsafe_allow_html=True)
+        st.markdown('<div class="slicer-section-title">📊 الحالة (Sub State)</div>', unsafe_allow_html=True)
         selected_substates = []
         if substates:
             selected_substates = st.multiselect(
                 "الحالة (Sub State)", options=substates, default=substates,
+                label_visibility="collapsed",
                 key="dash_substate_filter",
+                help="حدد حالات المتابعة من عمود Sub State",
             )
-    st.markdown('</div>', unsafe_allow_html=True)
+        st.markdown('</div>', unsafe_allow_html=True)
 
     # ---------- التطبيق ----------
+    is_empty = False
+    if sales_col and not selected_agents:
+        is_empty = True
+    if sub_col and substates and not selected_substates:
+        is_empty = True
+
+    if is_empty:
+        st.markdown(
+            """<div class="slicer-empty">
+                <div class="slicer-empty-icon">🔍</div>
+                <div class="slicer-empty-title">لا توجد نتائج لعرضها</div>
+                <div class="slicer-empty-sub">
+                    الفلاتر دلوقتي مش محددة — ظبّط اختيار المحصّلين و/أو الحالة فوق عشان الداشبورد تظهر تاني.
+                </div>
+            </div>""",
+            unsafe_allow_html=True,
+        )
+        return pd.DataFrame(columns=df.columns), ""
+
     filtered = df.copy()
     hint_parts = []
     if sales_col and selected_agents != agents:
-        if selected_agents:
-            filtered = filtered[filtered[sales_col].astype(str).isin(selected_agents)]
-            hint_parts.append(f"المحصّلين: {len(selected_agents)} من {len(agents)}")
-        else:
-            hint_parts.append("مفيش محصّلين مختارين")
+        filtered = filtered[filtered[sales_col].astype(str).isin(selected_agents)]
+        hint_parts.append(f"المحصّلين: {len(selected_agents)} من {len(agents)}")
     if time_col and isinstance(date_range, tuple) and len(date_range) == 2:
         d0, d1 = date_range
         if d0 != date_min or d1 != date_max:
@@ -3640,11 +3770,8 @@ def _render_slicers(df, sales_col, time_col):
         filtered = filtered[filtered[class_col] == target]
         hint_parts.append(f"التصنيف: {selected_class}")
     if sub_col and selected_substates != substates:
-        if selected_substates:
-            filtered = filtered[filtered[sub_col].astype(str).isin(selected_substates)]
-            hint_parts.append(f"الحالة: {len(selected_substates)} من {len(substates)}")
-        else:
-            hint_parts.append("مفيش حالات مختارة")
+        filtered = filtered[filtered[sub_col].astype(str).isin(selected_substates)]
+        hint_parts.append(f"الحالة: {len(selected_substates)} من {len(substates)}")
 
     hint = " · ".join(hint_parts)
     return filtered, hint

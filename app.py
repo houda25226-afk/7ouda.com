@@ -89,6 +89,8 @@ NEGLECT_RESULT_KEY = "neglect_result"
 def init_neglect_state():
     if "neglect_sub_states" not in st.session_state:
         st.session_state["neglect_sub_states"] = NEGLECT_SUB_STATES_DEFAULT.copy()
+    if "neglect_available_states" not in st.session_state:
+        st.session_state["neglect_available_states"] = []
     if "neglect_mode" not in st.session_state:
         st.session_state["neglect_mode"] = "neglect"  # 'neglect' or 'followup'
 
@@ -3666,18 +3668,26 @@ def page_neglect():
     
     # إدارة حالات Sub State
     with st.expander("⚙️ إدارة حالات Sub State المستهدفة (الإهمال)"):
-        new_state = st.text_input("إضافة حالة Sub State جديدة للقائمة:")
-        if st.button("➕ إضافة الحالة"):
-            if new_state and new_state not in st.session_state["neglect_sub_states"]:
-                st.session_state["neglect_sub_states"].append(new_state)
-                st.success(f"تمت إضافة '{new_state}' بنجاح!")
-                st.rerun()
+        available = st.session_state.get("neglect_available_states", [])
+        if available:
+            st.markdown('<div class="section-kicker">🔍 اختر حالات إضافية من الملف المرفوع:</div>', unsafe_allow_html=True)
+            # Filter out already selected states
+            to_add_options = [s for s in available if s not in st.session_state["neglect_sub_states"]]
+            selected_to_add = st.multiselect("اختر الحالات لإضافتها لقائمة الإهمال:", to_add_options)
+            if st.button("➕ إضافة الحالات المختارة"):
+                if selected_to_add:
+                    st.session_state["neglect_sub_states"].extend(selected_to_add)
+                    st.success(f"تمت إضافة {len(selected_to_add)} حالة بنجاح!")
+                    st.rerun()
+        else:
+            st.info("💡 ارفع ملف أولاً عشان أقدر أطلع لك كل الحالات المتاحة تختار منها.")
         
-        st.write("الحالات الحالية:")
+        st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
+        st.write("📋 الحالات المشمولة حالياً في الإهمال:")
         cols = st.columns(3)
         for i, state in enumerate(st.session_state["neglect_sub_states"]):
             with cols[i % 3]:
-                if st.button(f"❌ {state}", key=f"del_{i}"):
+                if st.button(f"❌ {state}", key=f"del_{i}", use_container_width=True):
                     st.session_state["neglect_sub_states"].remove(state)
                     st.rerun()
 
@@ -3716,6 +3726,10 @@ def _run_neglect_pipeline(uploaded):
         if not all([sales_col, substate_col, duedate_col]):
             st.error("الملف يفتقد أعمدة أساسية (المحصل، الحالة، أو تاريخ المتابعة).")
             return
+            
+        # استخراج كافة الحالات المتاحة في الملف للكاش
+        all_states = sorted(df[substate_col].dropna().unique().tolist())
+        st.session_state["neglect_available_states"] = all_states
 
         # 1. فلترة المحصلين
         df = df[~df[sales_col].astype(str).str.strip().isin(PROMISE_EXCLUDED_SALES)].copy()

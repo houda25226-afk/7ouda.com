@@ -2550,9 +2550,10 @@ def init_activity_state():
         "monthly_break_start": dt_time(13, 0),
         "monthly_break_end": dt_time(13, 15),
         "monthly_break_duration": 15,
+        "selected_week": "week_1",
         "period_results": {},
         "daily_result": None,
-        "weekly_result": None,
+        "weekly_results": {},  # كاش لكل أسبوع
         "monthly_result": None,
         "dashboard_result": None,
     }
@@ -2686,13 +2687,31 @@ def render_period_selector():
                 <div class="period-icon" style="color: #A78BFA;">📅</div>
                 <div>
                     <div class="period-label" style="color: #A78BFA;">المجمع الأسبوعي</div>
-                    <div class="period-desc">{company} · نشاط الأسبوع بالكامل</div>
+                    <div class="period-desc">{company} · اختر الأسبوع لرفع الملف</div>
                 </div>
             </div>
             """,
             unsafe_allow_html=True,
         )
-        render_aggregate_tab("weekly", "المجمع الأسبوعي")
+        # أزرار اختيار الأسبوع
+        st.markdown('<div class="section-kicker" style="font-size:0.9rem; margin-top:10px;">📅 اختر الأسبوع المحدد:</div>', unsafe_allow_html=True)
+        w1, w2, w3, w4 = st.columns(4)
+        weeks = [
+            (w1, "الأسبوع الأول", "week_1"),
+            (w2, "الأسبوع الثاني", "week_2"),
+            (w3, "الأسبوع الثالث", "week_3"),
+            (w4, "الأسبوع الرابع", "week_4"),
+        ]
+        for w_col, w_title, w_key in weeks:
+            with w_col:
+                w_selected = st.session_state.get("selected_week") == w_key
+                if st.button(w_title, key=f"btn_{w_key}", use_container_width=True, type="primary" if w_selected else "secondary"):
+                    st.session_state["selected_week"] = w_key
+                    st.rerun()
+        
+        current_week_key = st.session_state.get("selected_week", "week_1")
+        week_display_name = next(w[1] for w in weeks if w[2] == current_week_key)
+        render_aggregate_tab(f"weekly_{current_week_key}", f"المجمع الأسبوعي ({week_display_name})")
     elif selected_period == "monthly":
         st.markdown(
             f"""

@@ -1558,6 +1558,53 @@ div[data-testid="stRadio"] label {
     color: var(--text) !important;
     font-size: 0.82rem !important;
 }
+/* ===== شبكة الفلاتر الموحدة: 4 أعمدة متساوية الارتفاع ===== */
+.slicer-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 14px;
+    align-items: stretch;
+}
+@media (max-width: 1100px) {
+    .slicer-grid { grid-template-columns: repeat(2, 1fr); }
+}
+@media (max-width: 620px) {
+    .slicer-grid { grid-template-columns: 1fr; }
+}
+.slicer-cell {
+    background: rgba(255,255,255,0.025);
+    border: 1px solid rgba(94,234,212,0.12);
+    border-radius: 12px;
+    padding: 12px 12px 10px;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    min-height: 118px;
+}
+.slicer-cell-count {
+    color: var(--text-dim) !important;
+    font-size: 0.75rem !important;
+    text-align: center !important;
+    margin-top: 6px;
+    margin-bottom: 2px;
+}
+/* رسالة "لا توجد نتائج" أنيقة لما الفلاتر تفرغ العرض */
+.slicer-empty {
+    text-align: center;
+    padding: 34px 20px 28px;
+    margin-bottom: 16px;
+    background: linear-gradient(135deg, rgba(19,35,46,0.95), rgba(18,30,44,0.95));
+    border: 1px dashed rgba(251,113,133,0.45);
+    border-radius: 16px;
+    color: #F3F6FA;
+}
+.slicer-empty-icon { font-size: 1.9rem; margin-bottom: 8px; }
+.slicer-empty-title {
+    font-size: 1.05rem; font-weight: 700; color: #F7FAFC; margin-bottom: 6px;
+}
+.slicer-empty-sub {
+    font-size: 0.85rem; color: var(--text-dim);
+}
 .slicer-summary {
     text-align: center;
     color: #B9C6D6 !important;
@@ -2287,8 +2334,21 @@ def build_dashboard_html(df, class_col, sales_col, time_col, source_name="", fil
     )
 
     generated_at = datetime.now().strftime("%Y-%m-%d %H:%M")
-
-    filter_html = f'<div class="filters-chip">🎚️ {filter_hint}</div>' if filter_hint else ''
+    
+    # بناء لوحة الفلاتر في الـ HTML
+    filter_tags_html = ""
+    if filter_hint:
+        parts = filter_hint.split(" · ")
+        icons = {"المحصّلين": "👤", "التاريخ": "📅", "التصنيف": "🏷️", "الحالة": "📊"}
+        for p in parts:
+            icon = "🔍"
+            for k, ic in icons.items():
+                if k in p:
+                    icon = ic
+                    break
+            filter_tags_html += f'<div class="filter-tag"><span>{icon}</span> {p}</div>'
+    
+    filter_panel_html = f'<div class="filter-panel">{filter_tags_html}</div>' if filter_tags_html else ''
 
     return f"""<!DOCTYPE html>
 <html lang="ar" dir="rtl">
@@ -2310,14 +2370,42 @@ body {{
     background: radial-gradient(circle at 20% 0%, #10192C 0%, var(--bg) 55%);
     min-height: 100vh;
 }}
-.wrap {{ max-width: 1280px; margin: 0 auto; padding: 2rem 1.5rem 4rem; }}
-.header {{ margin-bottom: 1.5rem; text-align: center; }}
+.wrap {{ max-width: 1280px; margin: 0 auto; padding: 1.5rem 1.5rem 4rem; }}
+.header {{ margin-bottom: 1rem; text-align: center; }}
 .eyebrow {{
     font-family: 'JetBrains Mono', monospace; font-size: 0.72rem; letter-spacing: 0.14em;
     color: var(--accent); text-transform: uppercase; margin-bottom: 0.3rem;
 }}
 h1 {{ font-weight: 900; font-size: 1.9rem; margin: 0; }}
 .subtitle {{ color: var(--text-dim); font-size: 0.95rem; margin-top: 0.4rem; }}
+
+/* لوحة الفلاتر المطبقة */
+.filter-panel {{
+    background: rgba(94, 234, 212, 0.04);
+    border: 1px solid rgba(94, 234, 212, 0.15);
+    border-radius: 12px;
+    padding: 0.8rem 1.2rem;
+    margin-bottom: 1.5rem;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.8rem;
+    align-items: center;
+    justify-content: center;
+}}
+.filter-tag {{
+    background: var(--surface-2);
+    border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 6px;
+    padding: 0.3rem 0.7rem;
+    font-size: 0.8rem;
+    color: var(--accent);
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+}}
+.filter-label {{ color: var(--text-dim); font-size: 0.75rem; margin-left: 4px; }}
+.export-info {{ font-size: 0.7rem; color: var(--text-dim); margin-top: 1.5rem; text-align: center; opacity: 0.6; }}
+
 .divider {{
     height: 1px; background: linear-gradient(90deg, transparent, rgba(94,234,212,0.35), transparent);
     margin: 1.6rem 0; border: none;
@@ -2373,14 +2461,18 @@ h1 {{ font-weight: 900; font-size: 1.9rem; margin: 0; }}
 <body>
 <div class="wrap">
     <div class="header">
-        <div class="eyebrow">ACTIVITY DASHBOARD · SNAPSHOT</div>
+        <div class="eyebrow">7oudaModel Activity Analytics</div>
         <h1>📊 تحليل نشاط المحصّلين</h1>
-        <div class="subtitle">{('مصدر البيانات: ' + source_name) if source_name else ''} · تم إنشاؤه في {generated_at}</div>
-        {filter_html}
+        <div class="subtitle">تقرير شامل لتحليل الأداء وجودة المكالمات {('· ' + source_name) if source_name else ''}</div>
     </div>
+
+    {filter_panel_html}
+
     <div class="divider"></div>
+    <div class="chart-box-title" style="margin-bottom: 1rem; border-bottom: 2px solid var(--accent); display: inline-block;">📈 مؤشرات الأداء الرئيسية</div>
     <div class="metrics-grid">{metrics_html}</div>
     <div class="divider"></div>
+    <div class="chart-box-title" style="margin-bottom: 1rem; border-bottom: 2px solid var(--accent); display: inline-block;">💡 أهم الملاحظات والتميز</div>
     <div class="highlights-grid">
         <div class="highlight-box"><div class="highlight-label">🏅 أفضل محصّل (نسبة نجاح)</div>{top_agent_html}</div>
         <div class="highlight-box"><div class="highlight-label">🐌 الأكثر إهدارًا للوقت</div>{slow_agent_html}</div>
@@ -2389,7 +2481,9 @@ h1 {{ font-weight: 900; font-size: 1.9rem; margin: 0; }}
     <div class="divider"></div>
     <div class="charts-grid">{charts_grid_html}</div>
     {f'<div class="table-box"><div class="chart-box-title">📋 جدول المقارنة الشامل — كل المحصّلين</div>{comparison_table_html}</div>' if comparison_table_html else ''}
-    <div class="footer">تم إنشاء هذه الصفحة تلقائيًا من لوحة تحليل المكالمات · 7oudaModel</div>
+    <div class="export-info">
+        تقرير نشاط مصدّر بتاريخ: <b>{generated_at}</b> · جميع الحقوق محفوظة لـ 7oudaModel
+    </div>
 </div>
 </body>
 </html>"""
@@ -2448,9 +2542,19 @@ def init_activity_state():
         "daily_break_start": dt_time(13, 0),
         "daily_break_end": dt_time(13, 15),
         "daily_break_duration": 15,
+        "weekly_has_break": False,
+        "weekly_break_start": dt_time(13, 0),
+        "weekly_break_end": dt_time(13, 15),
+        "weekly_break_duration": 15,
+        "monthly_has_break": False,
+        "monthly_break_start": dt_time(13, 0),
+        "monthly_break_end": dt_time(13, 15),
+        "monthly_break_duration": 15,
         "period_results": {},
-        "daily_result": None,  # 📊 نتيجة تصنيف المجمع اليومي (رفع واحد لنشاط اليوم كله)
-        "dashboard_result": None,  # 📊 نتيجة داشبورد النشاط المصنّف (مستقلة عن التصنيف)
+        "daily_result": None,
+        "weekly_result": None,
+        "monthly_result": None,
+        "dashboard_result": None,
     }
     for key, value in defaults.items():
         st.session_state.setdefault(key, value)
@@ -2530,10 +2634,13 @@ def render_period_selector():
     st.markdown('<div class="section-kicker">🕒 اختر فترة النشاط</div>', unsafe_allow_html=True)
     p1, p2, pd = st.columns(3)
 
+    p_weekly, p_monthly = st.columns(2)
     buttons = [
         (p1, "الفترة الأولى", "🟢", "period_1"),
         (p2, "الفترة الثانية", "🔵", "period_2"),
         (pd, "المجمع اليومي", "📊", "daily"),
+        (p_weekly, "المجمع الأسبوعي", "📅", "weekly"),
+        (p_monthly, "المجمع الشهري", "🗓️", "monthly"),
     ]
 
     for col, title, icon, key in buttons:
@@ -2558,7 +2665,7 @@ def render_period_selector():
         render_period_settings("period_1", "الفترة الأولى")
     elif selected_period == "period_2":
         render_period_settings("period_2", "الفترة الثانية")
-    else:
+    elif selected_period == "daily":
         st.markdown(
             f"""
             <div class="period-banner daily">
@@ -2571,7 +2678,35 @@ def render_period_selector():
             """,
             unsafe_allow_html=True,
         )
-        render_daily_aggregate()
+        render_aggregate_tab("daily", "المجمع اليومي")
+    elif selected_period == "weekly":
+        st.markdown(
+            f"""
+            <div class="period-banner daily" style="background: rgba(167, 139, 250, 0.08); border-color: rgba(167, 139, 250, 0.25);">
+                <div class="period-icon" style="color: #A78BFA;">📅</div>
+                <div>
+                    <div class="period-label" style="color: #A78BFA;">المجمع الأسبوعي</div>
+                    <div class="period-desc">{company} · نشاط الأسبوع بالكامل</div>
+                </div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+        render_aggregate_tab("weekly", "المجمع الأسبوعي")
+    elif selected_period == "monthly":
+        st.markdown(
+            f"""
+            <div class="period-banner daily" style="background: rgba(244, 114, 182, 0.08); border-color: rgba(244, 114, 182, 0.25);">
+                <div class="period-icon" style="color: #F472B6;">🗓️</div>
+                <div>
+                    <div class="period-label" style="color: #F472B6;">المجمع الشهري</div>
+                    <div class="period-desc">{company} · نشاط الشهر بالكامل</div>
+                </div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+        render_aggregate_tab("monthly", "المجمع الشهري")
 
 
 def render_period_upload_and_classify(period_key: str, period_title: str):
@@ -3178,14 +3313,13 @@ def render_no_answer_chart(df, sales_col, period_title):
     st.plotly_chart(fig, use_container_width=True)
 
 
-def _render_daily_break_settings():
-    """إعدادات البريك لتبويبة المجمع اليومي: سويتش + بداية البريك + مدته."""
-    has_break_key = "daily_has_break"
-    break_start_key = "daily_break_start"
-    break_end_key = "daily_break_end"
 
-    _render_break_switch("🕐 هل يوجد بريك في نشاط اليوم؟", has_break_key)
-
+def _render_aggregate_break_settings(period_key, period_title):
+    """إعدادات البريك للمجمعات (يومي/أسبوعي/شهري): سويتش + بداية البريك + مدته."""
+    has_break_key = f"{period_key}_has_break"
+    break_start_key = f"{period_key}_break_start"
+    break_end_key = f"{period_key}_break_end"
+    _render_break_switch(f"🕐 هل يوجد بريك في {period_title}؟", has_break_key)
     if st.session_state[has_break_key]:
         b1, b2 = st.columns(2)
         with b1:
@@ -3195,25 +3329,20 @@ def _render_daily_break_settings():
                 key=f"{break_start_key}_input",
             )
         with b2:
-            duration_key = "daily_break_duration"
+            duration_key = f"{period_key}_break_duration"
             st.session_state[duration_key] = st.slider(
                 "⏳ مدة البريك (دقيقة)",
                 min_value=5,
                 max_value=120,
                 step=5,
-                value=int(
-                    max(5, (st.session_state[break_end_key].hour * 60 + st.session_state[break_end_key].minute)
-                        - (st.session_state[break_start_key].hour * 60 + st.session_state[break_start_key].minute))
-                ),
+                value=int(st.session_state[duration_key]),
                 key=f"{duration_key}_slider",
             )
             total = (st.session_state[break_start_key].hour * 60 + st.session_state[break_start_key].minute)
             end_min = total + st.session_state[duration_key]
             st.session_state[break_end_key] = dt_time(end_min // 60, end_min % 60)
-
         if st.session_state[break_start_key] >= st.session_state[break_end_key]:
             st.warning("⚠️ بداية البريك لازم تكون قبل نهايته.")
-
         st.markdown(
             f"<div class='schedule-summary' style='margin-top:-8px;margin-bottom:10px;'>"
             f"☕ البريك من <b>{st.session_state[break_start_key].strftime('%H:%M')}</b> "
@@ -3222,153 +3351,93 @@ def _render_daily_break_settings():
             unsafe_allow_html=True,
         )
 
-
-def render_daily_aggregate():
+def render_aggregate_tab(period_key, period_title):
     company = st.session_state["selected_company"]
-
-    # 📊 المجمع اليومي: إعدادات البريك (سويتش + بداية البريك + مدته) زي الفترتين
-    _render_daily_break_settings()
-
-    # 📊 المجمع اليومي الجديد: رفع واحد لملف نشاط اليوم كله والموديل يصفّنه دفعة واحدة
+    _render_aggregate_break_settings(period_key, period_title)
     uploaded_file = st.file_uploader(
-        "📂 ارفع ملف نشاط اليوم كله (CSV أو Excel) — الموديل هيصفّنه دفعة واحدة",
+        f"📂 ارفع ملف {period_title} (CSV أو Excel) — الموديل هيصفّنه دفعة واحدة",
         type=["csv", "xlsx", "xls"],
-        key="upload_daily",
+        key=f"upload_{period_key}",
     )
     if uploaded_file is not None:
         st.markdown(
             f"<div class='upload-status'>📄 الملف المختار: <b>{uploaded_file.name}</b></div>",
             unsafe_allow_html=True,
         )
-        _classify_daily_file(uploaded_file, company)
+        _classify_aggregate_file(uploaded_file, company, period_key, period_title)
     else:
-        # 💾 مفيش ملف مرفوع — لو فيه نتيجة محفوظة من آخر تصنيف نعرضها بصمت
-        _show_daily_results_from_cache()
+        _show_aggregate_results_from_cache(period_key, period_title)
 
-
-def _classify_daily_file(uploaded_file, company):
-    """تصنيف ملف نشاط اليوم كله دفعة واحدة وحفظ النتيجة في الكاش."""
-    # 💾 لو الملف ده اتصنّف قبل كده والنتيجة لسه في الذاكرة — نعرضها من الكاش
-    stored = st.session_state.get("daily_result")
+def _classify_aggregate_file(uploaded_file, company, period_key, period_title):
+    result_key = f"{period_key}_result"
+    stored = st.session_state.get(result_key)
     if stored and stored.get("uploaded_filename") == uploaded_file.name:
-        _render_daily_results(stored)
+        _render_aggregate_results(stored, period_title)
         return
-
     try:
         df = read_uploaded_dataframe(uploaded_file)
     except Exception as e:
         st.error(f"مش قادر أقرأ الملف: {e}")
         return
-
-    # نفس قاعدة الملف الحالية: حذف أول صف بعد العناوين.
     if len(df) > 0:
         df = df.iloc[1:].reset_index(drop=True)
-
     if ORIGINAL_TEXT_COL in df.columns:
         df = df.rename(columns={ORIGINAL_TEXT_COL: MODEL_TEXT_COL})
-
     if MODEL_TEXT_COL not in df.columns:
-        st.error(
-            f"عمود النص ('{ORIGINAL_TEXT_COL}' أو '{MODEL_TEXT_COL}') مش موجود. "
-            f"الأعمدة الموجودة: {', '.join(df.columns.astype(str))}"
-        )
+        st.error(f"عمود النص مش موجود. الأعمدة الموجودة: {', '.join(df.columns.astype(str))}")
         return
-
-    if st.button(
-        "🚀 ابدأ تصنيف نشاط اليوم",
-        key="classify_daily",
-        type="primary",
-        use_container_width=True,
-    ):
-        with st.spinner("جاري تجهيز الموديل وتصنيف الملف — ممكن ياخد دقايق حسب حجم الملف..."):
+    if st.button(f"🚀 ابدأ تصنيف {period_title}", key=f"btn_{period_key}", type="primary", use_container_width=True):
+        with st.spinner(f"جاري تصنيف {period_title}..."):
             tokenizer, model, device = load_model()
             texts = df[MODEL_TEXT_COL].tolist()
             preds, confidences = predict_batch(texts, tokenizer, model, device)
-
         result_df = df.copy()
         result_df[CLASSIFICATION_COL] = preds
         result_df["نسبة_الثقة"] = [round(c * 100, 1) for c in confidences]
-
         sales_col = find_column(result_df, SALES_PERSON_CANDIDATES)
         time_col = find_column(result_df, CREATED_ON_CANDIDATES)
-
-        daily_break_start = (
-            st.session_state["daily_break_start"] if st.session_state["daily_has_break"] else None
-        )
-        daily_break_end = (
-            st.session_state["daily_break_end"] if st.session_state["daily_has_break"] else None
-        )
-
+        has_break = st.session_state[f"{period_key}_has_break"]
+        break_start = st.session_state[f"{period_key}_break_start"] if has_break else None
+        break_end = st.session_state[f"{period_key}_break_end"] if has_break else None
         if sales_col and time_col:
-            result_df = calculate_wasted_time(
-                result_df, sales_col, time_col, daily_break_start, daily_break_end
-            )
-        else:
-            st.warning(
-                "مش لاقي عمود المحصّل أو عمود التاريخ/الوقت، فمش هيتحسب الوقت المهدر. "
-                "تأكد من أسماء الأعمدة."
-            )
-
+            result_df = calculate_wasted_time(result_df, sales_col, time_col, break_start, break_end)
         result_df = result_df.rename(columns={MODEL_TEXT_COL: ORIGINAL_TEXT_COL})
         result_df["الشركة"] = company
-        result_df["الفترة"] = "المجمع اليومي"
-        if st.session_state["daily_has_break"]:
-            result_df["بداية البريك"] = st.session_state["daily_break_start"].strftime("%H:%M")
-            result_df["نهاية البريك"] = st.session_state["daily_break_end"].strftime("%H:%M")
-            result_df["مدة البريك_دقيقة"] = st.session_state["daily_break_duration"]
-
-        st.session_state["daily_result"] = {
-            "df": result_df,
-            "sales_col": sales_col,
-            "time_col": time_col,
-            "company": company,
-            "uploaded_filename": uploaded_file.name,
+        result_df["الفترة"] = period_title
+        if has_break:
+            result_df["بداية البريك"] = break_start.strftime("%H:%M")
+            result_df["نهاية البريك"] = break_end.strftime("%H:%M")
+            result_df["مدة البريك_دقيقة"] = st.session_state[f"{period_key}_break_duration"]
+        st.session_state[result_key] = {
+            "df": result_df, "sales_col": sales_col, "time_col": time_col,
+            "company": company, "uploaded_filename": uploaded_file.name,
         }
         st.rerun()
 
-    stored = st.session_state.get("daily_result")
-    if stored:
-        st.success(f"تم تصنيف نشاط اليوم بنجاح ✅ — {len(stored['df']):,} مكالمة")
-        _render_daily_results(stored)
-
-
-def _render_daily_results(stored):
-    """عرض نتائج المجمع اليومي (جدول + كروت + شارتات + تنزيل) — بعد التصنيف أو من الكاش."""
+def _render_aggregate_results(stored, period_title):
     result_df = stored["df"]
     sales_col = stored["sales_col"]
     time_col = stored["time_col"]
-
     st.dataframe(result_df, use_container_width=True, hide_index=True)
+    render_period_charts(result_df, sales_col, time_col, period_title)
+    buffer = io.BytesIO()
+    with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
+        result_df.to_excel(writer, index=False, sheet_name=period_title)
+    st.download_button(
+        f"⬇️ تحميل نتائج {period_title}",
+        data=buffer.getvalue(),
+        file_name=f"نتائج_{period_title}_{stored['company']}.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        use_container_width=True,
+        key=f"dl_{period_title}",
+        type="primary",
+    )
 
-    render_period_charts(result_df, sales_col, time_col, "المجمع اليومي")
-
-    if result_df is not None:
-        buffer = io.BytesIO()
-        with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
-            result_df.to_excel(writer, index=False, sheet_name="المجمع اليومي")
-        st.download_button(
-            "⬇️ تحميل نتائج المجمع اليومي",
-            data=buffer.getvalue(),
-            file_name=f"نتائج_المجمع_اليومي_{stored['company']}.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            use_container_width=True,
-            key="download_daily_result",
-            type="primary",
-        )
-
-
-def _show_daily_results_from_cache():
-    """عرض النتائج المحفوظة بصمت لما يكون مفيش ملف مرفوع — بدون أي رسائل أو أزرار."""
-    stored = st.session_state.get("daily_result")
+def _show_aggregate_results_from_cache(period_key, period_title):
+    stored = st.session_state.get(f"{period_key}_result")
     if stored:
-        st.success(f"تم تصنيف نشاط اليوم بنجاح ✅ — {len(stored['df']):,} مكالمة")
-        _render_daily_results(stored)
-
-
-# ==========================================================
-# تويب 1: التصنيف
-# ==========================================================
-
+        st.success(f"تم تصنيف {period_title} بنجاح ✅ — {len(stored['df']):,} مكالمة")
+        _render_aggregate_results(stored, period_title)
 def page_classification():
     init_activity_state()
 
@@ -3581,53 +3650,89 @@ def _render_slicers(df, sales_col, time_col):
         height=0,
     )
 
-    c1, c2, c3 = st.columns(3)
-    with c1:
+    # ---------- شبكة الفلاتر: 4 أعمدة متساوية ومنسقة ----------
+    class_options = {"ناجحة (1)": 1, "غير ناجحة (0)": 0, "الكل": None}
+    s1, s2, s3, s4 = st.columns(4)
+    with s1:
+        st.markdown('<div class="slicer-cell">', unsafe_allow_html=True)
         st.markdown('<div class="slicer-section-title">👤 المحصّلين</div>', unsafe_allow_html=True)
         selected_agents = st.multiselect(
             "المحصّلين", options=agents, default=agents,
+            label_visibility="collapsed",
             key="dash_agent_filter",
+            help="حدد المحصّلين اللي عايز تعرض نشاطهم",
         )
         if agents:
-            st.caption(f"{len(selected_agents)} من {len(agents)} محصّل", )
-    with c2:
+            st.markdown(
+                f'<div class="slicer-cell-count">{len(selected_agents) or 0} من {len(agents)} محصّل</div>',
+                unsafe_allow_html=True,
+            )
+        st.markdown('</div>', unsafe_allow_html=True)
+    with s2:
+        st.markdown('<div class="slicer-cell">', unsafe_allow_html=True)
         st.markdown('<div class="slicer-section-title">📅 التواريخ</div>', unsafe_allow_html=True)
         if date_min is not None:
             date_range = st.date_input(
                 "التواريخ",
                 value=(date_min, date_max), min_value=date_min, max_value=date_max,
+                label_visibility="collapsed",
                 key="dash_date_filter",
+                help="حدد نطاق التاريخ من عمود Created On",
             )
         else:
             date_range = None
-            st.caption("مفيش تواريخ صالحة في عمود التاريخ.")
-    with c3:
-        st.markdown('<div class="slicer-section-title">📊 الحالة والتصنيف</div>', unsafe_allow_html=True)
-        class_options = {"ناجحة (1)": 1, "غير ناجحة (0)": 0, "الكل": None}
+        st.markdown('</div>', unsafe_allow_html=True)
+    with s3:
+        st.markdown('<div class="slicer-cell">', unsafe_allow_html=True)
+        st.markdown('<div class="slicer-section-title">🏷️ التصنيف</div>', unsafe_allow_html=True)
         selected_class = st.radio(
             "التصنيف",
             options=list(class_options.keys()),
             index=2,
             key="dash_class_filter",
             horizontal=True,
+            label_visibility="collapsed",
+            help="فلترة حسب نتيجة التصنيف (عمود التصنيف)",
         )
+        st.markdown('</div>', unsafe_allow_html=True)
+    with s4:
+        st.markdown('<div class="slicer-cell">', unsafe_allow_html=True)
+        st.markdown('<div class="slicer-section-title">📊 الحالة (Sub State)</div>', unsafe_allow_html=True)
         selected_substates = []
         if substates:
             selected_substates = st.multiselect(
                 "الحالة (Sub State)", options=substates, default=substates,
+                label_visibility="collapsed",
                 key="dash_substate_filter",
+                help="حدد حالات المتابعة من عمود Sub State",
             )
-    st.markdown('</div>', unsafe_allow_html=True)
+        st.markdown('</div>', unsafe_allow_html=True)
 
     # ---------- التطبيق ----------
+    is_empty = False
+    if sales_col and not selected_agents:
+        is_empty = True
+    if sub_col and substates and not selected_substates:
+        is_empty = True
+
+    if is_empty:
+        st.markdown(
+            """<div class="slicer-empty">
+                <div class="slicer-empty-icon">🔍</div>
+                <div class="slicer-empty-title">لا توجد نتائج لعرضها</div>
+                <div class="slicer-empty-sub">
+                    الفلاتر دلوقتي مش محددة — ظبّط اختيار المحصّلين و/أو الحالة فوق عشان الداشبورد تظهر تاني.
+                </div>
+            </div>""",
+            unsafe_allow_html=True,
+        )
+        return pd.DataFrame(columns=df.columns), ""
+
     filtered = df.copy()
     hint_parts = []
     if sales_col and selected_agents != agents:
-        if selected_agents:
-            filtered = filtered[filtered[sales_col].astype(str).isin(selected_agents)]
-            hint_parts.append(f"المحصّلين: {len(selected_agents)} من {len(agents)}")
-        else:
-            hint_parts.append("مفيش محصّلين مختارين")
+        filtered = filtered[filtered[sales_col].astype(str).isin(selected_agents)]
+        hint_parts.append(f"المحصّلين: {len(selected_agents)} من {len(agents)}")
     if time_col and isinstance(date_range, tuple) and len(date_range) == 2:
         d0, d1 = date_range
         if d0 != date_min or d1 != date_max:
@@ -3640,11 +3745,8 @@ def _render_slicers(df, sales_col, time_col):
         filtered = filtered[filtered[class_col] == target]
         hint_parts.append(f"التصنيف: {selected_class}")
     if sub_col and selected_substates != substates:
-        if selected_substates:
-            filtered = filtered[filtered[sub_col].astype(str).isin(selected_substates)]
-            hint_parts.append(f"الحالة: {len(selected_substates)} من {len(substates)}")
-        else:
-            hint_parts.append("مفيش حالات مختارة")
+        filtered = filtered[filtered[sub_col].astype(str).isin(selected_substates)]
+        hint_parts.append(f"الحالة: {len(selected_substates)} من {len(substates)}")
 
     hint = " · ".join(hint_parts)
     return filtered, hint

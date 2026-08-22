@@ -102,30 +102,65 @@ def parse_date_cell(val):
 
 
 
+
 def render_promises_dashboard(df, sales_col, net_col, title_suffix):
-    """داشبورد للوعود (القائمة/المكسورة): كروت KPI وشارتات."""
+    """داشبورد للوعود (القائمة/المكسورة): كروت KPI احترافية وشارتات منسقة."""
     total_promises = len(df)
     total_amount = pd.to_numeric(df[net_col], errors="coerce").sum() if net_col else 0
     unique_agents = df[sales_col].nunique() if sales_col else 0
     avg_amount = total_amount / total_promises if total_promises > 0 else 0
 
-    # 1. KPI Cards
-    st.markdown(f'<div class="chart-card-title">📊 مؤشرات أداء الوعود ({title_suffix})</div>', unsafe_allow_html=True)
+    # 1. Header with styling
+    st.markdown(
+        f"""
+        <div class="chart-card-title" style="margin-bottom: 20px; border-bottom: 2px solid var(--accent); display: inline-block; padding-bottom: 5px;">
+            📊 ملخص أداء الوعود — {title_suffix}
+        </div>
+        """, 
+        unsafe_allow_html=True
+    )
+
+    # 2. KPI Cards with enhanced styling
     c1, c2, c3, c4 = st.columns(4)
+    
+    # Custom CSS for these specific cards to match the screenshot request
+    card_style = """
+    <style>
+    .promise-metric-card {
+        background: var(--surface);
+        border: 1px solid rgba(255,255,255,0.06);
+        border-radius: 14px;
+        padding: 1.2rem;
+        transition: all 0.3s ease;
+        height: 100%;
+    }
+    .promise-metric-card:hover {
+        border-color: var(--accent);
+        transform: translateY(-2px);
+        box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+    }
+    .promise-metric-label { font-size: 0.85rem; color: var(--text-dim); margin-bottom: 0.6rem; display: flex; align-items: center; gap: 8px; }
+    .promise-metric-value { font-family: 'JetBrains Mono', monospace; font-weight: 900; font-size: 1.6rem; color: var(--accent); line-height: 1; }
+    .promise-metric-sub { font-size: 0.75rem; color: var(--text-dim); margin-top: 0.5rem; opacity: 0.8; }
+    </style>
+    """
+    st.markdown(card_style, unsafe_allow_html=True)
+
     metrics = [
-        (c1, "🤝 إجمالي الوعود", f"{total_promises:,}", "وعد قائم/مكسور"),
+        (c1, "🤝 إجمالي الوعود", f"{total_promises:,}", "حالة مكتشفة"),
         (c2, "💰 إجمالي المبالغ", f"{total_amount:,.0f}", "صافي المديونية"),
         (c3, "👤 عدد المحصلين", f"{unique_agents}", "محصل مشارك"),
-        (c4, "📈 متوسط الوعد", f"{avg_amount:,.0f}", "للوعد الواحد"),
+        (c4, "📈 متوسط الوعد", f"{avg_amount:,.0f}", "للحالة الواحدة"),
     ]
+
     for col, label, val, sub in metrics:
         with col:
             st.markdown(
                 f"""
-                <div class="metric-box">
-                    <div class="metric-label">{label}</div>
-                    <div class="metric-value">{val}</div>
-                    <div class="metric-sub">{sub}</div>
+                <div class="promise-metric-card">
+                    <div class="promise-metric-label">{label}</div>
+                    <div class="promise-metric-value">{val}</div>
+                    <div class="promise-metric-sub">{sub}</div>
                 </div>
                 """,
                 unsafe_allow_html=True,
@@ -133,37 +168,49 @@ def render_promises_dashboard(df, sales_col, net_col, title_suffix):
     
     st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
 
-    # 2. Charts
+    # 3. Charts with professional layouts
     if total_promises > 0 and sales_col:
-        st.markdown('<div class="chart-card-title">📈 تحليل توزيع الوعود</div>', unsafe_allow_html=True)
         ch1, ch2 = st.columns(2)
         
-        # Chart 1: Count by Agent
+        # Chart 1: Bar Chart for Agents
         agent_counts = df[sales_col].value_counts().reset_index()
         agent_counts.columns = ["المحصل", "عدد الوعود"]
+        top_agents = agent_counts.head(10).sort_values("عدد الوعود", ascending=True)
+        
         fig1 = px.bar(
-            agent_counts.head(10), x="عدد الوعود", y="المحصل", orientation="h",
-            title="أعلى 10 محصلين (من حيث العدد)",
+            top_agents, x="عدد الوعود", y="المحصل", orientation="h",
+            title="🔝 أعلى 10 محصلين (من حيث العدد)",
             color="عدد الوعود", color_continuous_scale="Viridis",
             template="plotly_dark"
         )
-        fig1.update_layout(PLOTLY_LAYOUT, height=350)
+        fig1.update_layout(PLOTLY_LAYOUT, height=400, margin=dict(t=80, b=40, l=100, r=20))
+        fig1.update_traces(marker_line_color='rgba(255,255,255,0.1)', marker_line_width=1)
+        
         with ch1:
-            st.plotly_chart(fig1, use_container_width=True)
+            st.markdown('<div class="chart-box">', unsafe_allow_html=True)
+            st.plotly_chart(fig1, use_container_width=True, config={'displayModeBar': False})
+            st.markdown('</div>', unsafe_allow_html=True)
 
-        # Chart 2: Amount by Agent
+        # Chart 2: Pie Chart for Amounts
         if net_col:
             agent_amounts = df.groupby(sales_col)[net_col].sum().reset_index()
             agent_amounts.columns = ["المحصل", "إجمالي المبالغ"]
             agent_amounts = agent_amounts.sort_values("إجمالي المبالغ", ascending=False)
+            
             fig2 = px.pie(
                 agent_amounts.head(8), values="إجمالي المبالغ", names="المحصل",
-                title="توزيع المبالغ على المحصلين",
-                hole=0.4, template="plotly_dark"
+                title="🍩 توزيع المبالغ على المحصلين",
+                hole=0.5, template="plotly_dark",
+                color_discrete_sequence=px.colors.qualitative.Pastel
             )
-            fig2.update_layout(PLOTLY_LAYOUT, height=350)
+            fig2.update_layout(PLOTLY_LAYOUT, height=400, showlegend=True, legend=dict(orientation="h", yanchor="bottom", y=-0.2, xanchor="center", x=0.5))
+            fig2.update_traces(textposition='inside', textinfo='percent+label', marker=dict(line=dict(color='#111827', width=2)))
+            
             with ch2:
-                st.plotly_chart(fig2, use_container_width=True)
+                st.markdown('<div class="chart-box">', unsafe_allow_html=True)
+                st.plotly_chart(fig2, use_container_width=True, config={'displayModeBar': False})
+                st.markdown('</div>', unsafe_allow_html=True)
+
 
 
 def _show_promises_results(df, target_date, summary, filename=None, from_cache=False):

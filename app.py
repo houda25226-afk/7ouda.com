@@ -263,29 +263,17 @@ def _show_promises_results(df, target_date, summary, filename=None, from_cache=F
     with pd.ExcelWriter(out_excel, engine="openpyxl") as writer:
         df.to_excel(writer, index=False, sheet_name="الوعود القائمة")
 
-    out_csv = io.BytesIO()
-    df.to_csv(out_csv, index=False, encoding="utf-8-sig")
 
-    b1, b2 = st.columns(2)
-    with b1:
+
         st.download_button(
-            "⬇️ تحميل الوعود القائمة (Excel)",
-            data=out_excel.getvalue(),
-            file_name=f"الوعود_القائمة_{today_str}.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            use_container_width=True,
-            key="promises_excel_download",
-            type="primary",
-        )
-    with b2:
-        st.download_button(
-            "⬇️ تحميل الوعود القائمة (CSV)",
-            data=out_csv.getvalue(),
-            file_name=f"الوعود_القائمة_{today_str}.csv",
-            mime="text/csv",
-            use_container_width=True,
-            key="promises_csv_download",
-        )
+        "⬇️ تحميل تقرير الوعود (Excel)",
+        data=out_excel.getvalue(),
+        file_name=f"تقرير_الوعود_{today_str}.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        use_container_width=True,
+        key="promises_excel_download_single",
+        type="primary",
+    )
 
 
 PROMISES_RESULT_KEY = "promises_result"  # كاش نتائج الوعود القائمة (فلتر: اليوم)
@@ -611,8 +599,7 @@ def _show_broken_results(df, target_date, summary, filename=None):
     with pd.ExcelWriter(out_excel, engine="openpyxl") as writer:
         df.to_excel(writer, index=False, sheet_name="الوعود المكسورة")
 
-    out_csv = io.BytesIO()
-    df.to_csv(out_csv, index=False, encoding="utf-8-sig")
+
 
     b1, b2 = st.columns(2)
     with b1:

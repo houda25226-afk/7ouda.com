@@ -101,6 +101,71 @@ def parse_date_cell(val):
         return None
 
 
+
+def render_promises_dashboard(df, sales_col, net_col, title_suffix):
+    """داشبورد للوعود (القائمة/المكسورة): كروت KPI وشارتات."""
+    total_promises = len(df)
+    total_amount = pd.to_numeric(df[net_col], errors="coerce").sum() if net_col else 0
+    unique_agents = df[sales_col].nunique() if sales_col else 0
+    avg_amount = total_amount / total_promises if total_promises > 0 else 0
+
+    # 1. KPI Cards
+    st.markdown(f'<div class="chart-card-title">📊 مؤشرات أداء الوعود ({title_suffix})</div>', unsafe_allow_html=True)
+    c1, c2, c3, c4 = st.columns(4)
+    metrics = [
+        (c1, "🤝 إجمالي الوعود", f"{total_promises:,}", "وعد قائم/مكسور"),
+        (c2, "💰 إجمالي المبالغ", f"{total_amount:,.0f}", "صافي المديونية"),
+        (c3, "👤 عدد المحصلين", f"{unique_agents}", "محصل مشارك"),
+        (c4, "📈 متوسط الوعد", f"{avg_amount:,.0f}", "للوعد الواحد"),
+    ]
+    for col, label, val, sub in metrics:
+        with col:
+            st.markdown(
+                f"""
+                <div class="metric-box">
+                    <div class="metric-label">{label}</div>
+                    <div class="metric-value">{val}</div>
+                    <div class="metric-sub">{sub}</div>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+    
+    st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
+
+    # 2. Charts
+    if total_promises > 0 and sales_col:
+        st.markdown('<div class="chart-card-title">📈 تحليل توزيع الوعود</div>', unsafe_allow_html=True)
+        ch1, ch2 = st.columns(2)
+        
+        # Chart 1: Count by Agent
+        agent_counts = df[sales_col].value_counts().reset_index()
+        agent_counts.columns = ["المحصل", "عدد الوعود"]
+        fig1 = px.bar(
+            agent_counts.head(10), x="عدد الوعود", y="المحصل", orientation="h",
+            title="أعلى 10 محصلين (من حيث العدد)",
+            color="عدد الوعود", color_continuous_scale="Viridis",
+            template="plotly_dark"
+        )
+        fig1.update_layout(PLOTLY_LAYOUT, height=350)
+        with ch1:
+            st.plotly_chart(fig1, use_container_width=True)
+
+        # Chart 2: Amount by Agent
+        if net_col:
+            agent_amounts = df.groupby(sales_col)[net_col].sum().reset_index()
+            agent_amounts.columns = ["المحصل", "إجمالي المبالغ"]
+            agent_amounts = agent_amounts.sort_values("إجمالي المبالغ", ascending=False)
+            fig2 = px.pie(
+                agent_amounts.head(8), values="إجمالي المبالغ", names="المحصل",
+                title="توزيع المبالغ على المحصلين",
+                hole=0.4, template="plotly_dark"
+            )
+            fig2.update_layout(PLOTLY_LAYOUT, height=350)
+            with ch2:
+                st.plotly_chart(fig2, use_container_width=True)
+
+
 def _show_promises_results(df, target_date, summary, filename=None, from_cache=False):
     """عرض نتائج الوعود القائمة (الجدول + الملخص + التنزيل) — من رفع جديد أو من الكاش."""
     total_in_file = summary.get("total_in_file", len(df))
@@ -142,11 +207,16 @@ def _show_promises_results(df, target_date, summary, filename=None, from_cache=F
 
     st.markdown("<div class='divider'></div>", unsafe_allow_html=True)
 
+    # 📊 الداشبورد الجديدة
+    render_promises_dashboard(df, sales_col, net_col, "اليوم" if "اليوم" in st.session_state.get("promises_result", {}).get("due_desc", "") or "يساوي" in st.session_state.get("promises_result", {}).get("due_desc", "") else "مكسورة")
+    
+    st.markdown("<div class='divider'></div>", unsafe_allow_html=True)
+
     # لمحة من البيانات
     st.markdown(
         f"""
         <div class="chart-card-title" style="margin-bottom:8px;">
-            👀 لمحة من بيانات الوعود القائمة (أول {min(15, len(df))} وعد)
+            👀 لمحة من بيانات الوعود (أول {min(15, len(df))} وعد)
         </div>
         """,
         unsafe_allow_html=True,
@@ -175,21 +245,7 @@ def _show_promises_results(df, target_date, summary, filename=None, from_cache=F
             height=min(320, 60 * len(summary_df) + 100),
         )
 
-    if net_col and net_col in df.columns:
-        total_amount = pd.to_numeric(df[net_col], errors="coerce").sum()
-        st.markdown(
-            f"""
-            <div class="daily-total-card">
-                <div>
-                    <div class="daily-total-title">💰 إجمالي صافي المديونية للوعود القائمة</div>
-                    <div class="daily-total-sub">تاريخ {target_date.strftime("%Y-%m-%d")} · {len(summary_df) if summary_df is not None else 0} محصّل</div>
-                </div>
-                <div class="daily-total-number">{total_amount:,.2f}</div>
-                <div class="daily-total-label">صافي المبلغ (Net Amount)</div>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
+
 
     st.markdown("<div class='divider'></div>", unsafe_allow_html=True)
 

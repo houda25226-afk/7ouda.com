@@ -3642,6 +3642,86 @@ DASHBOARD_SOURCE_KEY = "dashboard_uploaded_source"
 
 
 
+
+def _run_neglect_followup_pipeline(new_file, old_file):
+    try:
+        df_new = read_uploaded_dataframe(new_file)
+        df_old = read_uploaded_dataframe(old_file)
+        
+        # حذف أول صف
+        if len(df_new) > 0: df_new = df_new.iloc[1:].reset_index(drop=True)
+        if len(df_old) > 0: df_old = df_old.iloc[1:].reset_index(drop=True)
+        
+        # البحث عن الأعمدة
+        id_col_new = find_column(df_new, ID_CANDIDATES)
+        id_col_old = find_column(df_old, ID_CANDIDATES)
+        last_date_new = find_column(df_new, NEGLECT_LAST_DATE_CANDIDATES)
+        
+        if not id_col_new or not id_col_old or not last_date_new:
+            st.error("مش قادر ألاقي عمود الرقم التعريفي (ID) أو تاريخ آخر متابعة في الملفات.")
+            return
+            
+        # تحويل المعرفات لنصوص لضمان المطابقة
+        df_new[id_col_new] = df_new[id_col_new].astype(str).str.strip()
+        df_old[id_col_old] = df_old[id_col_old].astype(str).str.strip()
+        
+        # جلب التواريخ الحديثة
+        mapping = df_new.set_index(id_col_new)[last_date_new].to_dict()
+        
+        # تحديث ملف الإهمال القديم
+        result_df = df_old.copy()
+        result_df['تاريخ_متابعة_حديث'] = result_df[id_col_old].map(mapping)
+        
+        # حساب الملاحظات
+        target_date = st.session_state.get(TODAY_KEY, datetime.now().date())
+        
+        def check_coverage(val):
+            d = parse_date_cell(val)
+            if not d: return "لم يتم التغطية"
+            diff = (target_date - d).days
+            return "تم التغطية" if diff < 8 else "لم يتم التغطية"
+            
+        result_df['الملاحظات'] = result_df['تاريخ_متابعة_حديث'].apply(check_coverage)
+        
+        st.session_state["neglect_followup_result"] = {"df": result_df}
+        st.rerun()
+    except Exception as e:
+        st.error(f"خطأ في معالجة الملفات: {e}")
+
+def _show_neglect_followup_results(df):
+    st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
+    st.markdown('<div class="chart-card-title">📊 نتائج متابعة الإهمال</div>', unsafe_allow_html=True)
+    
+    # KPI Cards
+    covered = len(df[df['الملاحظات'] == "تم التغطية"])
+    not_covered = len(df[df['الملاحظات'] == "لم يتم التغطية"])
+    
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        st.markdown(f'<div class="metric-box"><div class="metric-label">✅ تم التغطية</div><div class="metric-value">{covered}</div></div>', unsafe_allow_html=True)
+    with c2:
+        st.markdown(f'<div class="metric-box"><div class="metric-label">❌ لم يتم التغطية</div><div class="metric-value" style="color:#F87171;">{not_covered}</div></div>', unsafe_allow_html=True)
+    with c3:
+        coverage_pct = (covered / len(df) * 100) if len(df) > 0 else 0
+        st.markdown(f'<div class="metric-box"><div class="metric-label">📈 نسبة التغطية</div><div class="metric-value">{coverage_pct:.1f}%</div></div>', unsafe_allow_html=True)
+    
+    st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
+    st.dataframe(df, use_container_width=True, hide_index=True)
+    
+    # Download
+    out_excel = io.BytesIO()
+    with pd.ExcelWriter(out_excel, engine="openpyxl") as writer:
+        df.to_excel(writer, index=False, sheet_name="متابعة الإهمال")
+    
+    st.download_button(
+        "⬇️ تحميل تقرير متابعة الإهمال المحدث (Excel)",
+        data=out_excel.getvalue(),
+        file_name=f"متابعة_الإهمال_{datetime.now().strftime('%Y-%m-%d')}.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        use_container_width=True,
+        type="primary",
+    )
+
 def page_neglect():
     """تويب الإهمال: فلترة الحالات المتأخرة في المتابعة + حساب فرق الأيام + داشبورد."""
     init_neglect_state()
@@ -3667,46 +3747,61 @@ def page_neglect():
 
     st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
     
-    # إدارة حالات Sub State
-    with st.expander("⚙️ إدارة حالات Sub State المستهدفة (الإهمال)"):
-        available = st.session_state.get("neglect_available_states", [])
-        if available:
-            st.markdown('<div class="section-kicker">🔍 اختر حالات إضافية من الملف المرفوع:</div>', unsafe_allow_html=True)
-            # Filter out already selected states
-            to_add_options = [s for s in available if s not in st.session_state["neglect_sub_states"]]
-            selected_to_add = st.multiselect("اختر الحالات لإضافتها لقائمة الإهمال:", to_add_options)
-            if st.button("➕ إضافة الحالات المختارة"):
-                if selected_to_add:
-                    st.session_state["neglect_sub_states"].extend(selected_to_add)
-                    st.success(f"تمت إضافة {len(selected_to_add)} حالة بنجاح!")
-                    st.rerun()
-        else:
-            st.info("💡 ارفع ملف أولاً عشان أقدر أطلع لك كل الحالات المتاحة تختار منها.")
-        
-        st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
-        st.write("📋 الحالات المشمولة حالياً في الإهمال:")
-        cols = st.columns(3)
-        for i, state in enumerate(st.session_state["neglect_sub_states"]):
-            with cols[i % 3]:
-                if st.button(f"❌ {state}", key=f"del_{i}", use_container_width=True):
-                    st.session_state["neglect_sub_states"].remove(state)
-                    st.rerun()
+    if st.session_state["neglect_mode"] == "neglect":
+        # إدارة حالات Sub State
+        with st.expander("⚙️ إدارة حالات Sub State المستهدفة (الإهمال)"):
+            available = st.session_state.get("neglect_available_states", [])
+            if available:
+                st.markdown('<div class="section-kicker">🔍 اختر حالات إضافية من الملف المرفوع:</div>', unsafe_allow_html=True)
+                to_add_options = [s for s in available if s not in st.session_state["neglect_sub_states"]]
+                selected_to_add = st.multiselect("اختر الحالات لإضافتها لقائمة الإهمال:", to_add_options)
+                if st.button("➕ إضافة الحالات المختارة"):
+                    if selected_to_add:
+                        st.session_state["neglect_sub_states"].extend(selected_to_add)
+                        st.success(f"تمت إضافة {len(selected_to_add)} حالة بنجاح!")
+                        st.rerun()
+            else:
+                st.info("💡 ارفع ملف أولاً عشان أقدر أطلع لك كل الحالات المتاحة تختار منها.")
+            
+            st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
+            st.write("📋 الحالات المشمولة حالياً في الإهمال:")
+            cols = st.columns(3)
+            for i, state in enumerate(st.session_state["neglect_sub_states"]):
+                with cols[i % 3]:
+                    if st.button(f"❌ {state}", key=f"del_{i}", use_container_width=True):
+                        st.session_state["neglect_sub_states"].remove(state)
+                        st.rerun()
 
-    uploaded = st.file_uploader(
-        "📂 ارفع ملف المحفظة (Excel أو CSV) لفلترة الإهمال",
-        type=["xlsx", "xls", "csv"],
-        key="neglect_upload",
-    )
-    
-    if uploaded is not None:
-        _run_neglect_pipeline(uploaded)
+        uploaded = st.file_uploader(
+            "📂 ارفع ملف المحفظة (Excel أو CSV) لفلترة الإهمال",
+            type=["xlsx", "xls", "csv"],
+            key="neglect_upload",
+        )
+        if uploaded is not None:
+            _run_neglect_pipeline(uploaded)
+        else:
+            cached = st.session_state.get(NEGLECT_RESULT_KEY)
+            if cached:
+                _show_neglect_results(cached["df"], cached)
     else:
-        # عرض الكاش
-        cached = st.session_state.get(NEGLECT_RESULT_KEY)
-        if cached:
-            _show_neglect_results(cached["df"], cached)
+        # وضع متابعة الإهمال - هذا الجزء كان مفقوداً في النسخة السابقة
+        st.info("💡 في هذا الوضع، سنقوم بمطابقة تقرير إهمال قديم مع محفظة اليوم الحديثة لمعرفة الحالات التي تمت تغطيتها.")
+        c1, c2 = st.columns(2)
+        with c1:
+            new_portfolio = st.file_uploader("📂 ارفع محفظة اليوم الحديثة", type=["xlsx", "xls", "csv"], key="new_portfolio_up")
+        with c2:
+            old_neglect = st.file_uploader("📂 ارفع تقرير الإهمال القديم", type=["xlsx", "xls", "csv"], key="old_neglect_up")
+        
+        if new_portfolio and old_neglect:
+            if st.button("🚀 ابدأ مطابقة ومتابعة الإهمال", use_container_width=True, type="primary"):
+                _run_neglect_followup_pipeline(new_portfolio, old_neglect)
+        
+        cached_followup = st.session_state.get("neglect_followup_result")
+        if cached_followup:
+            _show_neglect_followup_results(cached_followup["df"])
 
 def _run_neglect_pipeline(uploaded):
+
     _file_hash = hashlib.sha256(uploaded.getvalue()).hexdigest()
     cached = st.session_state.get(NEGLECT_RESULT_KEY)
     if cached and cached.get("file_hash") == _file_hash:

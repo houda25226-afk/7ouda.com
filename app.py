@@ -67,6 +67,31 @@ PROMISE_EXCLUDED_SALES = [
     "قانونى -الوطنية",
 ]
 
+
+# ==========================================================
+# إعدادات تويب الإهمال
+# ==========================================================
+NEGLECT_SUB_STATES_DEFAULT = [
+    "تم ابلاغ العميل - اتصال",
+    "لايرد مع التكرار",
+    "جدولة",
+    "واعد بالسداد",
+    "تم ابلاغ العميل - واتسب",
+    "لا يرد",
+    "إعفاء || بإنتظار المستند",
+    "متوفي",
+    "مغلق مع التكرار"
+]
+
+NEGLECT_LAST_DATE_CANDIDATES = ["Follow up Last Date", "follow up last date", "Last Follow Up", "تاريخ آخر متابعة"]
+NEGLECT_RESULT_KEY = "neglect_result"
+
+def init_neglect_state():
+    if "neglect_sub_states" not in st.session_state:
+        st.session_state["neglect_sub_states"] = NEGLECT_SUB_STATES_DEFAULT.copy()
+    if "neglect_mode" not in st.session_state:
+        st.session_state["neglect_mode"] = "neglect"  # 'neglect' or 'followup'
+
 # التاريخ المستهدف: تاريخ اليوم (بيتم تحديده مرة واحدة عند أول عرض للصفحة)
 TODAY_KEY = "promises_today"
 
@@ -3613,6 +3638,139 @@ def page_placeholder(eyebrow, title, subtitle, icon):
 DASHBOARD_SOURCE_KEY = "dashboard_uploaded_source"
 
 
+
+def page_neglect():
+    """تويب الإهمال: فلترة الحالات المتأخرة في المتابعة + حساب فرق الأيام + داشبورد."""
+    init_neglect_state()
+    _init_promises_today()
+    
+    page_header(
+        "NEGLECT TRACKING",
+        "⚠️ الإهمال ومتابعة الإهمال",
+        "ارفع المحفظة وهنطلع لك الحالات اللي تاريخ متابعتها قبل اليوم ومحتاجة اهتمام",
+        show_wave=True,
+    )
+    
+    # اختيار الوضع
+    m1, m2 = st.columns(2)
+    with m1:
+        if st.button("🚨 الإهمال", use_container_width=True, type="primary" if st.session_state["neglect_mode"] == "neglect" else "secondary"):
+            st.session_state["neglect_mode"] = "neglect"
+            st.rerun()
+    with m2:
+        if st.button("🔍 متابعة الإهمال", use_container_width=True, type="primary" if st.session_state["neglect_mode"] == "followup" else "secondary"):
+            st.session_state["neglect_mode"] = "followup"
+            st.rerun()
+
+    st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
+    
+    # إدارة حالات Sub State
+    with st.expander("⚙️ إدارة حالات Sub State المستهدفة (الإهمال)"):
+        new_state = st.text_input("إضافة حالة Sub State جديدة للقائمة:")
+        if st.button("➕ إضافة الحالة"):
+            if new_state and new_state not in st.session_state["neglect_sub_states"]:
+                st.session_state["neglect_sub_states"].append(new_state)
+                st.success(f"تمت إضافة '{new_state}' بنجاح!")
+                st.rerun()
+        
+        st.write("الحالات الحالية:")
+        cols = st.columns(3)
+        for i, state in enumerate(st.session_state["neglect_sub_states"]):
+            with cols[i % 3]:
+                if st.button(f"❌ {state}", key=f"del_{i}"):
+                    st.session_state["neglect_sub_states"].remove(state)
+                    st.rerun()
+
+    uploaded = st.file_uploader(
+        "📂 ارفع ملف المحفظة (Excel أو CSV) لفلترة الإهمال",
+        type=["xlsx", "xls", "csv"],
+        key="neglect_upload",
+    )
+    
+    if uploaded is not None:
+        _run_neglect_pipeline(uploaded)
+    else:
+        # عرض الكاش
+        cached = st.session_state.get(NEGLECT_RESULT_KEY)
+        if cached:
+            _show_neglect_results(cached["df"], cached)
+
+def _run_neglect_pipeline(uploaded):
+    _file_hash = hashlib.sha256(uploaded.getvalue()).hexdigest()
+    cached = st.session_state.get(NEGLECT_RESULT_KEY)
+    if cached and cached.get("file_hash") == _file_hash:
+        _show_neglect_results(cached["df"], cached)
+        return
+
+    try:
+        df = read_uploaded_dataframe(uploaded)
+        if len(df) > 0:
+            df = df.iloc[1:].reset_index(drop=True)
+            
+        sales_col = find_column(df, SALES_PERSON_CANDIDATES)
+        substate_col = find_column(df, PROMISE_SUB_STATE_CANDIDATES)
+        duedate_col = find_column(df, PROMISE_DUE_DATE_CANDIDATES)
+        lastdate_col = find_column(df, NEGLECT_LAST_DATE_CANDIDATES)
+        net_col = find_column(df, PROMISE_NET_AMOUNT_CANDIDATES)
+        
+        if not all([sales_col, substate_col, duedate_col]):
+            st.error("الملف يفتقد أعمدة أساسية (المحصل، الحالة، أو تاريخ المتابعة).")
+            return
+
+        # 1. فلترة المحصلين
+        df = df[~df[sales_col].astype(str).str.strip().isin(PROMISE_EXCLUDED_SALES)].copy()
+        
+        # 2. فلترة Sub State
+        df = df[df[substate_col].astype(str).str.strip().isin(st.session_state["neglect_sub_states"])].copy()
+        
+        # 3. فلترة التاريخ (ما عدا اليوم)
+        target_date = st.session_state[TODAY_KEY]
+        df['temp_due'] = [parse_date_cell(v) for v in df[duedate_col]]
+        df = df[df['temp_due'] != target_date].copy()
+        
+        # 4. حساب فرق الأيام
+        if lastdate_col:
+            df['temp_last'] = [parse_date_cell(v) for v in df[lastdate_col]]
+            df['فرق_الأيام'] = [(target_date - d).days if d else 0 for d in df['temp_last']]
+        
+        st.session_state[NEGLECT_RESULT_KEY] = {
+            "df": df, "file_hash": _file_hash, "sales_col": sales_col,
+            "substate_col": substate_col, "duedate_col": duedate_col,
+            "lastdate_col": lastdate_col, "net_col": net_col
+        }
+        st.rerun()
+    except Exception as e:
+        st.error(f"خطأ في معالجة الملف: {e}")
+
+def _show_neglect_results(df, meta):
+    sales_col = meta["sales_col"]
+    net_col = meta["net_col"]
+    
+    # Dashboard
+    render_promises_dashboard(df, sales_col, net_col, "الإهمال")
+    
+    st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
+    
+    # Table
+    st.markdown('<div class="chart-card-title">📋 جدول حالات الإهمال التفصيلي</div>', unsafe_allow_html=True)
+    display_cols = [c for c in [sales_col, meta["substate_col"], meta["duedate_col"], meta["lastdate_col"], "فرق_الأيام", net_col] if c in df.columns]
+    st.dataframe(df[display_cols], use_container_width=True, hide_index=True)
+    
+    # Download
+    out_excel = io.BytesIO()
+    with pd.ExcelWriter(out_excel, engine="openpyxl") as writer:
+        df[display_cols].to_excel(writer, index=False, sheet_name="حالات الإهمال")
+    
+    st.download_button(
+        "⬇️ تحميل تقرير الإهمال (Excel)",
+        data=out_excel.getvalue(),
+        file_name=f"تقرير_الإهمال_{datetime.now().strftime('%Y-%m-%d')}.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        use_container_width=True,
+        type="primary",
+    )
+
+
 def page_dashboard():
     """تويب داشبورد مستقلة تمامًا عن التصنيف — ترفع فيها ملف النشاط بعد التصنيف
     (فيه عمود التصنيف جاهز) وتعرض لك داشبورد كاملة بالكروت والشارتات،
@@ -3907,9 +4065,7 @@ PAGES = {
     "🎯 التصنيف": page_classification,
     "📗 الوعود القائمة": page_standing_promises,
     "📕 الوعود المكسورة": page_broken_promises,
-    "⚠️ الإهمال": lambda: page_placeholder(
-        "NEGLECT", "الإهمال", "حالات الإهمال في المتابعة", "⚠️"
-    ),
+    "⚠️ الإهمال": page_neglect,
     "🧾 أخطاء الحالات": lambda: page_placeholder(
         "CASE ERRORS", "أخطاء الحالات", "الحالات اللي فيها أخطاء في التسجيل أو المتابعة", "🧾"
     ),

@@ -3649,7 +3649,7 @@ def page_neglect():
     page_header(
         "NEGLECT TRACKING",
         "⚠️ الإهمال ومتابعة الإهمال",
-        "ارفع المحفظة وهنطلع لك الحالات اللي تاريخ متابعتها قبل اليوم ومحتاجة اهتمام",
+        "ارفع المحفظة وهنطلع لك الحالات اللي بقالها أكتر من 7 أيام بدون متابعة ومحتاجة تدخل سريع",
         show_wave=True,
     )
     
@@ -3742,10 +3742,12 @@ def _run_neglect_pipeline(uploaded):
         df['temp_due'] = [parse_date_cell(v) for v in df[duedate_col]]
         df = df[df['temp_due'] != target_date].copy()
         
-        # 4. حساب فرق الأيام
+        # 4. حساب فرق الأيام والفلترة (> 7 أيام)
         if lastdate_col:
             df['temp_last'] = [parse_date_cell(v) for v in df[lastdate_col]]
             df['فرق_الأيام'] = [(target_date - d).days if d else 0 for d in df['temp_last']]
+            # فلترة الحالات اللي بقالها أكتر من 7 أيام
+            df = df[df['فرق_الأيام'] > 7].copy()
         
         st.session_state[NEGLECT_RESULT_KEY] = {
             "df": df, "file_hash": _file_hash, "sales_col": sales_col,

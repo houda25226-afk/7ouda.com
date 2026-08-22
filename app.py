@@ -180,11 +180,13 @@ def render_promises_dashboard(df, sales_col, net_col, title_suffix):
         fig1 = px.bar(
             top_agents, x="عدد الوعود", y="المحصل", orientation="h",
             title="🔝 أعلى 10 محصلين (من حيث العدد)",
-            color="عدد الوعود", color_continuous_scale="Viridis",
+            color="عدد الوعود", color_continuous_scale=["#1E293B", "#5EEAD4"],
             template="plotly_dark"
         )
-        fig1.update_layout(PLOTLY_LAYOUT, height=400, margin=dict(t=80, b=40, l=100, r=20))
-        fig1.update_traces(marker_line_color='rgba(255,255,255,0.1)', marker_line_width=1)
+        fig1.update_layout(PLOTLY_LAYOUT, height=400, margin=dict(t=80, b=40, l=150, r=20))
+        fig1.update_traces(marker_line_color='rgba(255,255,255,0.2)', marker_line_width=1.5)
+        fig1.update_xaxes(showgrid=True, gridcolor='rgba(255,255,255,0.05)')
+        fig1.update_yaxes(tickfont=dict(size=12))
         
         with ch1:
             st.markdown('<div class="chart-box">', unsafe_allow_html=True)
@@ -197,14 +199,21 @@ def render_promises_dashboard(df, sales_col, net_col, title_suffix):
             agent_amounts.columns = ["المحصل", "إجمالي المبالغ"]
             agent_amounts = agent_amounts.sort_values("إجمالي المبالغ", ascending=False)
             
+            # Using a more professional teal/blue scale
+            colors = ['#5EEAD4', '#3B82F6', '#6366F1', '#A78BFA', '#F472B6', '#FBBF24', '#2DD4BF', '#0EA5E9']
             fig2 = px.pie(
                 agent_amounts.head(8), values="إجمالي المبالغ", names="المحصل",
                 title="🍩 توزيع المبالغ على المحصلين",
                 hole=0.5, template="plotly_dark",
-                color_discrete_sequence=px.colors.qualitative.Pastel
+                color_discrete_sequence=colors
             )
-            fig2.update_layout(PLOTLY_LAYOUT, height=400, showlegend=True, legend=dict(orientation="h", yanchor="bottom", y=-0.2, xanchor="center", x=0.5))
-            fig2.update_traces(textposition='inside', textinfo='percent+label', marker=dict(line=dict(color='#111827', width=2)))
+            fig2.update_layout(PLOTLY_LAYOUT, height=400, showlegend=True, legend=dict(orientation="h", yanchor="bottom", y=-0.3, xanchor="center", x=0.5))
+            fig2.update_traces(
+                textposition='inside', 
+                textinfo='percent', 
+                textfont=dict(size=14, color="white", family="JetBrains Mono"),
+                marker=dict(line=dict(color='#0F172A', width=2))
+            )
             
             with ch2:
                 st.markdown('<div class="chart-box">', unsafe_allow_html=True)
@@ -1849,9 +1858,12 @@ CHART_COLORS = {"ناجحة": COLOR_SUCCESS, "غير ناجحة": COLOR_FAIL}
 PLOTLY_LAYOUT = dict(
     paper_bgcolor="rgba(0,0,0,0)",
     plot_bgcolor="rgba(0,0,0,0)",
-    font_color="#F3F6FA",
+    font_color="#E2E8F0",
     font_family="Tajawal, sans-serif",
-    margin=dict(t=55, b=60, l=15, r=15),
+    font_size=13,
+    margin=dict(t=60, b=50, l=50, r=20),
+    title_font_size=18,
+    legend_font_size=12,
 )
 PLOTLY_CONFIG = {"displayModeBar": False}
 

@@ -341,15 +341,13 @@ def _show_promises_results(df, target_date, summary, filename=None, from_cache=F
     display_cols = [c for c in [sales_col, substate_col, duedate_col, net_col] if c]
     st.dataframe(df[display_cols], use_container_width=True, hide_index=True)
 
-    # أزرار التنزيل
+    # تنزيل Excel فقط
     today_str = target_date.strftime("%Y-%m-%d")
     out_excel = io.BytesIO()
     with pd.ExcelWriter(out_excel, engine="openpyxl") as writer:
         df.to_excel(writer, index=False, sheet_name="الوعود القائمة")
 
-
-
-        st.download_button(
+    st.download_button(
         "⬇️ تحميل تقرير الوعود (Excel)",
         data=out_excel.getvalue(),
         file_name=f"تقرير_الوعود_{today_str}.xlsx",
@@ -677,35 +675,21 @@ def _show_broken_results(df, target_date, summary, filename=None):
     display_cols = [c for c in [sales_col, substate_col, duedate_col, net_col] if c]
     st.dataframe(df[display_cols], use_container_width=True, hide_index=True)
 
-    # أزرار التنزيل
+    # تنزيل Excel فقط
     today_str = target_date.strftime("%Y-%m-%d")
     out_excel = io.BytesIO()
     with pd.ExcelWriter(out_excel, engine="openpyxl") as writer:
         df.to_excel(writer, index=False, sheet_name="الوعود المكسورة")
 
-    # ملف CSV — UTF-8 مع BOM حتى تظهر العربية بشكل صحيح في Excel
-    out_csv = df.to_csv(index=False).encode("utf-8-sig")
-
-    b1, b2 = st.columns(2)
-    with b1:
-        st.download_button(
-            "⬇️ تحميل الوعود المكسورة (Excel)",
-            data=out_excel.getvalue(),
-            file_name=f"الوعود_المكسورة_{today_str}.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            use_container_width=True,
-            key="broken_excel_download",
-            type="primary",
-        )
-    with b2:
-        st.download_button(
-            "⬇️ تحميل الوعود المكسورة (CSV)",
-            data=out_csv,
-            file_name=f"الوعود_المكسورة_{today_str}.csv",
-            mime="text/csv",
-            use_container_width=True,
-            key="broken_csv_download",
-        )
+    st.download_button(
+        "⬇️ تحميل الوعود المكسورة (Excel)",
+        data=out_excel.getvalue(),
+        file_name=f"الوعود_المكسورة_{today_str}.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        use_container_width=True,
+        key="broken_excel_download",
+        type="primary",
+    )
 
 st.set_page_config(
     page_title="لوحة تحليل المكالمات | 7oudaModel",

@@ -683,7 +683,8 @@ def _show_broken_results(df, target_date, summary, filename=None):
     with pd.ExcelWriter(out_excel, engine="openpyxl") as writer:
         df.to_excel(writer, index=False, sheet_name="الوعود المكسورة")
 
-
+    # ملف CSV — UTF-8 مع BOM حتى تظهر العربية بشكل صحيح في Excel
+    out_csv = df.to_csv(index=False).encode("utf-8-sig")
 
     b1, b2 = st.columns(2)
     with b1:
@@ -699,7 +700,7 @@ def _show_broken_results(df, target_date, summary, filename=None):
     with b2:
         st.download_button(
             "⬇️ تحميل الوعود المكسورة (CSV)",
-            data=out_csv.getvalue(),
+            data=out_csv,
             file_name=f"الوعود_المكسورة_{today_str}.csv",
             mime="text/csv",
             use_container_width=True,

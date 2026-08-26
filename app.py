@@ -910,6 +910,22 @@ header[data-testid="stHeader"] * {
 header[data-testid="stHeader"] .stDeployButton button,
 header[data-testid="stHeader"] button {
     color: var(--text) !important;
+    opacity: 1 !important;
+    visibility: visible !important;
+}
+header[data-testid="stHeader"] [role="button"],
+header[data-testid="stHeader"] a,
+header[data-testid="stHeader"] [data-testid="stToolbar"] {
+    opacity: 1 !important;
+    visibility: visible !important;
+}
+header[data-testid="stHeader"] button svg,
+header[data-testid="stHeader"] button svg path,
+header[data-testid="stHeader"] a svg,
+header[data-testid="stHeader"] a svg path {
+    display: block !important;
+    opacity: 1 !important;
+    visibility: visible !important;
 }
 header[data-testid="stHeader"] [data-testid="stHeaderBlockToolbar"] svg {
     fill: var(--text) !important;
@@ -949,7 +965,28 @@ header[data-testid="stHeader"] .stDeployButton button {
     text-align: right;
 }
 
-#MainMenu {visibility: hidden;}
+#MainMenu {visibility: visible !important;}
+#MainMenu, #MainMenu * { opacity: 1 !important; }
+header[data-testid="stHeader"] [data-testid="stMainMenu"],
+header[data-testid="stHeader"] [data-testid="stMainMenuButton"],
+header[data-testid="stHeader"] [aria-label*="Main menu"],
+header[data-testid="stHeader"] [aria-label*="main menu"] {
+    visibility: visible !important;
+    opacity: 1 !important;
+    display: flex !important;
+    color: var(--text) !important;
+}
+header[data-testid="stHeader"] [data-testid="stMainMenu"] svg,
+header[data-testid="stHeader"] [data-testid="stMainMenuButton"] svg,
+header[data-testid="stHeader"] [aria-label*="Main menu"] svg,
+header[data-testid="stHeader"] [aria-label*="main menu"] svg {
+    display: block !important;
+    visibility: visible !important;
+    opacity: 1 !important;
+    fill: var(--text) !important;
+    color: var(--text) !important;
+    stroke: var(--text) !important;
+}
 footer {visibility: hidden;}
 
 /* ===== الشريط الجانبي (ثابت على الشمال) ===== */
@@ -1904,7 +1941,7 @@ HEADER_SETTINGS_CSS = """
 [data-testid="stHeader"] [data-testid="stPopover"] {
     position: fixed !important;
     top: 0.18rem !important;
-    right: 3.05rem !important;
+    right: 5.65rem !important;
     z-index: 1000000 !important;
     margin: 0 !important;
 }
@@ -1960,7 +1997,7 @@ HEADER_SETTINGS_CSS = """
     margin-bottom: 0.8rem;
 }
 @media (max-width: 700px) {
-    [data-testid="stHeader"] [data-testid="stPopover"] { right: 2.85rem !important; }
+    [data-testid="stHeader"] [data-testid="stPopover"] { right: 5.35rem !important; }
 }
 </style>
 """

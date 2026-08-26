@@ -39,12 +39,12 @@ MODEL_REPO = "Mahmoud252002/7oudaModel"
 MAX_LENGTH = 256
 
 ORIGINAL_TEXT_COL = "Notes"         # اسم العمود الأصلي في الملف
-MODEL_TEXT_COL = "الافادة"          # الاسم اللي بيتحول له مؤقتًا عشان الموديل
+MODEL_TEXT_COL = "الافادة"          # الاسم اللي بيتحول له مؤقتًا لـ الموديل
 CLASSIFICATION_COL = "التصنيف"      # عمود النتيجة: 1 = ناجحة / 0 = غير ناجحة
 WASTED_TIME_COL = "الوقت_المهدر_دقيقة"
 
 ID_CANDIDATES = ["Account ID", "account id", "AccountID", "ID", "id", "رقم الحساب", "الرقم التعريفي", "Account No", "account no", "Account Number"]
-SALES_PERSON_CANDIDATES = ["Create By", "create by", "CreateBy", "Created By", "created by", "Sales Person", "sales person", "المحصل", "Salesperson", "salesperson", "SalesPerson"]
+SALES_PERSON_CANDIDATES = ["Create By", "create by", "CreateBy", "Created By", "created by", "Sales Person", "sales person", "المحصّل", "Salesperson", "salesperson", "SalesPerson"]
 CREATED_ON_CANDIDATES = ["Created On", "created on", "CreatedOn", "تاريخ الافادة"]
 DURATION_CANDIDATES = ["Call Duration", "call duration", "CallDuration", "Duration", "duration", "مدة المكالمة", "Call Time", "call time", "Talk Time", "talk time", "Duration (min)", "مدة"]
 
@@ -100,7 +100,7 @@ TODAY_KEY = "promises_today"
 
 
 def _init_promises_today():
-    """بنحدد تاريخ اليوم مرة واحدة في أول رن للصفحة عشان ميترفرش مع كل إعادة تشغيل."""
+    """بنحدد تاريخ اليوم مرة واحدة في أول رن للصفحة لـ ميترفرش مع كل إعادة تشغيل."""
     if TODAY_KEY not in st.session_state:
         st.session_state[TODAY_KEY] = datetime.now().date()
 
@@ -141,17 +141,17 @@ def render_promises_dashboard(df, sales_col, net_col, title_suffix):
     m1, m2, m3, m4 = st.columns(4)
     m1.metric("🤝 إجمالي الوعود", f"{total_promises:,}")
     m2.metric("💰 إجمالي المبالغ", f"{total_amount:,.0f}")
-    m3.metric("👤 عدد المحصلين", f"{unique_agents:,}")
+    m3.metric("👤 عدد المحصّلين", f"{unique_agents:,}")
     m4.metric("📈 متوسط الوعد", f"{avg_amount:,.0f}")
 
     if total_promises and sales_col:
         c1, c2 = st.columns(2)
         agent_counts = df[sales_col].value_counts().head(10).sort_values().reset_index()
-        agent_counts.columns = ["المحصل", "عدد الوعود"]
+        agent_counts.columns = ["المحصّل", "عدد الوعود"]
         with c1:
             fig = px.bar(
-                agent_counts, x="عدد الوعود", y="المحصل", orientation="h",
-                title="🔝 أعلى 10 محصلين من حيث عدد الوعود",
+                agent_counts, x="عدد الوعود", y="المحصّل", orientation="h",
+                title="🔝 أعلى 10 محصّلين من حيث عدد الوعود",
                 color="عدد الوعود", color_continuous_scale=[THEME["surface_2"], COLOR_ACCENT],
                 template=PLOTLY_TEMPLATE,
             )
@@ -160,10 +160,10 @@ def render_promises_dashboard(df, sales_col, net_col, title_suffix):
         if net_col:
             with c2:
                 amounts = df.groupby(sales_col)[net_col].sum().sort_values(ascending=False).head(8).reset_index()
-                amounts.columns = ["المحصل", "إجمالي المبالغ"]
+                amounts.columns = ["المحصّل", "إجمالي المبالغ"]
                 fig = px.pie(
-                    amounts, values="إجمالي المبالغ", names="المحصل", hole=0.5,
-                    title="🍩 توزيع المبالغ على المحصلين",
+                    amounts, values="إجمالي المبالغ", names="المحصّل", hole=0.5,
+                    title="🍩 توزيع المبالغ على المحصّلين",
                     template=PLOTLY_TEMPLATE,
                     color_discrete_sequence=[COLOR_ACCENT, COLOR_SUCCESS, COLOR_WARN, COLOR_FAIL, "#3B82F6", "#8B5CF6"],
                 )
@@ -177,10 +177,10 @@ def _show_promises_results(df, target_date, summary, filename=None, from_cache=F
     total_in_file = summary.get("total_in_file", len(df))
     st.info(
         f"📌 الوعود القائمة بتاريخ {target_date:%Y-%m-%d}: {len(df):,} وعد من {max(total_in_file, 0):,} صف. "
-        f"تم استبعاد {summary.get('dropped_sales', 0)} محصل، و{summary.get('dropped_sub', 0)} حالة، و{summary.get('dropped_due', 0)} تاريخ."
+        f"تم استبعاد {summary.get('dropped_sales', 0)} مُحصّل، و{summary.get('dropped_sub', 0)} حالة، و{summary.get('dropped_due', 0)} تاريخ."
     )
     if len(df) == 0:
-        st.warning("مفيش وعود قائمة لهذا التاريخ بعد تطبيق الفلاتر.")
+        st.warning("لا توجد وعود قائمة لهذا التاريخ بعد تطبيق الفلاتر.")
         return
     sales_col = summary.get("sales_col")
     substate_col = summary.get("substate_col")
@@ -192,7 +192,7 @@ def _show_promises_results(df, target_date, summary, filename=None, from_cache=F
     st.subheader(f"👀 لمحة من بيانات الوعود — أول {min(15, len(df))} وعد")
     preview_cols = [c for c in [sales_col, substate_col, duedate_col, net_col] if c]
     st.dataframe(df[preview_cols].head(15), use_container_width=True, hide_index=True)
-    st.subheader(f"📊 ملخص الوعود لكل محصل — {target_date:%Y-%m-%d}")
+    st.subheader(f"📊 ملخص الوعود لكل محصّل — {target_date:%Y-%m-%d}")
     if summary.get("summary_df") is not None:
         st.dataframe(summary["summary_df"], use_container_width=True, hide_index=True)
     st.subheader("📋 جدول الوعود القائمة التفصيلي")
@@ -230,12 +230,12 @@ def _run_promises_pipeline(
     _file_hash = hashlib.sha256(uploaded.getvalue()).hexdigest()
     cached = st.session_state.get(result_key)
     if cached and cached.get("file_hash") == _file_hash:
-        return False  # النتيجة موجودة في الكاش من رفع الملف ده — مش محتاجين إعادة معالجة
+        return False  # النتيجة موجودة في الكاش من رفع الملف ده — مش يلزم وجود إعادة معالجة
 
     try:
         raw_df = read_uploaded_dataframe(uploaded)
     except Exception as e:
-        st.error(f"مش قادر أقرأ الملف: {e}")
+        st.error(f"تعذر قراءة الملف: {e}")
         return False
 
     total_in_file = len(raw_df) - 1  # قبل حذف أول صف
@@ -257,7 +257,7 @@ def _run_promises_pipeline(
     ] if not c]
     if missing:
         st.error(
-            "مش لاقي أعمدة مهمة في الملف. الأعمدة المطلوبة: "
+            "تعذر العثور على أعمدة مهمة في الملف. الأعمدة المطلوبة: "
             f"{', '.join(missing)}\n\nالأعمدة الموجودة في الملف: {', '.join(df.columns.astype(str))}"
         )
         return False
@@ -302,7 +302,7 @@ def _run_promises_pipeline(
             **{count_label: (duedate_col, "count")}
         )
     summary_df = summary_df.sort_values(count_label, ascending=False).reset_index()
-    summary_df.columns = ["المحصل " + str(sales_col), count_label] + (
+    summary_df.columns = ["المحصّل " + str(sales_col), count_label] + (
         ["صافي المديونية (Net Amount)"] if net_col and net_col in df.columns else []
     )
 
@@ -346,17 +346,17 @@ def _render_cached_promises_page(result_key, placeholder_text):
                 filename=cached.get("filename"),
             )
     else:
-        st.info(f"📂 ارفع ملف المحفظة (Excel أو CSV) عشان نعرض النتائج — النتائج هتفضل محفوظة لحد ما تعمل reload للصفحة. {placeholder_text}")
+        st.info(f"📂 ارفع ملف المحفظة (Excel أو CSV) لعرض النتائج — ستظل النتائج محفوظة حتى إعادة تحميل الصفحة. {placeholder_text}")
 
 
 def page_standing_promises():
-    """تويب الوعود القائمة: رفع المحفظة → فلترة → جدول الوعود + تنزيل + تجميع بالمحصل."""
+    """تويب الوعود القائمة: رفع المحفظة → فلترة → جدول الوعود + تنزيل + تجميع بالمحصّل."""
     _init_promises_today()
 
     page_header(
         "STANDING PROMISES",
         "📗 الوعود القائمة",
-        "ارفع المحفظة (Excel) وهنفلتر واعد بالسداد لليوم بس — مع ملخص لكل محصّل وصافي المديونية",
+        "ارفع ملف المحفظة (Excel) لعرض الوعود المستحقة اليوم فقط، مع ملخص لكل محصّل وصافي المديونية",
     )
 
     uploaded = st.file_uploader(
@@ -391,7 +391,7 @@ def page_broken_promises():
     page_header(
         "BROKEN PROMISES",
         "📕 الوعود المكسورة",
-        "ارفع المحفظة (Excel) وهنفلتر واعد بالسداد اللي تاريخ متابعتها فات — يعني الوعد اتكسر — مع ملخص لكل محصّل وصافي المديونية",
+        "ارفع ملف المحفظة (Excel) لعرض الوعود التي تجاوزت تاريخ متابعتها وأصبحت مكسورة، مع ملخص لكل محصّل وصافي المديونية",
     )
 
     uploaded = st.file_uploader(
@@ -422,10 +422,10 @@ def _show_broken_results(df, target_date, summary, filename=None):
     total_in_file = summary.get("total_in_file", len(df))
     st.info(
         f"📌 الوعود المكسورة قبل {target_date:%Y-%m-%d}: {len(df):,} وعد من {max(total_in_file, 0):,} صف. "
-        f"تم استبعاد {summary.get('dropped_sales', 0)} محصل، و{summary.get('dropped_sub', 0)} حالة، و{summary.get('dropped_due', 0)} تاريخ."
+        f"تم استبعاد {summary.get('dropped_sales', 0)} مُحصّل، و{summary.get('dropped_sub', 0)} حالة، و{summary.get('dropped_due', 0)} تاريخ."
     )
     if len(df) == 0:
-        st.warning("مفيش وعود مكسورة بعد تطبيق الفلاتر.")
+        st.warning("لا توجد وعود مكسورة بعد تطبيق الفلاتر.")
         return
     sales_col = summary.get("sales_col")
     substate_col = summary.get("substate_col")
@@ -434,7 +434,7 @@ def _show_broken_results(df, target_date, summary, filename=None):
     display_cols = [c for c in [sales_col, substate_col, duedate_col, net_col] if c]
     st.subheader("👀 لمحة من بيانات الوعود المكسورة")
     st.dataframe(df[display_cols].head(15), use_container_width=True, hide_index=True)
-    st.subheader("📊 ملخص الوعود المكسورة لكل محصل")
+    st.subheader("📊 ملخص الوعود المكسورة لكل محصّل")
     if summary.get("summary_df") is not None:
         st.dataframe(summary["summary_df"], use_container_width=True, hide_index=True)
     if net_col and net_col in df.columns:
@@ -464,7 +464,7 @@ st.set_page_config(
 # ==========================================================
 # ملحوظة مهمة: الـ direction: rtl متطبق بس على محتوى النص
 # (الـ block-container والـ sidebar content) مش على هيكل الصفحة كله،
-# عشان الـ Sidebar يفضل ثابت فعليًا على الشمال زي ما اتطلب،
+# لـ الـ Sidebar يفضل ثابت فعليًا على الشمال زي ما اتطلب،
 # بدل ما ينقلب يمين بسبب انعكاس اتجاه الـ flex layout.
 
 
@@ -534,7 +534,7 @@ def _detect_native_streamlit_theme() -> str:
     إعدادات Streamlit نفسها ("⋮" ← Settings ← Choose app theme)
     عن طريق st.context.theme.type (متاحة من Streamlit 1.46+).
     لو مش متاحة لأي سبب (نسخة قديمة من Streamlit)، بيرجع لآخر قيمة
-    محفوظة في session_state، ولو مفيش هيستخدم "dark" كافتراضي.
+    محفوظة في session_state، ولو لا يوجد هيستخدم "dark" كافتراضي.
     """
     try:
         ctx_theme = st.context.theme
@@ -558,9 +558,9 @@ THEME = THEMES.get(THEME_NAME, THEMES["dark"])
 
 def page_header(eyebrow: str, title: str, subtitle: str, centered: bool = False):
     if eyebrow:
-        st.caption(eyebrow)
+        st.caption(eyebrow.upper())
     st.title(title)
-    st.write(subtitle)
+    st.caption(subtitle)
     st.divider()
 
 
@@ -577,7 +577,7 @@ def find_column(df: pd.DataFrame, candidates: list):
 # منطق الموديل
 # ==========================================================
 
-@st.cache_resource(show_spinner="جاري تحميل الموديل من Hugging Face...")
+@st.cache_resource(show_spinner="جارٍ تحميل النموذج من Hugging Face...")
 def load_model():
     tokenizer = AutoTokenizer.from_pretrained(MODEL_REPO)
     model = AutoModelForSequenceClassification.from_pretrained(MODEL_REPO)
@@ -589,7 +589,7 @@ def load_model():
 
 def predict_batch(texts, tokenizer, model, device, batch_size=16):
     all_preds, all_confidences = [], []
-    progress_bar = st.progress(0, text="جاري التصنيف...")
+    progress_bar = st.progress(0, text="جارٍ التصنيف...")
     total = len(texts)
 
     for i in range(0, total, batch_size):
@@ -611,7 +611,7 @@ def predict_batch(texts, tokenizer, model, device, batch_size=16):
 
         progress_bar.progress(
             min((i + batch_size) / total, 1.0),
-            text=f"جاري التصنيف... ({min(i + batch_size, total)}/{total})",
+            text=f"جارٍ التصنيف... ({min(i + batch_size, total)}/{total})",
         )
 
     progress_bar.empty()
@@ -623,7 +623,7 @@ def predict_batch(texts, tokenizer, model, device, batch_size=16):
 # ==========================================================
 
 def subtract_break_overlap(prev_time, curr_time, break_start, break_end, gap_minutes):
-    """بيخصم من الفجوة أي جزء واقع جوه وقت البريك المحدد."""
+    """بيخصم من الفجوة أي جزء واقع جوه وقت الاستراحة المحدد."""
     if break_start is None or break_end is None or pd.isna(prev_time) or pd.isna(curr_time):
         return gap_minutes
     day = prev_time.date()
@@ -638,7 +638,7 @@ def subtract_break_overlap(prev_time, curr_time, break_start, break_end, gap_min
 def calculate_wasted_time(df, sales_col, time_col, break_start, break_end):
     """
     بتحسب الوقت المهدر (بالدقايق) بين كل مكالمة واللي قبلها لنفس المحصّل،
-    بعد استبعاد وقت البريك. أول مكالمة لكل محصّل = صفر (مفيش مكالمة قبلها نقيس منها).
+    بعد استبعاد وقت الاستراحة. أول مكالمة لكل محصّل = صفر (لا يوجد مكالمة قبلها نقيس منها).
     """
     work = df.copy()
     work["_orig_idx"] = work.index
@@ -719,7 +719,7 @@ def render_metric_cards(df, class_col, sales_col, time_col):
         metrics[1].metric("✅ ناجحة", "—")
         metrics[2].metric("⛔ غير ناجحة", "—")
     if has_wasted:
-        metrics[3].metric("⏱️ الوقت المهدر بالدقائق", round(df[WASTED_TIME_COL].sum(), 1), f"متوسط {df[WASTED_TIME_COL].mean():.1f}")
+        metrics[3].metric("⏱️ إجمالي الوقت المهدر (دقيقة)", round(df[WASTED_TIME_COL].sum(), 1), f"متوسط {df[WASTED_TIME_COL].mean():.1f}")
     else:
         metrics[3].metric("⏱️ الوقت المهدر", "—")
 
@@ -730,7 +730,7 @@ def render_pie_chart(df, class_col):
 
     def _pie():
         if not has_class:
-            st.info("مفيش عمود تصنيف عشان نعرض توزيع النتائج.")
+            st.info("لا يوجد عمود تصنيف لعرض توزيع النتائج.")
             return
         labels_series = df[class_col].map({1: "ناجحة", 0: "غير ناجحة"})
         pie_df = labels_series.value_counts().reset_index()
@@ -758,7 +758,7 @@ def render_wasted_bar(df, sales_col, top_n=10):
 
     def _wasted_bar():
         if not (has_wasted and has_sales):
-            st.info("محتاجين عمود المحصّل + الوقت المهدر عشان نعرض الرسم ده.")
+            st.info("يلزم وجود عمود المحصّل وعمود الوقت المهدر لعرض هذا الرسم.")
             return
         wasted_by_agent = df.groupby(sales_col)[WASTED_TIME_COL].sum().sort_values(ascending=False)
         if top_n:
@@ -809,7 +809,7 @@ def render_wasted_hist(df):
 
     def _hist():
         if not has_wasted:
-            st.info("محتاجين عمود الوقت المهدر عشان نعرض التوزيع ده.")
+            st.info("يلزم وجود عمود الوقت المهدر لعرض هذا التوزيع.")
             return
         fig4 = px.histogram(df, x=WASTED_TIME_COL, nbins=20, color_discrete_sequence=[COLOR_ACCENT])
         fig4.update_layout(**PLOTLY_LAYOUT, bargap=0.08, xaxis_title="الوقت المهدر (دقيقة)", yaxis_title="عدد المرات")
@@ -824,7 +824,7 @@ def render_trend_chart(df, class_col, time_col):
 
     def _trend():
         if not has_time:
-            st.info("محتاجين عمود التاريخ عشان نعرض اتجاه المكالمات بمرور الوقت.")
+            st.info("يلزم وجود عمود التاريخ لعرض اتجاه المكالمات بمرور الوقت.")
             return
         trend_df = df.copy()
         trend_df[time_col] = pd.to_datetime(trend_df[time_col], errors="coerce")
@@ -873,20 +873,20 @@ def render_highlights(df, class_col, sales_col, time_col):
             perf = perf[perf["إجمالي المكالمات"] >= 3]
             if len(perf):
                 top = perf.iloc[0]
-                st.metric("🏅 أفضل محصل", str(top[sales_col]), f"{top['نسبة النجاح %']}% نجاح")
+                st.metric("🏅 أفضل محصّل", str(top[sales_col]), f"{top['نسبة النجاح %']}% نجاح")
             else:
-                st.info("مفيش بيانات كافية")
+                st.info("لا توجد بيانات كافية")
         else:
-            st.info("محتاجين عمود التصنيف والمحصّل")
+            st.info("يلزم وجود عمود التصنيف والمحصّل")
     with cols[1]:
         if has_wasted and has_sales:
             totals = df.groupby(sales_col)[WASTED_TIME_COL].sum().sort_values(ascending=False)
             if len(totals):
                 st.metric("🐌 الأكثر إهدارًا للوقت", str(totals.index[0]), f"{totals.iloc[0]:.1f} دقيقة")
             else:
-                st.info("مفيش بيانات كافية")
+                st.info("لا توجد بيانات كافية")
         else:
-            st.info("محتاجين عمود المحصّل والوقت المهدر")
+            st.info("يلزم وجود عمود المحصّل والوقت المهدر")
     with cols[2]:
         if has_time:
             t = pd.to_datetime(df[time_col], errors="coerce")
@@ -894,9 +894,9 @@ def render_highlights(df, class_col, sales_col, time_col):
                 daily = t.dt.date.value_counts()
                 st.metric("📅 أكثر يوم نشاطًا", str(daily.index[0]), f"{int(daily.iloc[0])} مكالمة")
             else:
-                st.info("مفيش تواريخ صالحة")
+                st.info("لا توجد تواريخ صالحة")
         else:
-            st.info("محتاجين عمود التاريخ")
+            st.info("يلزم وجود عمود التاريخ")
 
 
 
@@ -907,7 +907,7 @@ def render_comparison_matrix(df, class_col, sales_col):
     has_wasted = WASTED_TIME_COL in df.columns
 
     if not (has_class and has_sales):
-        st.info("محتاجين عمود التصنيف وعمود المحصّل عشان نبني جدول المقارنة.")
+        st.info("يلزم وجود عمود التصنيف وعمود المحصّل لبناء جدول المقارنة.")
         return
 
     perf = _compute_agent_perf(df, class_col, sales_col)
@@ -967,7 +967,7 @@ def render_kpi_cards(df, class_col, sales_col, time_col):
     row1[0].metric("📞 إجمالي المكالمات", total_calls)
     row1[1].metric("✅ ناجحة", success_count if has_class else "—", f"{success_rate}%" if has_class else "")
     row1[2].metric("⛔ غير ناجحة", fail_count if has_class else "—")
-    row1[3].metric("👥 عدد المحصلين", n_agents if has_sales else "—")
+    row1[3].metric("👥 عدد المحصّلين", n_agents if has_sales else "—")
     row2 = st.columns(4)
     row2[0].metric("🎯 نسبة النجاح", f"{success_rate}%" if has_class else "—")
     if has_sales and has_wasted:
@@ -1036,10 +1036,10 @@ def build_dashboard_html(df, class_col, sales_col, time_col, source_name="", fil
     if sales_col and sales_col in df.columns and WASTED_TIME_COL in df.columns:
         totals = df.groupby(sales_col)[WASTED_TIME_COL].sum().sort_values(ascending=False).reset_index()
         fig = px.bar(totals, x=WASTED_TIME_COL, y=sales_col, orientation="h", color=WASTED_TIME_COL, color_continuous_scale=[COLOR_ACCENT, COLOR_WARN, COLOR_FAIL], template=PLOTLY_TEMPLATE)
-        fig.update_layout(**PLOTLY_LAYOUT, title="🏆 الوقت المهدر حسب المحصل", yaxis_title="")
+        fig.update_layout(**PLOTLY_LAYOUT, title="🏆 الوقت المهدر حسب المحصّل", yaxis_title="")
         figs.append(fig)
     parts = ['<!doctype html><html lang="ar" dir="rtl"><head><meta charset="utf-8"><title>داشبورد النشاط</title></head><body>']
-    parts.append(f"<h1>📊 تحليل نشاط المحصلين</h1><p>{escape(source_name)}</p>")
+    parts.append(f"<h1>📊 تحليل نشاط المحصّلين</h1><p>{escape(source_name)}</p>")
     if filter_hint:
         parts.append(f"<p>الفلاتر: {escape(filter_hint)}</p>")
     parts.append(f"<p>إجمالي المكالمات: {len(df):,}</p>")
@@ -1072,7 +1072,7 @@ COMPANIES = {
 PERIODS = {
     "الفترة الأولى": "period_1",
     "الفترة الثانية": "period_2",
-    "المجمع اليومي": "daily",
+    "التجميع اليومي": "daily",
 }
 
 STATUS_CANDIDATES = [
@@ -1146,7 +1146,7 @@ def render_company_logo(company_name: str, size: int = 62):
 
 def render_company_selector():
     st.subheader("🏢 اختر شركة التصنيف")
-    st.caption("اختار الشركة الأول، وبعدها حدّد فترة النشاط ومواعيدها.")
+    st.caption("اختر الشركة أولًا، ثم حدّد فترة النشاط ومواعيدها.")
     c1, c2 = st.columns(2)
     for col, company_name in zip((c1, c2), COMPANIES.keys()):
         cfg = COMPANIES[company_name]
@@ -1170,7 +1170,7 @@ def render_period_selector():
         return
     st.subheader("🕒 اختر فترة النشاط")
     cols = st.columns(5)
-    buttons = [("الفترة الأولى", "🟢", "period_1"), ("الفترة الثانية", "🔵", "period_2"), ("المجمع اليومي", "📊", "daily"), ("المجمع الأسبوعي", "📅", "weekly"), ("المجمع الشهري", "🗓️", "monthly")]
+    buttons = [("الفترة الأولى", "🟢", "period_1"), ("الفترة الثانية", "🔵", "period_2"), ("التجميع اليومي", "📊", "daily"), ("التجميع الأسبوعي", "📅", "weekly"), ("التجميع الشهري", "🗓️", "monthly")]
     for col, (title, icon, key) in zip(cols, buttons):
         with col:
             selected = st.session_state.get("selected_period") == key
@@ -1186,11 +1186,11 @@ def render_period_selector():
     elif selected_period == "period_2":
         render_period_settings("period_2", "الفترة الثانية")
     elif selected_period == "daily":
-        st.subheader("📊 المجمع اليومي")
+        st.subheader("📊 التجميع اليومي")
         st.caption(f"{company} · من بداية اليوم إلى نهايته")
-        render_aggregate_tab("daily", "المجمع اليومي")
+        render_aggregate_tab("daily", "التجميع اليومي")
     elif selected_period == "weekly":
-        st.subheader("📅 المجمع الأسبوعي")
+        st.subheader("📅 التجميع الأسبوعي")
         st.caption(f"{company} · اختر الأسبوع لرفع الملف")
         weeks = [("الأسبوع الأول", "week_1"), ("الأسبوع الثاني", "week_2"), ("الأسبوع الثالث", "week_3"), ("الأسبوع الرابع", "week_4")]
         week_cols = st.columns(4)
@@ -1201,11 +1201,11 @@ def render_period_selector():
                     st.rerun()
         current = st.session_state.get("selected_week", "week_1")
         title = next(label for label, key in weeks if key == current)
-        render_aggregate_tab(f"weekly_{current}", f"المجمع الأسبوعي ({title})")
+        render_aggregate_tab(f"weekly_{current}", f"التجميع الأسبوعي ({title})")
     elif selected_period == "monthly":
-        st.subheader("🗓️ المجمع الشهري")
+        st.subheader("🗓️ التجميع الشهري")
         st.caption(f"{company} · نشاط الشهر بالكامل")
-        render_aggregate_tab("monthly", "المجمع الشهري")
+        render_aggregate_tab("monthly", "التجميع الشهري")
 
 
 
@@ -1221,7 +1221,7 @@ def render_period_upload_and_classify(period_key: str, period_title: str):
 
 def _render_break_switch(label: str, has_break_key: str):
     st.session_state[has_break_key] = st.toggle(label, value=st.session_state[has_break_key], key=f"{has_break_key}_switch")
-    st.caption("✅ يوجد بريك" if st.session_state[has_break_key] else "لا يوجد بريك")
+    st.caption("✅ يوجد استراحة" if st.session_state[has_break_key] else "لا يوجد استراحة")
 
 
 
@@ -1238,20 +1238,20 @@ def render_period_settings(period_key: str, period_title: str):
     with c2:
         st.session_state[end_key] = st.time_input(f"نهاية {period_title}", value=st.session_state[end_key], key=f"{end_key}_input")
     if st.session_state[start_key] >= st.session_state[end_key]:
-        st.warning("بداية الفترة لازم تكون قبل نهايتها.")
-    _render_break_switch(f"هل يوجد بريك في {period_title}؟", has_break_key)
+        st.warning("يجب أن تسبق بداية الفترة نهايتها.")
+    _render_break_switch(f"هل يوجد استراحة في {period_title}؟", has_break_key)
     if st.session_state[has_break_key]:
         b1, b2 = st.columns(2)
         with b1:
-            st.session_state[break_start_key] = st.time_input("🕐 بداية البريك", value=st.session_state[break_start_key], key=f"{break_start_key}_input")
+            st.session_state[break_start_key] = st.time_input("🕐 بداية الاستراحة", value=st.session_state[break_start_key], key=f"{break_start_key}_input")
         with b2:
             duration_key = f"{period_key}_break_duration"
             current_duration = max(5, int(st.session_state[duration_key]))
-            st.session_state[duration_key] = st.slider("⏳ مدة البريك (دقيقة)", 5, 120, current_duration, 5, key=f"{duration_key}_slider")
+            st.session_state[duration_key] = st.slider("⏳ مدة الاستراحة (دقيقة)", 5, 120, current_duration, 5, key=f"{duration_key}_slider")
             start_minutes = st.session_state[break_start_key].hour * 60 + st.session_state[break_start_key].minute
             end_minutes = start_minutes + st.session_state[duration_key]
             st.session_state[break_end_key] = dt_time(end_minutes // 60, end_minutes % 60)
-        st.info(f"☕ البريك من {st.session_state[break_start_key]:%H:%M} إلى {st.session_state[break_end_key]:%H:%M} ({st.session_state[duration_key]} دقيقة)")
+        st.info(f"☕ الاستراحة من {st.session_state[break_start_key]:%H:%M} إلى {st.session_state[break_end_key]:%H:%M} ({st.session_state[duration_key]} دقيقة)")
     st.info(f"النشاط: {period_title} {company} من {st.session_state[start_key]:%H:%M} إلى {st.session_state[end_key]:%H:%M}")
     render_period_upload_and_classify(period_key, period_title)
 
@@ -1285,7 +1285,7 @@ def classify_period_file(uploaded_file, period_key):
     try:
         df = read_uploaded_dataframe(uploaded_file)
     except Exception as e:
-        st.error(f"مش قادر أقرأ الملف: {e}")
+        st.error(f"تعذر قراءة الملف: {e}")
         return
 
     # نفس قاعدة الملف الحالية: حذف أول صف بعد العناوين.
@@ -1297,18 +1297,18 @@ def classify_period_file(uploaded_file, period_key):
 
     if MODEL_TEXT_COL not in df.columns:
         st.error(
-            f"عمود النص ('{ORIGINAL_TEXT_COL}' أو '{MODEL_TEXT_COL}') مش موجود. "
+            f"عمود النص ('{ORIGINAL_TEXT_COL}' أو '{MODEL_TEXT_COL}') غير موجود. "
             f"الأعمدة الموجودة: {', '.join(df.columns.astype(str))}"
         )
         return
 
     if st.button(
-        f"🚀 ابدأ تصنيف {period_title}",
+        f"🚀 بدء تصنيف {period_title}",
         key=f"classify_{period_key}",
         type="primary",
         use_container_width=True,
     ):
-        with st.spinner("جاري تجهيز الموديل وتصنيف الملف..."):
+        with st.spinner("جارٍ تجهيز النموذج وتصنيف الملف..."):
             tokenizer, model, device = load_model()
             texts = df[MODEL_TEXT_COL].tolist()
             preds, confidences = predict_batch(texts, tokenizer, model, device)
@@ -1337,7 +1337,7 @@ def classify_period_file(uploaded_file, period_key):
             )
         else:
             st.warning(
-                "مش لاقي عمود المحصّل أو عمود التاريخ/الوقت، فمش هيتحسب الوقت المهدر. "
+                "تعذر العثور على عمود المحصّل أو عمود التاريخ والوقت، فلن يتم حساب الوقت المهدر. "
                 "تأكد من أسماء الأعمدة."
             )
 
@@ -1355,7 +1355,7 @@ def classify_period_file(uploaded_file, period_key):
             "time_col": time_col,
             "company": st.session_state["selected_company"],
             "period_title": period_title,
-            "uploaded_filename": uploaded_file.name,  # 💾 اسم الملف عشان نربط الكاش بالملف اللي اتشال
+            "uploaded_filename": uploaded_file.name,  # 💾 اسم الملف لـ نربط الكاش بالملف اللي اتشال
         }
         st.session_state["last_result_df"] = result_df
         st.session_state["last_sales_col"] = sales_col
@@ -1394,7 +1394,7 @@ def _render_period_results(stored, period_key):
 
 
 def _show_period_results_from_cache(period_key):
-    """عرض النتائج المحفوظة بصمت لما يكون مفيش ملف مرفوع — بدون أي رسائل أو أزرار."""
+    """عرض النتائج المحفوظة بصمت لما يكون لا يوجد ملف مرفوع — بدون أي رسائل أو أزرار."""
     stored = st.session_state["period_results"].get(period_key)
     if stored:
         _render_period_results(stored, period_key)
@@ -1470,7 +1470,7 @@ def build_agent_activity(df, sales_col):
 
 def render_period_charts(df, sales_col, time_col, period_title):
     if not sales_col or sales_col not in df.columns:
-        st.info("لا يوجد عمود واضح للمحصل لعرض نشاط المحصلين.")
+        st.info("لا يوجد عمود واضح للمحصّل لعرض نشاط المحصّلين.")
         return
     agent = build_agent_activity(df, sales_col)
     if agent.empty:
@@ -1482,12 +1482,12 @@ def render_period_charts(df, sales_col, time_col, period_title):
     metrics = st.columns(5 if WASTED_TIME_COL in df.columns else 4)
     metrics[0].metric("📞 إجمالي المكالمات", total)
     metrics[1].metric("✅ المكالمات الناجحة", success)
-    metrics[2].metric("👥 عدد المحصلين", len(agent))
+    metrics[2].metric("👥 عدد المحصّلين", len(agent))
     metrics[3].metric("📈 نسبة النجاح", f"{success_rate}%")
     if WASTED_TIME_COL in df.columns:
         metrics[4].metric("⏱️ متوسط الوقت المهدر", f"{avg_duration:.1f}")
     render_agent_activity_charts(agent, df, sales_col, period_title)
-    with st.expander("📋 جدول تفاصيل كل محصل"):
+    with st.expander("📋 جدول تفاصيل كل محصّل"):
         st.dataframe(agent, use_container_width=True, hide_index=True)
 
 
@@ -1499,11 +1499,11 @@ def render_agent_activity_charts(agent, df, sales_col, period_title):
         go.Bar(name="إجمالي المكالمات", x=names, y=agent_sorted["إجمالي المكالمات"], marker_color=THEME["text_dim"]),
         go.Bar(name="المكالمات الناجحة", x=names, y=agent_sorted["ناجحة"], marker_color=COLOR_SUCCESS),
     ])
-    fig.update_layout(**PLOTLY_LAYOUT, title=f"📞 إجمالي وناجح المكالمات لكل محصل ({period_title})", barmode="group", xaxis_title="", yaxis_title="عدد المكالمات")
+    fig.update_layout(**PLOTLY_LAYOUT, title=f"📞 إجمالي المكالمات والمكالمات الناجحة لكل محصّل ({period_title})", barmode="group", xaxis_title="", yaxis_title="عدد المكالمات")
     st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG)
     rates = [(int(r["ناجحة"]) / int(r["إجمالي المكالمات"]) * 100) if int(r["إجمالي المكالمات"]) else 0 for _, r in agent_sorted.iterrows()]
     fig = px.bar(agent_sorted.assign(**{"نسبة النجاح": rates}), x="نسبة النجاح", y="المحصّل", orientation="h", text="نسبة النجاح", color="نسبة النجاح", color_continuous_scale=[COLOR_FAIL, COLOR_WARN, COLOR_SUCCESS], template=PLOTLY_TEMPLATE)
-    fig.update_layout(**PLOTLY_LAYOUT, title="📈 نسبة نجاح كل محصل", xaxis_range=[0, 100], xaxis_title="النسبة %", yaxis_title="")
+    fig.update_layout(**PLOTLY_LAYOUT, title="📈 نسبة نجاح كل محصّل", xaxis_range=[0, 100], xaxis_title="النسبة %", yaxis_title="")
     st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG)
     render_success_fail_chart(agent, period_title)
     render_avg_duration_chart(agent, period_title)
@@ -1545,7 +1545,7 @@ def render_no_answer_chart(df, sales_col, period_title):
     if counts.empty:
         return
     fig = px.bar(counts, x=sales_col, y="عدد إفادات لا يرد", color_discrete_sequence=[COLOR_FAIL], template=PLOTLY_TEMPLATE)
-    fig.update_layout(**PLOTLY_LAYOUT, title=f"📝 إفادات لا يرد لكل محصل ({period_title})", xaxis_title="", yaxis_title="العدد")
+    fig.update_layout(**PLOTLY_LAYOUT, title=f"📝 إفادات لا يرد لكل محصّل ({period_title})", xaxis_title="", yaxis_title="العدد")
     st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG)
 
 
@@ -1555,17 +1555,17 @@ def _render_aggregate_break_settings(period_key, period_title):
     has_break_key = f"{period_key}_has_break"
     break_start_key = f"{period_key}_break_start"
     break_end_key = f"{period_key}_break_end"
-    _render_break_switch(f"🕐 هل يوجد بريك في {period_title}؟", has_break_key)
+    _render_break_switch(f"🕐 هل يوجد استراحة في {period_title}؟", has_break_key)
     if st.session_state[has_break_key]:
         b1, b2 = st.columns(2)
         with b1:
-            st.session_state[break_start_key] = st.time_input("🕐 بداية البريك", value=st.session_state[break_start_key], key=f"{break_start_key}_input")
+            st.session_state[break_start_key] = st.time_input("🕐 بداية الاستراحة", value=st.session_state[break_start_key], key=f"{break_start_key}_input")
         with b2:
             duration_key = f"{period_key}_break_duration"
-            st.session_state[duration_key] = st.slider("⏳ مدة البريك (دقيقة)", 5, 120, int(st.session_state[duration_key]), 5, key=f"{duration_key}_slider")
+            st.session_state[duration_key] = st.slider("⏳ مدة الاستراحة (دقيقة)", 5, 120, int(st.session_state[duration_key]), 5, key=f"{duration_key}_slider")
             total = st.session_state[break_start_key].hour * 60 + st.session_state[break_start_key].minute + st.session_state[duration_key]
             st.session_state[break_end_key] = dt_time(total // 60, total % 60)
-        st.info(f"☕ البريك من {st.session_state[break_start_key]:%H:%M} إلى {st.session_state[break_end_key]:%H:%M}")
+        st.info(f"☕ الاستراحة من {st.session_state[break_start_key]:%H:%M} إلى {st.session_state[break_end_key]:%H:%M}")
 
 
 def render_aggregate_tab(period_key, period_title):
@@ -1588,17 +1588,17 @@ def _classify_aggregate_file(uploaded_file, company, period_key, period_title):
     try:
         df = read_uploaded_dataframe(uploaded_file)
     except Exception as e:
-        st.error(f"مش قادر أقرأ الملف: {e}")
+        st.error(f"تعذر قراءة الملف: {e}")
         return
     if len(df) > 0:
         df = df.iloc[1:].reset_index(drop=True)
     if ORIGINAL_TEXT_COL in df.columns:
         df = df.rename(columns={ORIGINAL_TEXT_COL: MODEL_TEXT_COL})
     if MODEL_TEXT_COL not in df.columns:
-        st.error(f"عمود النص مش موجود. الأعمدة الموجودة: {', '.join(df.columns.astype(str))}")
+        st.error(f"عمود النص غير موجود. الأعمدة الموجودة: {', '.join(df.columns.astype(str))}")
         return
-    if st.button(f"🚀 ابدأ تصنيف {period_title}", key=f"btn_{period_key}", type="primary", use_container_width=True):
-        with st.spinner(f"جاري تصنيف {period_title}..."):
+    if st.button(f"🚀 بدء تصنيف {period_title}", key=f"btn_{period_key}", type="primary", use_container_width=True):
+        with st.spinner(f"جارٍ تصنيف {period_title}..."):
             tokenizer, model, device = load_model()
             texts = df[MODEL_TEXT_COL].tolist()
             preds, confidences = predict_batch(texts, tokenizer, model, device)
@@ -1616,9 +1616,9 @@ def _classify_aggregate_file(uploaded_file, company, period_key, period_title):
         result_df["الشركة"] = company
         result_df["الفترة"] = period_title
         if has_break:
-            result_df["بداية البريك"] = break_start.strftime("%H:%M")
-            result_df["نهاية البريك"] = break_end.strftime("%H:%M")
-            result_df["مدة البريك_دقيقة"] = st.session_state[f"{period_key}_break_duration"]
+            result_df["بداية الاستراحة"] = break_start.strftime("%H:%M")
+            result_df["نهاية الاستراحة"] = break_end.strftime("%H:%M")
+            result_df["مدة الاستراحة_دقيقة"] = st.session_state[f"{period_key}_break_duration"]
         st.session_state[result_key] = {
             "df": result_df, "sales_col": sales_col, "time_col": time_col,
             "company": company, "uploaded_filename": uploaded_file.name,
@@ -1651,7 +1651,7 @@ def _show_aggregate_results_from_cache(period_key, period_title):
         _render_aggregate_results(stored, period_title)
 def page_classification():
     init_activity_state()
-    page_header("CALL QUALITY CLASSIFIER", "🎯 تصنيف المكالمات", "اختار الشركة → اختار الفترة → حدّد الميعاد والبريك → ارفع الملف → ابدأ التصنيف")
+    page_header("CALL QUALITY CLASSIFIER", "🎯 تصنيف المكالمات", "اختر الشركة → اختر الفترة → حدّد الميعاد والاستراحة → ارفع الملف → ابدأ التصنيف")
     render_company_selector()
     render_period_selector()
 
@@ -1663,7 +1663,7 @@ def page_classification():
 
 def page_placeholder(eyebrow, title, subtitle, icon):
     page_header(eyebrow, f"{icon} {title}", subtitle)
-    st.info("التويب ده لسه Placeholder — هنحدد منطقها ومصدر بياناتها خطوة خطوة.")
+    st.info("هذا القسم ما زال قيد التجهيز، وسيتم تحديد مصدر بياناته ومنطقه في مرحلة لاحقة.")
 
 
 
@@ -1691,7 +1691,7 @@ def _run_neglect_followup_pipeline(new_file, old_file):
         last_date_new = find_column(df_new, NEGLECT_LAST_DATE_CANDIDATES)
         
         if not id_col_new or not id_col_old or not last_date_new:
-            st.error("مش قادر ألاقي عمود الرقم التعريفي (ID) أو تاريخ آخر متابعة في الملفات.")
+            st.error("تعذر العثور على عمود الرقم التعريفي (ID) أو تاريخ آخر متابعة في الملفات.")
             return
             
         # تحويل المعرفات لنصوص لضمان المطابقة
@@ -1745,7 +1745,7 @@ def page_neglect():
     page_header(
         "NEGLECT TRACKING",
         "⚠️ الإهمال ومتابعة الإهمال",
-        "ارفع المحفظة وهنطلع لك الحالات اللي بقالها أكتر من 7 أيام بدون متابعة ومحتاجة تدخل سريع",
+        "ارفع المحفظة وسيتم استخراج الحالات التي مرّ عليها أكثر من 7 أيام دون متابعة وتحتاج إلى تدخل سريع",
     )
     
     # اختيار الوضع
@@ -1775,7 +1775,7 @@ def page_neglect():
                         st.success(f"تمت إضافة {len(selected_to_add)} حالة بنجاح!")
                         st.rerun()
             else:
-                st.info("💡 ارفع ملف أولاً عشان أقدر أطلع لك كل الحالات المتاحة تختار منها.")
+                st.info("💡 ارفع ملف أولاً أستطيع استخراج كل الحالات المتاحة تختار منها.")
             
             st.divider()
             st.write("📋 الحالات المشمولة حالياً في الإهمال:")
@@ -1799,7 +1799,7 @@ def page_neglect():
                 _show_neglect_results(cached["df"], cached)
     else:
         # وضع متابعة الإهمال - هذا الجزء كان مفقوداً في النسخة السابقة
-        st.info("💡 في هذا الوضع، سنقوم بمطابقة تقرير إهمال قديم مع محفظة اليوم الحديثة لمعرفة الحالات التي تمت تغطيتها.")
+        st.info("💡 يطابق هذا الوضع تقرير إهمال قديمًا مع محفظة اليوم الحديثة لتحديد الحالات التي تمت متابعتها.")
         c1, c2 = st.columns(2)
         with c1:
             new_portfolio = st.file_uploader("📂 ارفع محفظة اليوم الحديثة", type=["xlsx", "xls", "csv"], key="new_portfolio_up")
@@ -1807,7 +1807,7 @@ def page_neglect():
             old_neglect = st.file_uploader("📂 ارفع تقرير الإهمال القديم", type=["xlsx", "xls", "csv"], key="old_neglect_up")
         
         if new_portfolio and old_neglect:
-            if st.button("🚀 ابدأ مطابقة ومتابعة الإهمال", use_container_width=True, type="primary"):
+            if st.button("🚀 بدء المطابقة ومتابعة الإهمال", use_container_width=True, type="primary"):
                 _run_neglect_followup_pipeline(new_portfolio, old_neglect)
         
         cached_followup = st.session_state.get("neglect_followup_result")
@@ -1834,14 +1834,14 @@ def _run_neglect_pipeline(uploaded):
         net_col = find_column(df, PROMISE_NET_AMOUNT_CANDIDATES)
         
         if not all([sales_col, substate_col, duedate_col]):
-            st.error("الملف يفتقد أعمدة أساسية (المحصل، الحالة، أو تاريخ المتابعة).")
+            st.error("الملف يفتقد أعمدة أساسية (المحصّل، الحالة، أو تاريخ المتابعة).")
             return
             
         # استخراج كافة الحالات المتاحة في الملف للكاش
         all_states = sorted(df[substate_col].dropna().unique().tolist())
         st.session_state["neglect_available_states"] = all_states
 
-        # 1. فلترة المحصلين
+        # 1. فلترة المحصّلين
         df = df[~df[sales_col].astype(str).str.strip().isin(PROMISE_EXCLUDED_SALES)].copy()
         
         # 2. فلترة Sub State
@@ -1889,7 +1889,7 @@ def page_dashboard():
     page_header(
         "ACTIVITY DASHBOARD",
         "📊 تحليل نشاط المحصّلين",
-        "ارفع ملف النشاط المصنّف بعد التصنيف وهنبني لك داشبورد احترافية كاملة",
+        "ارفع ملف النشاط المصنّف بعد التصنيف لبناء لوحة تحكم متكاملة",
         centered=True,
     )
 
@@ -1906,7 +1906,7 @@ def page_dashboard():
     )
 
     if dash_file is None and cached is None:
-        st.info("ارفع ملف النشاط بعد ما يتصنّف، وهنبني لك الداشبورد الاحترافية فورًا.")
+        st.info("ارفع ملف النشاط بعد تصنيفه، وسيتم بناء لوحة التحكم فورًا.")
         return
 
     # لو اتشال الملف والنتيجة لسه في الذاكرة — نعرضها من الكاش
@@ -1924,7 +1924,7 @@ def page_dashboard():
     try:
         df = read_uploaded_dataframe(dash_file)
     except Exception as e:
-        st.error(f"مش قادر أقرأ الملف: {e}")
+        st.error(f"تعذر قراءة الملف: {e}")
         return
 
     class_col = CLASSIFICATION_COL if CLASSIFICATION_COL in df.columns else None
@@ -1933,7 +1933,7 @@ def page_dashboard():
 
     if class_col is None:
         st.warning(
-            f"⚠️ مفيش عمود '{CLASSIFICATION_COL}' في الملف — الداشبورد هتعرض المكالمات بدون تفاصيل النجاح/الفشل. "
+            f"⚠️ لا يوجد عمود '{CLASSIFICATION_COL}' في الملف؛ ستُعرض المكالمات دون تفاصيل النجاح أو الفشل. "
             "تأكد إنك رفعت الملف بعد التصنيف."
         )
 
@@ -1954,13 +1954,13 @@ def _render_dashboard(df, class_col, sales_col, time_col, source_name, filter_hi
         st.info(f"الفلاتر المطبقة: {filter_hint}")
     render_full_dashboard(df, class_col=class_col, sales_col=sales_col, time_col=time_col)
     dashboard_html = build_dashboard_html(df, class_col=class_col, sales_col=sales_col, time_col=time_col, source_name=source_name, filter_hint=filter_hint)
-    st.download_button("🌐 تحميل الداشبورد كصفحة ويب HTML", data=dashboard_html.encode("utf-8"), file_name="داشبورد_النشاط.html", mime="text/html", use_container_width=True, key="dash_html_download_v3", type="primary")
+    st.download_button("🌐 تحميل لوحة التحكم كصفحة ويب HTML", data=dashboard_html.encode("utf-8"), file_name="داشبورد_النشاط.html", mime="text/html", use_container_width=True, key="dash_html_download_v3", type="primary")
     st.download_button("⬇️ تحميل البيانات كـ CSV", data=df.to_csv(index=False).encode("utf-8-sig"), file_name="بيانات_النشاط.csv", mime="text/csv", use_container_width=True, key="dash_csv_download_v3")
 
 
 
 def _render_slicers(df, sales_col, time_col):
-    st.subheader("🎚️ فلاتر عرض الداشبورد")
+    st.subheader("🎚️ فلاتر عرض لوحة التحكم")
     agents = sorted([str(a) for a in df[sales_col].dropna().unique()]) if sales_col and sales_col in df.columns else []
     date_min = date_max = None
     if time_col and time_col in df.columns:
@@ -1972,7 +1972,7 @@ def _render_slicers(df, sales_col, time_col):
     class_col = CLASSIFICATION_COL if CLASSIFICATION_COL in df.columns else None
     c1, c2, c3, c4 = st.columns(4)
     with c1:
-        selected_agents = st.multiselect("👤 المحصلون", agents, default=agents, key="dash_agent_filter")
+        selected_agents = st.multiselect("👤 المحصّلون", agents, default=agents, key="dash_agent_filter")
     with c2:
         date_range = st.date_input("📅 التواريخ", value=(date_min, date_max) if date_min is not None else None, min_value=date_min, max_value=date_max, key="dash_date_filter") if date_min is not None else None
     with c3:
@@ -1981,7 +1981,7 @@ def _render_slicers(df, sales_col, time_col):
     with c4:
         selected_substates = st.multiselect("📊 الحالة", substates, default=substates, key="dash_substate_filter") if substates else []
     if sales_col and not selected_agents:
-        st.warning("لا توجد نتائج: اختر محصلًا واحدًا على الأقل.")
+        st.warning("لا توجد نتائج: اختر محصّلًا واحدًا على الأقل.")
         return pd.DataFrame(columns=df.columns), ""
     if sub_col and substates and not selected_substates:
         st.warning("لا توجد نتائج: اختر حالة واحدة على الأقل.")
@@ -1990,7 +1990,7 @@ def _render_slicers(df, sales_col, time_col):
     hint_parts = []
     if sales_col and selected_agents != agents:
         filtered = filtered[filtered[sales_col].astype(str).isin(selected_agents)]
-        hint_parts.append(f"المحصلون: {len(selected_agents)} من {len(agents)}")
+        hint_parts.append(f"المحصّلون: {len(selected_agents)} من {len(agents)}")
     if time_col and isinstance(date_range, tuple) and len(date_range) == 2:
         d0, d1 = date_range
         if d0 != date_min or d1 != date_max:
@@ -2012,7 +2012,7 @@ def _show_dashboard_from_cache():
     cached = st.session_state.get("dashboard_result")
     if cached is None:
         return
-    st.info(f"📌 الداشبورد لسه متخزنة في الذاكرة — آخر ملف مرفوع: {cached['source_name']}")
+    st.info(f"📌 لوحة التحكم محفوظة في الذاكرة — آخر ملف مرفوع: {cached['source_name']}")
     df, hint = _render_slicers(cached["df"], cached["sales_col"], cached["time_col"])
     _render_dashboard(df, cached["class_col"], cached["sales_col"],
                       cached["time_col"], cached["source_name"], filter_hint=hint)
@@ -2030,7 +2030,7 @@ PAGES = {
     "🧾 أخطاء الحالات": lambda: page_placeholder(
         "CASE ERRORS", "أخطاء الحالات", "الحالات اللي فيها أخطاء في التسجيل أو المتابعة", "🧾"
     ),
-    "📊 تحليل نشاط المحصلين": page_dashboard,
+    "📊 تحليل نشاط المحصّلين": page_dashboard,
 }
 
 DEFAULT_PAGE = next(iter(PAGES))
@@ -2039,7 +2039,9 @@ with st.sidebar:
     with brand_center:
         st.caption("7OUDA MODEL")
         st.title("🎙️ لوحة التحكم")
-        st.caption("اختر القسم الذي تريد فتحه")
+        desc_left, desc_center, desc_right = st.columns([0.08, 0.84, 0.08])
+        with desc_center:
+            st.caption("اختر القسم من القائمة")
     st.divider()
     selected_page = st.session_state.get("selected_page", DEFAULT_PAGE)
     for page_label in PAGES:

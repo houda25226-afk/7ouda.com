@@ -8,7 +8,7 @@
 
 ============================================================
 دليل التخصيص السريع:
-- الألوان والخطوط في CSS_THEME تحت.
+- الألوان والرسوم تُدار من خلال Streamlit وPlotly.
 - كل تويب (صفحة) في دالة منفصلة اسمها page_xxx() — سهل تلاقي مكانك.
 - أسماء الأعمدة المتوقعة في الملف (Create By, Created On, Notes)
   متعرّفة في قسم "إعدادات وأسماء الأعمدة" تحت — لو الأسماء اتغيرت غيّرها من هناك.
@@ -132,230 +132,81 @@ def parse_date_cell(val):
 
 
 def render_promises_dashboard(df, sales_col, net_col, title_suffix):
-    """داشبورد للوعود (القائمة/المكسورة): كروت KPI احترافية وشارتات منسقة."""
+    """عرض ملخص الوعود باستخدام مكونات Streamlit الأصلية ورسوم Plotly فقط."""
+    st.subheader(f"📊 ملخص أداء الوعود — {title_suffix}")
     total_promises = len(df)
     total_amount = pd.to_numeric(df[net_col], errors="coerce").sum() if net_col else 0
-    unique_agents = df[sales_col].nunique() if sales_col else 0
-    avg_amount = total_amount / total_promises if total_promises > 0 else 0
+    unique_agents = int(df[sales_col].nunique()) if sales_col else 0
+    avg_amount = total_amount / total_promises if total_promises else 0
+    m1, m2, m3, m4 = st.columns(4)
+    m1.metric("🤝 إجمالي الوعود", f"{total_promises:,}")
+    m2.metric("💰 إجمالي المبالغ", f"{total_amount:,.0f}")
+    m3.metric("👤 عدد المحصلين", f"{unique_agents:,}")
+    m4.metric("📈 متوسط الوعد", f"{avg_amount:,.0f}")
 
-    # 1. Header with styling
-    st.markdown(
-        f"""
-        <div class="chart-card-title" style="margin-bottom: 20px; border-bottom: 2px solid var(--accent); display: inline-block; padding-bottom: 5px;">
-            📊 ملخص أداء الوعود — {title_suffix}
-        </div>
-        """, 
-        unsafe_allow_html=True
-    )
-
-    # 2. KPI Cards with enhanced styling
-    c1, c2, c3, c4 = st.columns(4)
-    
-    # Custom CSS for these specific cards to match the screenshot request
-    card_style = """
-    <style>
-    .promise-metric-card {
-        background: var(--surface);
-        border: 1px solid rgba(255,255,255,0.06);
-        border-radius: 14px;
-        padding: 1.2rem;
-        transition: all 0.3s ease;
-        height: 100%;
-    }
-    .promise-metric-card:hover {
-        border-color: var(--accent);
-        transform: translateY(-2px);
-        box-shadow: 0 4px 12px rgba(0,0,0,0.2);
-    }
-    .promise-metric-label { font-size: 0.85rem; color: var(--text-dim); margin-bottom: 0.6rem; display: flex; align-items: center; gap: 8px; }
-    .promise-metric-value { font-family: 'JetBrains Mono', monospace; font-weight: 900; font-size: 1.6rem; color: var(--accent); line-height: 1; }
-    .promise-metric-sub { font-size: 0.75rem; color: var(--text-dim); margin-top: 0.5rem; opacity: 0.8; }
-    </style>
-    """
-    st.markdown(card_style, unsafe_allow_html=True)
-
-    metrics = [
-        (c1, "🤝 إجمالي الوعود", f"{total_promises:,}", "حالة مكتشفة"),
-        (c2, "💰 إجمالي المبالغ", f"{total_amount:,.0f}", "صافي المديونية"),
-        (c3, "👤 عدد المحصلين", f"{unique_agents}", "محصل مشارك"),
-        (c4, "📈 متوسط الوعد", f"{avg_amount:,.0f}", "للحالة الواحدة"),
-    ]
-
-    for col, label, val, sub in metrics:
-        with col:
-            st.markdown(
-                f"""
-                <div class="promise-metric-card">
-                    <div class="promise-metric-label">{label}</div>
-                    <div class="promise-metric-value">{val}</div>
-                    <div class="promise-metric-sub">{sub}</div>
-                </div>
-                """,
-                unsafe_allow_html=True,
-            )
-    
-    st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
-
-    # 3. Charts with professional layouts
-    if total_promises > 0 and sales_col:
-        ch1, ch2 = st.columns(2)
-        
-        # Chart 1: Bar Chart for Agents
-        agent_counts = df[sales_col].value_counts().reset_index()
+    if total_promises and sales_col:
+        c1, c2 = st.columns(2)
+        agent_counts = df[sales_col].value_counts().head(10).sort_values().reset_index()
         agent_counts.columns = ["المحصل", "عدد الوعود"]
-        top_agents = agent_counts.head(10).sort_values("عدد الوعود", ascending=True)
-        
-        fig1 = px.bar(
-            top_agents, x="عدد الوعود", y="المحصل", orientation="h",
-            title="🔝 أعلى 10 محصلين (من حيث العدد)",
-            color="عدد الوعود", color_continuous_scale=[THEME["surface_2"], COLOR_ACCENT],
-            template=PLOTLY_TEMPLATE
-        )
-        fig1.update_layout(PLOTLY_LAYOUT, height=400, margin=dict(t=80, b=40, l=150, r=20))
-        fig1.update_traces(marker_line_color=THEME["border_soft"], marker_line_width=1.5)
-        fig1.update_xaxes(showgrid=True, gridcolor=THEME["border_soft"])
-        fig1.update_yaxes(tickfont=dict(size=12))
-        
-        with ch1:
-            st.markdown('<div class="chart-box">', unsafe_allow_html=True)
-            st.plotly_chart(fig1, use_container_width=True, config={'displayModeBar': False})
-            st.markdown('</div>', unsafe_allow_html=True)
-
-        # Chart 2: Pie Chart for Amounts
+        with c1:
+            fig = px.bar(
+                agent_counts, x="عدد الوعود", y="المحصل", orientation="h",
+                title="🔝 أعلى 10 محصلين من حيث عدد الوعود",
+                color="عدد الوعود", color_continuous_scale=[THEME["surface_2"], COLOR_ACCENT],
+                template=PLOTLY_TEMPLATE,
+            )
+            fig.update_layout(**PLOTLY_LAYOUT, height=400, yaxis_title="")
+            st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG)
         if net_col:
-            agent_amounts = df.groupby(sales_col)[net_col].sum().reset_index()
-            agent_amounts.columns = ["المحصل", "إجمالي المبالغ"]
-            agent_amounts = agent_amounts.sort_values("إجمالي المبالغ", ascending=False)
-            
-            # Using a more professional teal/blue scale
-            colors = [COLOR_ACCENT, COLOR_SUCCESS, COLOR_WARN, COLOR_FAIL, THEME["accent_strong"], "#3B82F6", "#8B5CF6", "#EC4899"]
-            fig2 = px.pie(
-                agent_amounts.head(8), values="إجمالي المبالغ", names="المحصل",
-                title="🍩 توزيع المبالغ على المحصلين",
-                hole=0.5, template=PLOTLY_TEMPLATE,
-                color_discrete_sequence=colors
-            )
-            fig2.update_layout(PLOTLY_LAYOUT, height=400, showlegend=True, legend=dict(orientation="h", yanchor="bottom", y=-0.3, xanchor="center", x=0.5))
-            fig2.update_traces(
-                textposition='inside', 
-                textinfo='percent', 
-                textfont=dict(size=14, color=THEME["chart_text"], family="JetBrains Mono"),
-                marker=dict(line=dict(color=THEME["chart_marker"], width=2))
-            )
-            
-            with ch2:
-                st.markdown('<div class="chart-box">', unsafe_allow_html=True)
-                st.plotly_chart(fig2, use_container_width=True, config={'displayModeBar': False})
-                st.markdown('</div>', unsafe_allow_html=True)
+            with c2:
+                amounts = df.groupby(sales_col)[net_col].sum().sort_values(ascending=False).head(8).reset_index()
+                amounts.columns = ["المحصل", "إجمالي المبالغ"]
+                fig = px.pie(
+                    amounts, values="إجمالي المبالغ", names="المحصل", hole=0.5,
+                    title="🍩 توزيع المبالغ على المحصلين",
+                    template=PLOTLY_TEMPLATE,
+                    color_discrete_sequence=[COLOR_ACCENT, COLOR_SUCCESS, COLOR_WARN, COLOR_FAIL, "#3B82F6", "#8B5CF6"],
+                )
+                fig.update_layout(**PLOTLY_LAYOUT, height=400)
+                st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG)
+
 
 
 
 def _show_promises_results(df, target_date, summary, filename=None, from_cache=False):
-    """عرض نتائج الوعود القائمة (الجدول + الملخص + التنزيل) — من رفع جديد أو من الكاش."""
     total_in_file = summary.get("total_in_file", len(df))
-    dropped_sales = summary.get("dropped_sales", 0)
-    dropped_sub = summary.get("dropped_sub", 0)
-    dropped_due = summary.get("dropped_due", 0)
-
-    # عرض ملخص الفلترة
-    st.markdown(
-        f"""
-        <div class='schedule-summary'>
-            <span>📌 الوعود القائمة بتاريخ</span> <b>{target_date.strftime("%Y-%m-%d")}</b>
-            <span>·</span> <b>{len(df)}</b> وعد قائم من <b>{max(total_in_file, 0)}</b> صف
-            <span>· تم استبعاد:</span>
-            <b>{dropped_sales}</b> (محصّلين مستبعدين) |
-            <b>{dropped_sub}</b> (الحالة ليست "{PROMISE_SUB_STATE_VALUE}") |
-            <b>{dropped_due}</b> (التاريخ لا يساوي اليوم)
-        </div>
-        """,
-        unsafe_allow_html=True,
+    st.info(
+        f"📌 الوعود القائمة بتاريخ {target_date:%Y-%m-%d}: {len(df):,} وعد من {max(total_in_file, 0):,} صف. "
+        f"تم استبعاد {summary.get('dropped_sales', 0)} محصل، و{summary.get('dropped_sub', 0)} حالة، و{summary.get('dropped_due', 0)} تاريخ."
     )
-
     if len(df) == 0:
-        st.warning("⚠️ مفيش وعود قائمة لهذا التاريخ بعد تطبيق الفلاتر.")
+        st.warning("مفيش وعود قائمة لهذا التاريخ بعد تطبيق الفلاتر.")
         return
-
-    # الأعمدة المهمة
     sales_col = summary.get("sales_col")
     substate_col = summary.get("substate_col")
     duedate_col = summary.get("duedate_col")
     net_col = summary.get("net_col")
-    cols_used = [n for n, c in [
-        ("المحصّل", sales_col),
-        ("الحالة الفرعية", substate_col),
-        ("تاريخ المتابعة", duedate_col),
-        ("صافي المبلغ", net_col),
-    ] if c]
-    st.caption("💡 الأعمدة المعتمدة في الفلترة: " + " · ".join(cols_used))
-
-    st.markdown("<div class='divider'></div>", unsafe_allow_html=True)
-
-    # 📊 الداشبورد الجديدة
-    render_promises_dashboard(df, sales_col, net_col, "اليوم" if "اليوم" in st.session_state.get("promises_result", {}).get("due_desc", "") or "يساوي" in st.session_state.get("promises_result", {}).get("due_desc", "") else "مكسورة")
-    
-    st.markdown("<div class='divider'></div>", unsafe_allow_html=True)
-
-    # لمحة من البيانات
-    st.markdown(
-        f"""
-        <div class="chart-card-title" style="margin-bottom:8px;">
-            👀 لمحة من بيانات الوعود (أول {min(15, len(df))} وعد)
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
+    cols_used = [n for n, c in [("المحصّل", sales_col), ("الحالة الفرعية", substate_col), ("تاريخ المتابعة", duedate_col), ("صافي المبلغ", net_col)] if c]
+    st.caption("الأعمدة المعتمدة: " + " · ".join(cols_used))
+    render_promises_dashboard(df, sales_col, net_col, "اليوم")
+    st.subheader(f"👀 لمحة من بيانات الوعود — أول {min(15, len(df))} وعد")
     preview_cols = [c for c in [sales_col, substate_col, duedate_col, net_col] if c]
-    preview_df = df[preview_cols].head(15)
-    st.dataframe(preview_df, use_container_width=True, hide_index=True, height=min(420, 40 * len(preview_df) + 100))
-
-    st.markdown("<div class='divider'></div>", unsafe_allow_html=True)
-
-    # الجدول التجميعي لكل محصّل
-    st.markdown(
-        f"""
-        <div class="chart-card-title" style="margin-bottom:8px;">
-            📊 ملخص الوعود القائمة لكل محصّل — تاريخ {target_date.strftime("%Y-%m-%d")}
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-    summary_df = summary.get("summary_df")
-    if summary_df is not None:
-        st.dataframe(
-            summary_df,
-            use_container_width=True,
-            hide_index=True,
-            height=min(320, 60 * len(summary_df) + 100),
-        )
-
-
-
-    st.markdown("<div class='divider'></div>", unsafe_allow_html=True)
-
-    # جدول الوعود التفصيلي
-    st.markdown(
-        '<div class="chart-card-title" style="margin-bottom:8px;">📋 جدول الوعود القائمة التفصيلي</div>',
-        unsafe_allow_html=True,
-    )
-    display_cols = [c for c in [sales_col, substate_col, duedate_col, net_col] if c]
-    st.dataframe(df[display_cols], use_container_width=True, hide_index=True)
-
-    # تنزيل Excel فقط
-    today_str = target_date.strftime("%Y-%m-%d")
+    st.dataframe(df[preview_cols].head(15), use_container_width=True, hide_index=True)
+    st.subheader(f"📊 ملخص الوعود لكل محصل — {target_date:%Y-%m-%d}")
+    if summary.get("summary_df") is not None:
+        st.dataframe(summary["summary_df"], use_container_width=True, hide_index=True)
+    st.subheader("📋 جدول الوعود القائمة التفصيلي")
+    st.dataframe(df[preview_cols], use_container_width=True, hide_index=True)
     out_excel = io.BytesIO()
     with pd.ExcelWriter(out_excel, engine="openpyxl") as writer:
         df.to_excel(writer, index=False, sheet_name="الوعود القائمة")
-
     st.download_button(
-        "⬇️ تحميل تقرير الوعود (Excel)",
-        data=out_excel.getvalue(),
-        file_name=f"تقرير_الوعود_{today_str}.xlsx",
+        "⬇️ تحميل تقرير الوعود (Excel)", data=out_excel.getvalue(),
+        file_name=f"تقرير_الوعود_{target_date:%Y-%m-%d}.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        use_container_width=True,
-        key="promises_excel_download_single",
-        type="primary",
+        use_container_width=True, key="promises_excel_download_single", type="primary",
     )
+
 
 
 PROMISES_RESULT_KEY = "promises_result"  # كاش نتائج الوعود القائمة (فلتر: اليوم)
@@ -516,10 +367,7 @@ def page_standing_promises():
     )
 
     if uploaded is not None:
-        st.markdown(
-            f"<div class='upload-status'>📄 الملف المختار: <b>{uploaded.name}</b></div>",
-            unsafe_allow_html=True,
-        )
+        st.caption(f"الملف المختار: {uploaded.name}")
         processed = _run_promises_pipeline(
             uploaded, PROMISES_RESULT_KEY, due_mode="today", count_label="عدد الوعود القائمة"
         )
@@ -555,10 +403,7 @@ def page_broken_promises():
     )
 
     if uploaded is not None:
-        st.markdown(
-            f"<div class='upload-status'>📄 الملف المختار: <b>{uploaded.name}</b></div>",
-            unsafe_allow_html=True,
-        )
+        st.caption(f"الملف المختار: {uploaded.name}")
         processed = _run_promises_pipeline(
             uploaded, BROKEN_RESULT_KEY, due_mode="before", count_label="عدد الوعود المكسورة"
         )
@@ -576,120 +421,38 @@ def page_broken_promises():
 
 
 def _show_broken_results(df, target_date, summary, filename=None):
-    """عرض نتائج الوعود المكسورة — نفس شكل الوعود القائمة مع نصوص مكسورة."""
     total_in_file = summary.get("total_in_file", len(df))
-    dropped_sales = summary.get("dropped_sales", 0)
-    dropped_sub = summary.get("dropped_sub", 0)
-    dropped_due = summary.get("dropped_due", 0)
-
-    # عرض ملخص الفلترة
-    st.markdown(
-        f"""
-        <div class='schedule-summary'>
-            <span>📌 الوعود المكسورة — كل التواريخ</span> <b>قبل {target_date.strftime('%Y-%m-%d')}</b>
-            <span>·</span> <b>{len(df)}</b> وعد مكسور من <b>{max(total_in_file, 0)}</b> صف
-            <span>· تم استبعاد:</span>
-            <b>{dropped_sales}</b> (محصّلين مستبعدين) |
-            <b>{dropped_sub}</b> (الحالة ليست "{PROMISE_SUB_STATE_VALUE}") |
-            <b>{dropped_due}</b> (التاريخ مش قبل اليوم)
-        </div>
-        """,
-        unsafe_allow_html=True,
+    st.info(
+        f"📌 الوعود المكسورة قبل {target_date:%Y-%m-%d}: {len(df):,} وعد من {max(total_in_file, 0):,} صف. "
+        f"تم استبعاد {summary.get('dropped_sales', 0)} محصل، و{summary.get('dropped_sub', 0)} حالة، و{summary.get('dropped_due', 0)} تاريخ."
     )
-
     if len(df) == 0:
-        st.warning("⚠️ مفيش وعود مكسورة (تواريخ متابعة قبل اليوم) بعد تطبيق الفلاتر.")
+        st.warning("مفيش وعود مكسورة بعد تطبيق الفلاتر.")
         return
-
-    # الأعمدة المهمة
     sales_col = summary.get("sales_col")
     substate_col = summary.get("substate_col")
     duedate_col = summary.get("duedate_col")
     net_col = summary.get("net_col")
-    cols_used = [n for n, c in [
-        ("المحصّل", sales_col),
-        ("الحالة الفرعية", substate_col),
-        ("تاريخ المتابعة", duedate_col),
-        ("صافي المبلغ", net_col),
-    ] if c]
-    st.caption("💡 الأعمدة المعتمدة في الفلترة: " + " · ".join(cols_used))
-
-    st.markdown("<div class='divider'></div>", unsafe_allow_html=True)
-
-    # لمحة من البيانات
-    st.markdown(
-        f"""
-        <div class="chart-card-title" style="margin-bottom:8px;">
-            👀 لمحة من بيانات الوعود المكسورة (أول {min(15, len(df))} وعد)
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-    preview_cols = [c for c in [sales_col, substate_col, duedate_col, net_col] if c]
-    preview_df = df[preview_cols].head(15)
-    st.dataframe(preview_df, use_container_width=True, hide_index=True, height=min(420, 40 * len(preview_df) + 100))
-
-    st.markdown("<div class='divider'></div>", unsafe_allow_html=True)
-
-    # الجدول التجميعي لكل محصّل
-    st.markdown(
-        f"""
-        <div class="chart-card-title" style="margin-bottom:8px;">
-            📊 ملخص الوعود المكسورة لكل محصّل — كل التواريخ قبل {target_date.strftime('%Y-%m-%d')}
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-    summary_df = summary.get("summary_df")
-    if summary_df is not None:
-        st.dataframe(
-            summary_df,
-            use_container_width=True,
-            hide_index=True,
-            height=min(320, 60 * len(summary_df) + 100),
-        )
-
-    if net_col and net_col in df.columns:
-        total_amount = pd.to_numeric(df[net_col], errors="coerce").sum()
-        st.markdown(
-            f"""
-            <div class="daily-total-card">
-                <div>
-                    <div class="daily-total-title">💰 إجمالي صافي المديونية للوعود المكسورة</div>
-                    <div class="daily-total-sub">كل التواريخ قبل {target_date.strftime('%Y-%m-%d')} · {len(summary_df) if summary_df is not None else 0} محصّل</div>
-                </div>
-                <div class="daily-total-number">{total_amount:,.2f}</div>
-                <div class="daily-total-label">صافي المبلغ (Net Amount)</div>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
-
-    st.markdown("<div class='divider'></div>", unsafe_allow_html=True)
-
-    # جدول الوعود التفصيلي
-    st.markdown(
-        '<div class="chart-card-title" style="margin-bottom:8px;">📋 جدول الوعود المكسورة التفصيلي</div>',
-        unsafe_allow_html=True,
-    )
     display_cols = [c for c in [sales_col, substate_col, duedate_col, net_col] if c]
+    st.subheader("👀 لمحة من بيانات الوعود المكسورة")
+    st.dataframe(df[display_cols].head(15), use_container_width=True, hide_index=True)
+    st.subheader("📊 ملخص الوعود المكسورة لكل محصل")
+    if summary.get("summary_df") is not None:
+        st.dataframe(summary["summary_df"], use_container_width=True, hide_index=True)
+    if net_col and net_col in df.columns:
+        st.metric("💰 إجمالي صافي المديونية", f"{pd.to_numeric(df[net_col], errors='coerce').sum():,.2f}")
+    st.subheader("📋 جدول الوعود المكسورة التفصيلي")
     st.dataframe(df[display_cols], use_container_width=True, hide_index=True)
-
-    # تنزيل Excel فقط
-    today_str = target_date.strftime("%Y-%m-%d")
     out_excel = io.BytesIO()
     with pd.ExcelWriter(out_excel, engine="openpyxl") as writer:
         df.to_excel(writer, index=False, sheet_name="الوعود المكسورة")
-
     st.download_button(
-        "⬇️ تحميل الوعود المكسورة (Excel)",
-        data=out_excel.getvalue(),
-        file_name=f"الوعود_المكسورة_{today_str}.xlsx",
+        "⬇️ تحميل الوعود المكسورة (Excel)", data=out_excel.getvalue(),
+        file_name=f"الوعود_المكسورة_{target_date:%Y-%m-%d}.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        use_container_width=True,
-        key="broken_excel_download",
-        type="primary",
+        use_container_width=True, key="broken_excel_download", type="primary",
     )
+
 
 st.set_page_config(
     page_title="لوحة تحليل المكالمات | 7oudaModel",
@@ -792,1189 +555,23 @@ st.session_state["theme_mode"] = THEME_NAME
 THEME = THEMES.get(THEME_NAME, THEMES["dark"])
 
 
-def apply_theme_tokens(css: str) -> str:
-    """تحويل الألوان الثابتة القديمة إلى متغيرات الثيم الحالية."""
-    token_map = {
-        "#0E1420": "var(--bg)", "#10192C": "var(--bg-glow)", "#151F30": "var(--surface)",
-        "#1B2A42": "var(--surface-2)", "#0B111C": "var(--sidebar-bg)", "#5EEAD4": "var(--accent)",
-        "#34D399": "var(--success)", "#FB7185": "var(--danger)", "#FBBF24": "var(--warn)",
-        "#F3F6FA": "var(--text)", "#B9C6D6": "var(--text-dim)", "#3FD9C7": "var(--accent-strong)",
-        "#06251F": "var(--on-accent)", "#17243A": "var(--surface-2)", "#121C2E": "var(--surface-3)",
-        "#E7ECF3": "var(--text)", "#1D304C": "var(--surface-hover)", "#E2E8F0": "var(--text-dim)",
-        "#C9D3E2": "var(--text-dim)", "#15203a": "var(--surface-2)", "#1a2a47": "var(--surface-3)",
-        "#F87171": "var(--danger)", "#F3F7FB": "var(--text)", "#C6D2E2": "var(--text-dim)",
-        "#F4F7FB": "var(--text)", "#C3CEDC": "var(--text-dim)", "#132A2C": "var(--accent-surface)",
-        "#F8FAFC": "var(--text)", "#182A43": "var(--surface-2)", "#132136": "var(--surface-3)",
-        "#142F2E": "var(--accent-surface)", "#142237": "var(--surface-3)", "#F5F8FC": "var(--text)",
-        "#111B2C": "var(--surface-3)", "#C8D2E0": "var(--text-dim)", "#E8EEF6": "var(--text)",
-        "#9FB0C6": "var(--text-muted)", "#122B2A": "var(--accent-surface)", "#F7FAFC": "var(--text)",
-        "#E7EEF6": "var(--text)", "#8FA3B8": "var(--placeholder)", "#0F172A": "var(--chart-marker)",
-    }
-    for old, new in token_map.items():
-        css = css.replace(old, new)
-    return css
-
-
-def build_runtime_theme_css(theme: dict) -> str:
-    """متغيرات CSS العامة مع overrides للعناصر التي يرسمها Streamlit داخليًا."""
-    css = """
-<style>
-:root {
-    --bg: __bg__;
-    --bg-glow: __bg_glow__;
-    --surface: __surface__;
-    --surface-2: __surface_2__;
-    --surface-3: __surface_3__;
-    --surface-hover: __surface_hover__;
-    --sidebar-bg: __sidebar_bg__;
-    --accent-surface: __accent_surface__;
-    --accent: __accent__;
-    --accent-strong: __accent_strong__;
-    --on-accent: __on_accent__;
-    --success: __success__;
-    --danger: __danger__;
-    --warn: __warn__;
-    --text: __text__;
-    --text-dim: __text_dim__;
-    --text-muted: __text_muted__;
-    --placeholder: __placeholder__;
-    --border: __border__;
-    --border-soft: __border_soft__;
-    --input-bg: __input_bg__;
-    --chart-marker: __chart_marker__;
-    --chart-text: __chart_text__;
-    --danger-soft: __danger_soft__;
-    --danger-text: __danger_text__;
-    --warn-soft: __warn_soft__;
-    --warn-text: __warn_text__;
-}
-
-.stApp {
-    background: radial-gradient(circle at 20% 0%, var(--bg-glow) 0%, var(--bg) 55%) !important;
-    color: var(--text) !important;
-}
-header[data-testid="stHeader"] { background: var(--bg) !important; border-bottom-color: var(--border-soft) !important; }
-section[data-testid="stSidebar"] { background: var(--sidebar-bg) !important; border-right-color: var(--border-soft) !important; }
-.stApp input, .stApp textarea, div[data-baseweb="select"] > div,
-[data-testid="stDateInput"] input, [data-testid="stDateInput"] [data-testid="stDateInputField"] {
-    background: var(--input-bg) !important;
-    color: var(--text) !important;
-}
-.stApp input::placeholder, .stApp textarea::placeholder { color: var(--placeholder) !important; }
-.stApp [data-testid="stDataFrame"], .stApp [data-testid="stMetric"],
-.stApp [data-testid="stExpander"], .stApp div[data-testid="stVerticalBlockBorderWrapper"] {
-    background: var(--surface) !important;
-    color: var(--text) !important;
-    border-color: var(--border-soft) !important;
-}
-.stApp [data-testid="stFileUploader"], .stApp [data-testid="stFileUploaderDropzone"] {
-    background: var(--surface) !important;
-    border-color: var(--border) !important;
-}
-.stApp [data-baseweb="popover"], .stApp [role="listbox"], .stApp [role="option"] { background: var(--surface-2) !important; color: var(--text) !important; }
-.stApp [role="option"]:hover, .stApp [aria-selected="true"] { background: var(--surface-hover) !important; }
-.stApp [data-testid="stTabs"] [data-baseweb="tab"] { color: var(--text-dim) !important; }
-.stApp [data-testid="stTabs"] [aria-selected="true"] { color: var(--accent) !important; }
-.stApp .stAlert, .stApp [data-testid="stAlert"] { background: var(--surface) !important; color: var(--text) !important; }
-.stApp .stButton > button[kind="secondary"] { background: var(--surface-2) !important; color: var(--text) !important; border-color: var(--border) !important; }
-.stApp [data-testid="stFileUploaderFile"] { background: var(--surface-2) !important; border-color: var(--border) !important; }
-.stApp .company-card, .stApp .agent-card { background: linear-gradient(135deg, var(--surface-2), var(--surface-3)) !important; }
-.stApp .period-banner, .stApp .daily-total-card, .stApp .slicer-panel, .stApp .schedule-summary,
-.stApp .break-switch-row, .stApp .slicer-cell, .stApp .slicer-empty { background: var(--surface-3) !important; color: var(--text) !important; }
-.stApp .page-title, .stApp .company-name, .stApp .selected-company-name,
-.stApp .slicer-empty-title, .stApp .daily-total-title { color: var(--text) !important; }
-.stApp .page-subtitle, .stApp .company-sub, .stApp .selected-company-sub, .stApp .period-desc,
-.stApp .schedule-summary, .stApp .break-switch-text, .stApp .section-help { color: var(--text-dim) !important; }
-.stApp .stFileUploader button { background: var(--surface-2) !important; color: var(--text) !important; border-color: var(--border-soft) !important; }
-</style>
-"""
-    for key, value in theme.items():
-        css = css.replace(f"__{key}__", value)
-    return css
-
-CSS_THEME = """
-<style>
-@import url('https://fonts.googleapis.com/css2?family=Tajawal:wght@400;500;700;900&family=JetBrains+Mono:wght@500;700&display=swap');
-
-:root {
-    --bg: #0E1420;
-    --surface: #151F30;
-    --surface-2: #1B2A42;
-    --accent: #5EEAD4;
-    --success: #34D399;
-    --danger: #FB7185;
-    --warn: #FBBF24;
-    --text: #F3F6FA;
-    --text-dim: #B9C6D6;
-}
-
-html, body, [class*="css"] {
-    font-family: 'Tajawal', sans-serif;
-}
-
-.stApp {
-    background: radial-gradient(circle at 20% 0%, var(--bg-glow) 0%, var(--bg) 55%);
-    color: var(--text);
-}
-
-/* ===== الهيدر الدارك زي الثيم بالظبط ===== */
-header[data-testid="stHeader"] {
-    background: #0E1420 !important;
-    border-bottom: 1px solid rgba(255,255,255,0.06);
-}
-header[data-testid="stHeader"] * {
-    color: var(--text) !important;
-}
-header[data-testid="stHeader"] .stDeployButton button,
-header[data-testid="stHeader"] button {
-    color: var(--text) !important;
-    opacity: 1 !important;
-    visibility: visible !important;
-}
-header[data-testid="stHeader"] [role="button"],
-header[data-testid="stHeader"] a,
-header[data-testid="stHeader"] [data-testid="stToolbar"] {
-    opacity: 1 !important;
-    visibility: visible !important;
-}
-header[data-testid="stHeader"] button svg,
-header[data-testid="stHeader"] button svg path,
-header[data-testid="stHeader"] a svg,
-header[data-testid="stHeader"] a svg path {
-    display: block !important;
-    opacity: 1 !important;
-    visibility: visible !important;
-}
-header[data-testid="stHeader"] [data-testid="stHeaderBlockToolbar"] svg {
-    fill: var(--text) !important;
-    color: var(--text) !important;
-}
-header[data-testid="stHeader"] [class*="Toolbar"] svg,
-header[data-testid="stHeader"] a svg {
-    fill: var(--text) !important;
-    color: var(--text) !important;
-}
-header[data-testid="stHeader"] svg path {
-    fill: var(--text) !important;
-    stroke: var(--text) !important;
-}
-/* أيقونات الهيدر بتكون أحيانًا داخل span */
-header[data-testid="stHeader"] span[aria-label] svg,
-header[data-testid="stHeader"] div[role="button"] svg {
-    fill: var(--text) !important;
-    stroke: var(--text) !important;
-}
-/* تنسيق زر Deploy في الهيدر دارك */
-header[data-testid="stHeader"] .stDeployButton button {
-    background: var(--surface-2) !important;
-    border: 1px solid rgba(255,255,255,0.12) !important;
-    border-radius: 8px;
-    color: var(--accent) !important;
-}
-
-/* الاتجاه RTL على محتوى الصفحة الرئيسي والسايدبار بس — مش على الهيكل العام */
-.main .block-container {
-    direction: rtl;
-    text-align: right;
-    max-width: 1200px;
-}
-[data-testid="stSidebarContent"], [data-testid="stSidebarUserContent"] {
-    direction: rtl;
-    text-align: right;
-}
-
-/* إظهار قائمة Streamlit الأصلية بدون إعادة رسمها أو تحويلها لزر مخصص */
-#MainMenu { visibility: visible !important; }
-header[data-testid="stHeader"] [data-testid="stMainMenu"],
-header[data-testid="stHeader"] [data-testid="stMainMenuButton"],
-header[data-testid="stHeader"] [aria-label*="Main menu"],
-header[data-testid="stHeader"] [aria-label*="main menu"] {
-    visibility: visible !important;
-    opacity: 1 !important;
-    color: var(--text) !important;
-}
-header[data-testid="stHeader"] [data-testid="stMainMenu"] svg,
-header[data-testid="stHeader"] [data-testid="stMainMenuButton"] svg,
-header[data-testid="stHeader"] [aria-label*="Main menu"] svg,
-header[data-testid="stHeader"] [aria-label*="main menu"] svg {
-    visibility: visible !important;
-    opacity: 1 !important;
-    fill: currentColor !important;
-    color: var(--text) !important;
-    stroke: currentColor !important;
-}
-footer {visibility: hidden;}
-
-/* ===== الشريط الجانبي (ثابت على الشمال) ===== */
-section[data-testid="stSidebar"] {
-    background: #0B111C;
-    border-left: none;
-    border-right: 1px solid rgba(255,255,255,0.06);
-}
-section[data-testid="stSidebar"] * { color: var(--text) !important; }
-
-.sidebar-brand {
-    text-align: center;
-    padding: 0.6rem 0 1rem 0;
-}
-.sidebar-brand .title {
-    font-weight: 900;
-    font-size: 1.15rem;
-    color: var(--text);
-}
-.sidebar-brand .subtitle {
-    font-family: 'JetBrains Mono', monospace;
-    font-size: 0.68rem;
-    letter-spacing: 0.12em;
-    color: var(--accent);
-    text-transform: uppercase;
-}
-
-/* قائمة التنقل — نخلي الـ radio يبان زي عناصر قائمة جانبية */
-section[data-testid="stSidebar"] .stRadio > div {
-    gap: 4px;
-}
-section[data-testid="stSidebar"] .stRadio label {
-    background: var(--surface);
-    border-radius: 10px;
-    padding: 0.55rem 0.8rem !important;
-    margin-bottom: 2px;
-    width: 100%;
-    border: 1px solid rgba(255,255,255,0.05);
-    transition: background 0.15s ease;
-}
-section[data-testid="stSidebar"] .stRadio label:hover {
-    background: var(--surface-2);
-}
-section[data-testid="stSidebar"] .stRadio input:checked + div {
-    color: var(--accent) !important;
-}
-
-/* ===== الهيدر ===== */
-.page-eyebrow {
-    font-family: 'JetBrains Mono', monospace;
-    font-size: 0.72rem;
-    letter-spacing: 0.14em;
-    color: var(--accent);
-    text-transform: uppercase;
-    margin-bottom: 0.2rem;
-}
-.page-title {
-    font-weight: 900;
-    font-size: 1.75rem;
-    margin: 0;
-    color: #F7FAFD !important;
-}
-.page-subtitle {
-    color: var(--text-dim);
-    font-size: 0.95rem;
-    margin-top: 0.3rem;
-}
-.page-header-centered .page-eyebrow,
-.page-header-centered .page-title,
-.page-header-centered .page-subtitle {
-    text-align: center;
-}
-.filter-badge {
-    display: inline-block; padding: 0.35rem 0.9rem; border-radius: 999px;
-    background: rgba(94,234,212,0.08); border: 1px solid rgba(94,234,212,0.25);
-    color: var(--accent); font-size: 0.8rem; font-weight: 500; margin-bottom: 0.5rem;
-}
-
-/* موجة صوتية بسيطة */
-.waveform {
-    display: flex; align-items: center; justify-content: center;
-    gap: 4px; height: 30px; margin: 0.8rem 0 1.3rem 0;
-}
-.waveform span {
-    display: inline-block; width: 3px; border-radius: 3px;
-    background: linear-gradient(180deg, var(--accent), var(--surface-2));
-    animation: wave 1.6s ease-in-out infinite;
-}
-@keyframes wave {
-    0%, 100% { transform: scaleY(0.35); opacity: 0.55; }
-    50% { transform: scaleY(1); opacity: 1; }
-}
-
-/* ===== بطاقات عامة ===== */
-.card {
-    background: var(--surface);
-    border: 1px solid rgba(255,255,255,0.06);
-    border-radius: 14px;
-    padding: 1.1rem 1.3rem;
-    margin-bottom: 1rem;
-}
-.placeholder-card {
-    background: var(--surface);
-    border: 1.5px dashed rgba(255,255,255,0.12);
-    border-radius: 14px;
-    padding: 2.4rem 1.5rem;
-    text-align: center;
-    color: var(--text-dim);
-}
-
-/* ===== منطقة رفع الملفات ===== */
-[data-testid="stFileUploader"] {
-    background: var(--surface);
-    border: 1.5px dashed rgba(94, 234, 212, 0.35);
-    border-radius: 14px;
-    padding: 0.6rem;
-}
-[data-testid="stFileUploader"] section { background: transparent; }
-
-/* نص التعليمات جوه صندوق الرفع (اسحب الملف هنا / الحد الأقصى...) كان بلون باهت جدًا فوق الخلفية الغامقة */
-[data-testid="stFileUploaderDropzoneInstructions"] div,
-[data-testid="stFileUploaderDropzoneInstructions"] span,
-[data-testid="stFileUploaderDropzoneInstructions"] small,
-[data-testid="stFileUploader"] small,
-[data-testid="stFileUploader"] p {
-    color: var(--text) !important;
-    opacity: 1 !important;
-}
-[data-testid="stFileUploaderDropzoneInstructions"] svg {
-    fill: var(--text-dim) !important;
-}
-/* زرار Browse files */
-[data-testid="stFileUploader"] button,
-[data-testid="stFileUploaderDropzone"] button {
-    background: var(--surface-2) !important;
-    color: var(--text) !important;
-    border: 1px solid rgba(255,255,255,0.18) !important;
-    font-weight: 700 !important;
-}
-[data-testid="stFileUploader"] button:hover {
-    border-color: var(--accent) !important;
-    color: var(--accent) !important;
-}
-/* اسم الملف بعد الرفع + حجمه + زرار الحذف — الشريط الفعلي اسمه .stFileChip (يعاد تصميمه في الأسفل) */
-[data-testid="stFileUploaderFileErrorMessage"] { color: var(--danger) !important; }
-
-/* عناوين كل ودجت (label) — كانت أحيانًا بلون باهت جدًا */
-[data-testid="stWidgetLabel"] p,
-[data-testid="stWidgetLabel"] label,
-[data-testid="stWidgetLabel"] span {
-    color: var(--text) !important;
-    opacity: 1 !important;
-}
-
-/* ===== الأزرار ===== */
-.stButton > button, .stDownloadButton > button {
-    background: linear-gradient(90deg, var(--accent), #3FD9C7);
-    color: #06251F;
-    font-weight: 700;
-    border: none;
-    border-radius: 10px;
-    padding: 0.6rem 1.2rem;
-    transition: transform 0.15s ease, box-shadow 0.15s ease, background 0.15s ease;
-}
-.stButton > button:hover, .stDownloadButton > button:hover {
-    transform: translateY(-1px);
-    box-shadow: 0 6px 18px rgba(94, 234, 212, 0.25);
-    color: #06251F;
-}
-.stButton > button:active, .stDownloadButton > button:active {
-    transform: translateY(0);
-}
-
-/* زرار الثانوي (secondary) — موحّد مع الكروت */
-.stButton > button[kind="secondary"] {
-    background: #17243A !important;
-    color: #E7ECF3 !important;
-    border: 1px solid rgba(94,234,212,.16) !important;
-}
-.stButton > button[kind="secondary"]:hover {
-    border-color: var(--accent) !important;
-    color: var(--accent) !important;
-    background: #1D304C !important;
-}
-
-/* ===== شريط التقدم ===== */
-[data-testid="stProgress"] > div > div {
-    background: linear-gradient(90deg, var(--accent), #3FD9C7);
-    border-radius: 6px;
-}
-
-/* ===== الـ Radio و Checkbox موحّدين ===== */
-.stApp [data-testid="stRadio"] [data-baseweb="radio-mark"] {
-    background: var(--surface-2) !important;
-    border-color: rgba(94,234,212,.45) !important;
-}
-.stApp [data-testid="stRadio"] input:checked + [data-baseweb="radio-mark"] {
-    background: var(--accent) !important;
-    border-color: var(--accent) !important;
-}
-.stApp [data-testid="stRadio"] input:checked + [data-baseweb="radio-mark"] + span {
-    color: var(--text) !important;
-    font-weight: 700;
-}
-.stApp [data-testid="stCheckbox"] [data-baseweb="checkbox-mark"] {
-    border-radius: 6px !important;
-    border-color: rgba(94,234,212,.45) !important;
-    background: var(--surface-2) !important;
-}
-
-/* ===== المؤشرات (Metrics) ===== */
-[data-testid="stMetric"] {
-    background: linear-gradient(135deg, #17243A, #121C2E);
-    border-radius: 14px;
-    padding: 0.9rem 1.1rem;
-    border: 1px solid rgba(255,255,255,0.07);
-    box-shadow: 0 6px 20px rgba(0,0,0,.15);
-}
-[data-testid="stMetricValue"] { font-family: 'JetBrains Mono', monospace; color: var(--accent); }
-
-/* ===== الجداول ===== */
-[data-testid="stDataFrame"] {
-    border-radius: 12px; overflow: hidden;
-    border: 1px solid rgba(255,255,255,0.06);
-}
-
-.divider {
-    height: 1px;
-    background: linear-gradient(90deg, transparent, rgba(94,234,212,0.35), transparent);
-    margin: 1.4rem 0;
-    border: none;
-}
-
-/* ===== كروت الشارتس (st.container(border=True)) ===== */
-div[data-testid="stVerticalBlockBorderWrapper"] {
-    background: var(--surface) !important;
-    border-radius: 14px !important;
-    border: 1px solid rgba(255,255,255,0.07) !important;
-}
-.chart-card-title {
-    font-weight: 700;
-    font-size: 0.95rem;
-    color: var(--text);
-    margin-bottom: 0.4rem;
-    padding-bottom: 0.5rem;
-    border-bottom: 1px solid rgba(255,255,255,0.06);
-}
-
-/* ===== كروت نشاط المحصلين (Agent Activity) ===== */
-.section-kicker {
-    font-family: 'JetBrains Mono', monospace;
-    font-size: 0.75rem;
-    letter-spacing: 0.12em;
-    color: var(--accent);
-    text-transform: uppercase;
-    margin: 0.6rem 0 1rem 0;
-    padding-bottom: 0.6rem;
-    border-bottom: 1px solid rgba(255,255,255,0.06);
-}
-
-.agent-card {
-    background: linear-gradient(135deg, #17243A 0%, #121C2E 100%);
-    border: 1px solid rgba(255,255,255,0.07);
-    border-radius: 16px;
-    padding: 1.1rem 1.3rem;
-    margin-bottom: 1rem;
-    box-shadow: 0 6px 20px rgba(0,0,0,.15);
-    transition: transform 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease;
-}
-.agent-card:hover {
-    transform: translateY(-2px);
-    border-color: rgba(94,234,212,0.35);
-    box-shadow: 0 10px 28px rgba(0,0,0,.22);
-}
-
-.agent-name {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 0.6rem;
-}
-.agent-name .name {
-    font-weight: 900;
-    font-size: 1.05rem;
-    color: var(--text);
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-}
-.agent-name .avatar {
-    width: 34px;
-    height: 34px;
-    border-radius: 50%;
-    background: linear-gradient(135deg, var(--accent), #3FD9C7);
-    color: #06251F;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    font-weight: 900;
-    font-size: 0.85rem;
-    flex-shrink: 0;
-}
-.agent-name .rank-badge {
-    font-family: 'JetBrains Mono', monospace;
-    font-size: 0.65rem;
-    letter-spacing: 0.1em;
-    color: #06251F;
-    background: linear-gradient(90deg, var(--accent), #3FD9C7);
-    border-radius: 999px;
-    padding: 0.2rem 0.6rem;
-    font-weight: 900;
-}
-
-.agent-stats {
-    display: grid;
-    grid-template-columns: repeat(4, 1fr);
-    gap: 0.55rem;
-    margin-top: 0.9rem;
-}
-.agent-stat {
-    background: rgba(255,255,255,0.04);
-    border: 1px solid rgba(255,255,255,0.06);
-    border-radius: 10px;
-    padding: 0.55rem 0.6rem;
-    text-align: center;
-}
-.agent-stat .stat-num {
-    font-family: 'JetBrains Mono', monospace;
-    font-weight: 700;
-    font-size: 1.1rem;
-    color: var(--text);
-    line-height: 1.2;
-}
-.agent-stat .stat-num.good { color: var(--success); }
-.agent-stat .stat-num.warn { color: var(--warn); }
-.agent-stat .stat-num.bad { color: var(--danger); }
-.agent-stat .stat-num.acc { color: var(--accent); }
-.agent-stat .stat-label {
-    font-size: 0.72rem;
-    color: var(--text-dim);
-    margin-top: 0.15rem;
-}
-
-.agent-progress-row {
-    display: flex;
-    align-items: center;
-    gap: 0.7rem;
-    margin-top: 0.8rem;
-}
-.agent-progress-row .prog-label {
-    font-size: 0.78rem;
-    color: var(--text-dim);
-    white-space: nowrap;
-}
-.agent-progress-bar {
-    flex: 1;
-    height: 8px;
-    background: rgba(255,255,255,0.08);
-    border-radius: 999px;
-    overflow: hidden;
-}
-.agent-progress-fill {
-    height: 100%;
-    border-radius: 999px;
-    background: linear-gradient(90deg, var(--accent), #3FD9C7);
-    transition: width 0.5s ease;
-}
-.agent-progress-row .prog-value {
-    font-family: 'JetBrains Mono', monospace;
-    font-weight: 700;
-    font-size: 0.85rem;
-    color: var(--accent);
-    white-space: nowrap;
-}
-
-/* ===== كروت أبرز النقاط (Highlights) ===== */
-.highlight-label {
-    font-size: 0.82rem;
-    color: var(--text-dim);
-    margin-bottom: 0.5rem;
-}
-.highlight-value {
-    font-weight: 900;
-    font-size: 1.25rem;
-    color: var(--accent);
-    line-height: 1.3;
-}
-.highlight-sub {
-    font-size: 0.8rem;
-    color: var(--text-dim);
-    margin-top: 0.2rem;
-}
-
-/* ===== تظليم كامل لباقي عناصر الواجهة (Selectbox / Expander / Tabs / Alerts / Inputs) ===== */
-[data-testid="stExpander"] {
-    background: var(--surface);
-    border: 1px solid rgba(255,255,255,0.07);
-    border-radius: 12px;
-    overflow: hidden;
-}
-[data-testid="stExpander"] summary {
-    background: var(--surface-2);
-    color: var(--text) !important;
-}
-
-div[data-baseweb="select"] > div {
-    background: var(--surface-2) !important;
-    border-color: rgba(255,255,255,0.1) !important;
-    color: var(--text) !important;
-    border-radius: 10px !important;
-}
-div[data-baseweb="popover"] ul {
-    background: var(--surface-2) !important;
-}
-li[role="option"] { color: var(--text) !important; }
-li[role="option"]:hover, li[aria-selected="true"] { background: var(--surface) !important; }
-
-[data-testid="stTextInput"] input,
-[data-testid="stTimeInput"] input,
-[data-testid="stNumberInput"] input {
-    background: var(--surface-2) !important;
-    color: var(--text) !important;
-    border-color: rgba(255,255,255,0.1) !important;
-    border-radius: 10px !important;
-}
-
-/* حقول الوقت (الساعة والدقيقة) — دارك زي الثيم مع أرقام واضحة */
-[data-testid="stTimeInput"] [role="spinbutton"],
-[data-testid="stTimeInput"] [role="group"] span {
-    color: var(--text) !important;
-    font-weight: 700 !important;
-}
-[data-testid="stTimeInputTimeDisplay"] {
-    background: var(--surface-2) !important;
-    border-color: rgba(255,255,255,0.1) !important;
-    border-radius: 10px !important;
-    color: var(--text) !important;
-}
-[data-testid="stTimeInput"] input {
-    background: transparent !important;
-    color: var(--text) !important;
-    font-weight: 700 !important;
-    font-size: 1.05rem !important;
-}
-/* الفواصل (النقطتين) في حقل الوقت */
-[data-testid="stTimeInputTimeDisplay"] span {
-    color: var(--text-dim) !important;
-}
-
-.stTabs [data-baseweb="tab-list"] {
-    gap: 4px;
-    border-bottom: 1px solid rgba(255,255,255,0.08);
-}
-.stTabs [data-baseweb="tab"] {
-    background: var(--surface);
-    border-radius: 10px 10px 0 0;
-    color: var(--text-dim);
-    padding: 0.55rem 1.1rem;
-    transition: color 0.15s ease, background 0.15s ease;
-}
-.stTabs [data-baseweb="tab"]:hover {
-    color: var(--text);
-    background: var(--surface-2);
-}
-.stTabs [aria-selected="true"] {
-    background: var(--surface-2) !important;
-    color: var(--accent) !important;
-    font-weight: 700;
-}
-
-div[data-testid="stAlert"] {
-    background: var(--surface) !important;
-    border: 1px solid rgba(255,255,255,0.08);
-    border-radius: 12px;
-    color: var(--text) !important;
-}
-div[data-testid="stAlertWarning"] { border-right: 3px solid var(--warn) !important; }
-div[data-testid="stAlertError"] { border-right: 3px solid var(--danger) !important; }
-div[data-testid="stAlertInfo"] { border-right: 3px solid var(--accent) !important; }
-div[data-testid="stAlertSuccess"] { border-right: 3px solid var(--success) !important; }
-div[data-testid="stAlert"] p { color: var(--text) !important; }
-
-[data-testid="stCaptionContainer"] { color: var(--text-dim) !important; }
-
-/* Scrollbar متناسق مع الثيم */
-::-webkit-scrollbar { width: 10px; height: 10px; }
-::-webkit-scrollbar-track { background: var(--bg); }
-::-webkit-scrollbar-thumb { background: var(--surface-2); border-radius: 8px; }
-::-webkit-scrollbar-thumb:hover { background: var(--accent); }
-.actual-logo, .actual-company-logo { overflow:hidden !important; padding:5px !important; }
-.actual-logo img, .actual-company-logo img { width:100% !important; height:100% !important; object-fit:contain !important; display:block !important; border-radius:10px !important; }
-
-/* ===== زرار تحميل الملف المرفوع ===== */
-.stApp [data-testid="stFileUploader"] [data-testid="stFileUploaderFile"] svg {
-    fill: var(--accent) !important;
-}
-</style>
-"""
-
-CSS_THEME = apply_theme_tokens(CSS_THEME) + build_runtime_theme_css(THEME)
-st.markdown(CSS_THEME, unsafe_allow_html=True)
-
-
-# تحسينات إضافية للـ Dark Theme + كروت الشركات والفترات
-DARK_UI_FIX = """
-<style>
-/* نصوص Streamlit الافتراضية */
-.stApp, .stApp p, .stApp span, .stApp label, .stApp small,
-.stApp div, .stApp [data-testid="stMarkdownContainer"] {
-    color: var(--text);
-}
-.stApp [data-testid="stCaptionContainer"],
-.stApp .stCaption,
-.stApp [data-testid="stHelp"] {
-    color: var(--text-dim) !important;
-}
-.stApp input, .stApp textarea {
-    color: var(--text) !important;
-}
-.stApp input::placeholder, .stApp textarea::placeholder {
-    color: #C9D3E2 !important;
-    opacity: 1 !important;
-}
-.stApp [data-baseweb="select"] span {
-    color: var(--text) !important;
-}
-.stApp [role="option"] {
-    color: var(--text) !important;
-}
-.stApp [data-testid="stRadio"] label,
-.stApp [data-testid="stCheckbox"] label {
-    color: var(--text) !important;
-}
-.stApp [data-testid="stFileUploader"] section {
-    color: var(--text) !important;
-}
-.stApp [data-testid="stFileUploader"] section * {
-    color: var(--text) !important;
-}
-/* الشريط الأبيض الداخلي للـ file uploader — إعادة تصميم كاملة على الثيم الداكن */
-.stApp [data-testid="stFileUploader"] .stFileChip {
-    background: linear-gradient(135deg, #15203a, #1a2a47) !important;
-    border: 1px solid rgba(94, 234, 212, .4) !important;
-    border-radius: 10px !important;
-    box-shadow: 0 2px 8px rgba(0,0,0,.25);
-}
-.stApp [data-testid="stFileUploader"] .stFileChipName {
-    color: var(--text) !important;
-    font-weight: 700 !important;
-    font-size: .95rem !important;
-    direction: ltr !important;
-    text-align: right !important;
-}
-.stApp [data-testid="stFileUploader"] .stFileChipName ~ div {
-    color: #B9C6D6 !important;
-    direction: ltr !important;
-}
-.stApp [data-testid="stFileUploader"] .stFileChip svg {
-    fill: #5EEAD4 !important;
-    color: #5EEAD4 !important;
-}
-.stApp [data-testid="stFileUploader"] [data-testid="stFileChipDeleteBtn"] button svg,
-.stApp [data-testid="stFileUploader"] [data-testid="stFileChipDeleteBtn"] svg {
-    fill: #F3F6FA !important;
-    color: var(--text) !important;
-}
-.stApp [data-testid="stFileUploader"] [data-testid="stFileUploaderFile"] svg {
-    fill: var(--accent) !important;
-    color: var(--accent) !important;
-}
-.stApp [data-testid="stFileUploader"] [data-testid="stFileUploaderFile"] button {
-    color: var(--text) !important;
-}
-.stApp [data-testid="stFileUploader"] [data-testid="stFileUploaderFile"] button:hover svg {
-    fill: #F87171 !important;
-    color: #F87171 !important;
-}
-/* رسالة "الملف المختار" — أكبر وأوضح */
-.upload-status {
-    margin:.7rem 0 1rem;
-    padding:.85rem 1rem;
-    border-radius:12px;
-    background:linear-gradient(135deg, rgba(94,234,212,.12), rgba(94,234,212,.05)) !important;
-    border:1px solid rgba(94,234,212,.3) !important;
-    border-right:4px solid var(--accent) !important;
-    color: var(--text) !important;
-    font-size: 1.05rem !important;
-    font-weight: 600 !important;
-    box-shadow: 0 4px 14px rgba(0,0,0,.22);
-}
-.upload-status b {
-    color: var(--accent) !important;
-    font-weight: 800 !important;
-}
-.stApp [data-testid="stDataFrame"] * {
-    color: var(--text);
-}
-.stApp [data-testid="stMetricLabel"] {
-    color: var(--text-dim) !important;
-}
-.stApp [data-testid="stMetricValue"] {
-    color: var(--accent) !important;
-}
-.stApp [data-testid="stVerticalBlockBorderWrapper"] .stMarkdown p,
-.stApp [data-testid="stVerticalBlockBorderWrapper"] .stMarkdown div {
-    color: var(--text);
-}
-
-/* أزرار عامة */
-.stButton > button, .stDownloadButton > button {
-    min-height: 44px;
-    box-shadow: 0 5px 18px rgba(0,0,0,.18);
-}
-
-/* عنوانات الأقسام */
-.section-kicker {
-    font-size: 1.05rem;
-    font-weight: 900;
-    color: #F3F7FB !important;
-    margin: .25rem 0 .15rem;
-}
-.section-help {
-    color: #C6D2E2 !important;
-    font-size: .88rem;
-    margin-bottom: .9rem;
-}
-
-/* كروت الشركات */
-.company-card {
-    display:flex;
-    align-items:center;
-    gap:14px;
-    min-height:100px;
-    padding:18px;
-    background:linear-gradient(135deg,#17243A,#121C2E);
-    border:1px solid rgba(255,255,255,.08);
-    border-radius:18px;
-    box-shadow:0 10px 30px rgba(0,0,0,.16);
-    margin-bottom:9px;
-    transition:transform .18s ease, box-shadow .18s ease, border-color .18s ease;
-}
-.company-card:hover {
-    transform:translateY(-2px);
-    border-color:rgba(94,234,212,.22);
-    box-shadow:0 14px 36px rgba(0,0,0,.22);
-}
-.company-mark, .company-logo {
-    display:flex;
-    align-items:center;
-    justify-content:center;
-    border:2px solid;
-    border-radius:16px;
-    flex-shrink:0;
-    font-size:1.45rem;
-    font-weight:900;
-    box-shadow:0 0 24px rgba(0,0,0,.2);
-}
-.company-mark img, .company-logo img {
-    width:100%;
-    height:100%;
-    object-fit:contain;
-    border-radius:inherit;
-    display:block;
-}
-.company-mark {
-    width:76px;
-    height:76px;
-    padding:6px;
-    overflow:hidden;
-}
-.company-logo {
-    padding:6px;
-    overflow:hidden;
-}
-.company-name {
-    font-size:1.05rem;
-    font-weight:900;
-    color:#F4F7FB !important;
-}
-.company-sub, .selected-company-sub {
-    font-size:.78rem;
-    color:#C3CEDC !important;
-    margin-top:4px;
-}
-.selected-company {
-    display:flex;
-    align-items:center;
-    gap:16px;
-    margin:15px 0 8px;
-    padding:14px 18px;
-    border:1px solid rgba(94,234,212,.22);
-    background:linear-gradient(90deg,#132A2C,#151F30);
-    border-radius:16px;
-    box-shadow:0 8px 26px rgba(94,234,212,.08);
-}
-.company-logo.large {
-    width:70px !important;
-    height:70px !important;
-    border-radius:18px;
-}
-.company-logo.large img {
-    width:100%;
-    height:100%;
-    object-fit:contain;
-}
-.selected-company-label {
-    font-size:.75rem;
-    color:#C3CEDC !important;
-}
-.selected-company-name {
-    font-size:1.25rem;
-    font-weight:900;
-    color:#F8FAFC !important;
-    margin-top:2px;
-}
-
-/* بانر الفترة */
-.period-banner {
-    display:flex;
-    align-items:center;
-    gap:14px;
-    padding:15px 18px;
-    margin:12px 0;
-    background:linear-gradient(135deg,#182A43,#132136);
-    border:1px solid rgba(110,168,254,.18);
-    border-radius:16px;
-}
-.period-banner.daily {
-    border-color:rgba(94,234,212,.2);
-    background:linear-gradient(135deg,#142F2E,#142237);
-}
-.period-icon {
-    font-size:1.6rem;
-}
-.period-label {
-    color:#F5F8FC !important;
-    font-weight:900;
-    font-size:1.05rem;
-}
-.period-desc {
-    color:#C6D2E2 !important;
-    font-size:.8rem;
-    margin-top:3px;
-}
-.schedule-summary {
-    margin:8px 0 14px;
-    padding:10px 14px;
-    background:#111B2C;
-    border:1px solid rgba(255,255,255,.06);
-    border-radius:10px;
-    color:#C8D2E0 !important;
-    font-size:.86rem;
-}
-.schedule-summary span {
-    color:#B9C6D6 !important;
-    margin:0 4px;
-}
-.schedule-summary b {
-    color:var(--accent) !important;
-}
-
-/* سويتش البريك */
-.break-switch-row {
-    display:flex;
-    align-items:center;
-    gap:12px;
-    margin:10px 0 14px;
-    padding:10px 14px;
-    background:#111B2C;
-    border:1px solid rgba(255,255,255,.06);
-    border-radius:10px;
-}
-.break-switch-label {
-    color:#E8EEF6 !important;
-    font-weight:800;
-    font-size:.92rem;
-    flex:1;
-}
-.break-switch-text {
-    color:#9FB0C6 !important;
-    font-size:.82rem;
-}
-
-/* المجمع اليومي */
-.daily-total-card {
-    display:grid;
-    grid-template-columns:1fr auto auto;
-    align-items:center;
-    gap:18px;
-    padding:18px 22px;
-    margin:12px 0 18px;
-    background:linear-gradient(135deg,#122B2A,#17243A);
-    border:1px solid rgba(94,234,212,.2);
-    border-radius:18px;
-}
-.daily-total-title {
-    color:#F7FAFC !important;
-    font-size:1.15rem;
-    font-weight:900;
-}
-.daily-total-sub {
-    color:#C3CEDC !important;
-    font-size:.8rem;
-    margin-top:4px;
-}
-.daily-total-number {
-    color:var(--accent) !important;
-    font-family:'JetBrains Mono',monospace;
-    font-size:1.65rem;
-    font-weight:900;
-}
-.daily-total-label {
-    color:#B9C6D6 !important;
-    font-size:.75rem;
-}
-@media (max-width: 800px) {
-    .daily-total-card { grid-template-columns:1fr; }
-}
-/* ===== لوحة سلايسرز الداشبورد ===== */
-.slicer-panel {
-    background: linear-gradient(135deg, rgba(19,35,46,0.95), rgba(18,30,44,0.95));
-    border: 1px solid rgba(94,234,212,0.18);
-    border-radius: 16px;
-    padding: 18px 20px 14px;
-    margin-bottom: 18px;
-}
-.slicer-panel-title {
-    color: #F7FAFC !important;
-    font-size: 0.95rem !important;
-    font-weight: 800 !important;
-    margin-bottom: 12px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    gap: 8px;
-}
-.slicer-section-title {
-    color: var(--accent) !important;
-    font-size: 0.78rem !important;
-    font-weight: 700 !important;
-    text-align: center !important;
-    margin-bottom: 6px;
-}
-/* تقليص ارتفاع قوائم multiselect */
-div[data-testid="stMultiSelect"] > div > div > div:last-child {
-    max-height: 200px;
-    overflow-y: auto;
-}
-/* تاريخ input داكن بدل الأبيض — wrapper div اللي فوق الـ input نفسه هو اللي لونه أبيض */
-div[data-testid="stDateInput"] > div > div > div,
-.stDateInputField > div,
-div[data-testid="stDateInput"] div[data-testid] {
-    background: var(--input-bg) !important;
-    border-radius: 10px !important;
-    box-shadow: none !important;
-}
-/* المربع الأبيض: الـ div اللي فوق الـ input مباشرة واللي بيعرض "2026/08/10 – 2026/08/17" */
-div[data-testid="stDateInput"] > div > div:not(> div),
-div[data-testid="stDateInput"] > div > div {
-    background: var(--input-bg) !important;
-    border-radius: 10px !important;
-    box-shadow: none !important;
-}
-/* تاريخ input داكن بدل الأبيض — العنصر الفعلي هو stDateInputField */
-div[data-testid="stDateInputField"],
-input[data-testid="stDateInputField"],
-input[placeholder*="YYYY"],
-.slicer-panel input[type="text"] {
-    background: var(--input-bg) !important;
-    border: 1px solid rgba(94,234,212,0.3) !important;
-    color: var(--text) !important;
-    border-radius: 10px !important;
-    box-shadow: none !important;
-}
-input[data-testid="stDateInputField"]::placeholder,
-input[placeholder*="YYYY"]::placeholder {
-    color: var(--placeholder) !important;
-    opacity: 1 !important;
-}
-input[data-testid="stDateInputField"]:focus {
-    border-color: rgba(94,234,212,0.55) !important;
-    outline: none !important;
-    box-shadow: 0 0 0 3px rgba(94,234,212,0.12) !important;
-}
-/* radio buttons داخل السلايسرز */
-div[data-testid="stRadio"] label {
-    color: var(--text) !important;
-    font-size: 0.82rem !important;
-}
-/* ===== شبكة الفلاتر الموحدة: 4 أعمدة متساوية الارتفاع ===== */
-.slicer-grid {
-    display: grid;
-    grid-template-columns: repeat(4, 1fr);
-    gap: 14px;
-    align-items: stretch;
-}
-@media (max-width: 1100px) {
-    .slicer-grid { grid-template-columns: repeat(2, 1fr); }
-}
-@media (max-width: 620px) {
-    .slicer-grid { grid-template-columns: 1fr; }
-}
-.slicer-cell {
-    background: rgba(255,255,255,0.025);
-    border: 1px solid rgba(94,234,212,0.12);
-    border-radius: 12px;
-    padding: 12px 12px 10px;
-    display: flex;
-    flex-direction: column;
-    justify-content: space-between;
-    min-height: 118px;
-}
-.slicer-cell-count {
-    color: var(--text-dim) !important;
-    font-size: 0.75rem !important;
-    text-align: center !important;
-    margin-top: 6px;
-    margin-bottom: 2px;
-}
-/* رسالة "لا توجد نتائج" أنيقة لما الفلاتر تفرغ العرض */
-.slicer-empty {
-    text-align: center;
-    padding: 34px 20px 28px;
-    margin-bottom: 16px;
-    background: linear-gradient(135deg, rgba(19,35,46,0.95), rgba(18,30,44,0.95));
-    border: 1px dashed rgba(251,113,133,0.45);
-    border-radius: 16px;
-    color: #F3F6FA;
-}
-.slicer-empty-icon { font-size: 1.9rem; margin-bottom: 8px; }
-.slicer-empty-title {
-    font-size: 1.05rem; font-weight: 700; color: #F7FAFC; margin-bottom: 6px;
-}
-.slicer-empty-sub {
-    font-size: 0.85rem; color: var(--text-dim);
-}
-.slicer-summary {
-    text-align: center;
-    color: #B9C6D6 !important;
-    font-size: 0.75rem !important;
-    margin-top: 2px;
-}
-</style>
-"""
-DARK_UI_FIX = apply_theme_tokens(DARK_UI_FIX)
-st.markdown(DARK_UI_FIX, unsafe_allow_html=True)
-
+# Streamlit native theme is the source of truth for the app UI.
+# Plotly receives the matching palette below; no custom CSS is injected.
 
 def render_waveform(n_bars: int = 24):
-    heights = [14, 22, 30, 18, 26, 30, 20, 26, 16, 22] * (n_bars // 10 + 1)
-    bars = "".join(
-        f'<span style="height:{heights[i]}px; animation-delay:{(i % 10) * 0.09}s;"></span>'
-        for i in range(n_bars)
-    )
-    st.markdown(f'<div class="waveform">{bars}</div>', unsafe_allow_html=True)
+    st.caption("▁▃▅▇▅▃▁  ▁▃▆▇▆▃▁  ▁▂▅▇▅▂▁")
+
 
 
 def page_header(eyebrow: str, title: str, subtitle: str, show_wave: bool = False, centered: bool = False):
-    centered_class = "page-header-centered" if centered else ""
-    st.markdown(
-        f"""
-        <div class="{centered_class}">
-            <div class="page-eyebrow">{eyebrow}</div>
-            <p class="page-title">{title}</p>
-            <p class="page-subtitle">{subtitle}</p>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
+    if eyebrow:
+        st.caption(eyebrow)
+    st.title(title)
+    st.write(subtitle)
     if show_wave:
         render_waveform()
-    st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
+    st.divider()
+
 
 
 def find_column(df: pd.DataFrame, candidates: list):
@@ -2071,15 +668,7 @@ def calculate_wasted_time(df, sales_col, time_col, break_start, break_end):
     return df
 
 
-def highlight_wasted(val):
-    if pd.isna(val):
-        return ""
-    if val > 10:
-        return f"background-color: {THEME['danger_soft']}; color: {THEME['danger_text']};"
-    elif val < 1:
-        return f"background-color: {THEME['warn_soft']}; color: {THEME['warn_text']};"
-    return ""
-
+# Tables use Streamlit's native rendering; no cell-level CSS is injected.
 
 # ==========================================================
 # داشبورد مشترك (يُستخدم بعد التصنيف مباشرة، وكمان في تويب الداشبورد)
@@ -2106,10 +695,10 @@ PLOTLY_CONFIG = {"displayModeBar": False}
 
 
 def chart_card(title: str, render_fn):
-    """كارد موحّد لأي رسم بياني — عنوان صغير + حدود + خلفية متناسقة."""
     with st.container(border=True):
-        st.markdown(f'<div class="chart-card-title">{title}</div>', unsafe_allow_html=True)
+        st.subheader(title)
         render_fn()
+
 
 
 def _compute_agent_perf(df, class_col, sales_col):
@@ -2124,33 +713,25 @@ def _compute_agent_perf(df, class_col, sales_col):
 
 
 def render_metric_cards(df, class_col, sales_col, time_col):
-    has_class = class_col and class_col in df.columns
+    has_class = bool(class_col and class_col in df.columns)
     has_wasted = WASTED_TIME_COL in df.columns
+    st.subheader("📌 نظرة عامة")
+    metrics = st.columns(4)
+    metrics[0].metric("📞 إجمالي المكالمات", len(df))
+    if has_class:
+        success_count = int((df[class_col] == 1).sum())
+        fail_count = int((df[class_col] == 0).sum())
+        rate = round(success_count / len(df) * 100, 1) if len(df) else 0
+        metrics[1].metric("✅ ناجحة", success_count, f"{rate}%")
+        metrics[2].metric("⛔ غير ناجحة", fail_count)
+    else:
+        metrics[1].metric("✅ ناجحة", "—")
+        metrics[2].metric("⛔ غير ناجحة", "—")
+    if has_wasted:
+        metrics[3].metric("⏱️ الوقت المهدر بالدقائق", round(df[WASTED_TIME_COL].sum(), 1), f"متوسط {df[WASTED_TIME_COL].mean():.1f}")
+    else:
+        metrics[3].metric("⏱️ الوقت المهدر", "—")
 
-    with st.container(border=True):
-        st.markdown('<div class="chart-card-title">📌 نظرة عامة</div>', unsafe_allow_html=True)
-        metric_cols = st.columns(4)
-        metric_cols[0].metric("📞 إجمالي المكالمات", len(df))
-
-        if has_class:
-            success_count = int((df[class_col] == 1).sum())
-            fail_count = int((df[class_col] == 0).sum())
-            success_rate = round(success_count / len(df) * 100, 1) if len(df) else 0
-            metric_cols[1].metric("✅ ناجحة", success_count, f"{success_rate}%")
-            metric_cols[2].metric("⛔ غير ناجحة", fail_count)
-        else:
-            metric_cols[1].metric("✅ ناجحة", "—")
-            metric_cols[2].metric("⛔ غير ناجحة", "—")
-
-        if has_wasted:
-            avg_wasted = round(df[WASTED_TIME_COL].mean(), 1) if len(df) else 0
-            metric_cols[3].metric(
-                "⏱️ إجمالي الوقت المهدر (دقيقة)",
-                round(df[WASTED_TIME_COL].sum(), 1),
-                f"متوسط {avg_wasted} د/مكالمة",
-            )
-        else:
-            metric_cols[3].metric("⏱️ إجمالي الوقت المهدر", "—")
 
 
 def render_pie_chart(df, class_col):
@@ -2172,7 +753,7 @@ def render_pie_chart(df, class_col):
         fig.update_layout(
             **PLOTLY_LAYOUT, showlegend=True,
             legend=dict(orientation="h", yanchor="bottom", y=-0.15, x=0.5, xanchor="center"),
-            annotations=[dict(text=f"{success_rate}%<br><span style='font-size:11px;color:#B9C6D6'>نجاح</span>",
+            annotations=[dict(text=f"{success_rate}% نجاح",
                                x=0.5, y=0.5, font_size=22, font_color=COLOR_SUCCESS, showarrow=False)],
         )
         st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG)
@@ -2273,76 +854,59 @@ def render_trend_chart(df, class_col, time_col):
 
 
 def render_quick_summary(df, class_col=None, sales_col=None, time_col=None):
-    """لمحة سريعة بتتعرض في تويب «التصنيف» فور ما التصنيف يخلص — دلوقتي فيها 4 شارتس
-    + كروت أبرز النقاط، عشان تديك صورة كاملة من غير ما تحتاج تروح تويب الداشبورد."""
     render_metric_cards(df, class_col, sales_col, time_col)
-    st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
     render_highlights(df, class_col, sales_col, time_col)
-    st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
-
-    col_a, col_b = st.columns(2)
-    with col_a:
+    a, b = st.columns(2)
+    with a:
         render_pie_chart(df, class_col)
-    with col_b:
+    with b:
         render_trend_chart(df, class_col, time_col)
-
-    col_c, col_d = st.columns(2)
-    with col_c:
+    c, d = st.columns(2)
+    with c:
         render_agent_perf_chart(df, class_col, sales_col, with_table=False)
-    with col_d:
+    with d:
         render_wasted_bar(df, sales_col)
 
 
+
 def render_highlights(df, class_col, sales_col, time_col):
-    """كروت أبرز النقاط — أفضل محصّل / الأكثر إهدارًا للوقت / أكثر يوم نشاطًا."""
-    has_class = class_col and class_col in df.columns
-    has_sales = sales_col and sales_col in df.columns
+    has_class = bool(class_col and class_col in df.columns)
+    has_sales = bool(sales_col and sales_col in df.columns)
     has_wasted = WASTED_TIME_COL in df.columns
-    has_time = time_col and time_col in df.columns
-
+    has_time = bool(time_col and time_col in df.columns)
+    st.subheader("💡 أهم الملاحظات")
     cols = st.columns(3)
-
     with cols[0]:
-        with st.container(border=True):
-            st.markdown('<div class="highlight-label">🏅 أفضل محصّل (نسبة نجاح)</div>', unsafe_allow_html=True)
-            if has_class and has_sales:
-                perf = _compute_agent_perf(df, class_col, sales_col)
-                perf = perf[perf["إجمالي المكالمات"] >= 3]  # نتجاهل اللي مكالماته قليلة جدًا
-                if len(perf):
-                    top = perf.iloc[0]
-                    st.markdown(f'<div class="highlight-value">{top[sales_col]}</div>', unsafe_allow_html=True)
-                    st.markdown(f'<div class="highlight-sub">{top["نسبة النجاح %"]}% نجاح ({int(top["إجمالي المكالمات"])} مكالمة)</div>', unsafe_allow_html=True)
-                else:
-                    st.markdown('<div class="highlight-sub">مفيش بيانات كافية</div>', unsafe_allow_html=True)
+        if has_class and has_sales:
+            perf = _compute_agent_perf(df, class_col, sales_col)
+            perf = perf[perf["إجمالي المكالمات"] >= 3]
+            if len(perf):
+                top = perf.iloc[0]
+                st.metric("🏅 أفضل محصل", str(top[sales_col]), f"{top['نسبة النجاح %']}% نجاح")
             else:
-                st.markdown('<div class="highlight-sub">محتاجين عمود التصنيف والمحصّل</div>', unsafe_allow_html=True)
-
+                st.info("مفيش بيانات كافية")
+        else:
+            st.info("محتاجين عمود التصنيف والمحصّل")
     with cols[1]:
-        with st.container(border=True):
-            st.markdown('<div class="highlight-label">🐌 الأكثر إهدارًا للوقت</div>', unsafe_allow_html=True)
-            if has_wasted and has_sales:
-                wasted_totals = df.groupby(sales_col)[WASTED_TIME_COL].sum().sort_values(ascending=False)
-                if len(wasted_totals):
-                    st.markdown(f'<div class="highlight-value">{wasted_totals.index[0]}</div>', unsafe_allow_html=True)
-                    st.markdown(f'<div class="highlight-sub">{round(wasted_totals.iloc[0], 1)} دقيقة مهدرة</div>', unsafe_allow_html=True)
-                else:
-                    st.markdown('<div class="highlight-sub">مفيش بيانات كافية</div>', unsafe_allow_html=True)
+        if has_wasted and has_sales:
+            totals = df.groupby(sales_col)[WASTED_TIME_COL].sum().sort_values(ascending=False)
+            if len(totals):
+                st.metric("🐌 الأكثر إهدارًا للوقت", str(totals.index[0]), f"{totals.iloc[0]:.1f} دقيقة")
             else:
-                st.markdown('<div class="highlight-sub">محتاجين عمود المحصّل والوقت المهدر</div>', unsafe_allow_html=True)
-
+                st.info("مفيش بيانات كافية")
+        else:
+            st.info("محتاجين عمود المحصّل والوقت المهدر")
     with cols[2]:
-        with st.container(border=True):
-            st.markdown('<div class="highlight-label">📅 أكثر يوم نشاطًا</div>', unsafe_allow_html=True)
-            if has_time:
-                t = pd.to_datetime(df[time_col], errors="coerce")
-                if t.notna().any():
-                    daily_counts = t.dt.date.value_counts()
-                    st.markdown(f'<div class="highlight-value">{daily_counts.index[0]}</div>', unsafe_allow_html=True)
-                    st.markdown(f'<div class="highlight-sub">{int(daily_counts.iloc[0])} مكالمة</div>', unsafe_allow_html=True)
-                else:
-                    st.markdown('<div class="highlight-sub">مفيش تواريخ صالحة</div>', unsafe_allow_html=True)
+        if has_time:
+            t = pd.to_datetime(df[time_col], errors="coerce")
+            if t.notna().any():
+                daily = t.dt.date.value_counts()
+                st.metric("📅 أكثر يوم نشاطًا", str(daily.index[0]), f"{int(daily.iloc[0])} مكالمة")
             else:
-                st.markdown('<div class="highlight-sub">محتاجين عمود التاريخ</div>', unsafe_allow_html=True)
+                st.info("مفيش تواريخ صالحة")
+        else:
+            st.info("محتاجين عمود التاريخ")
+
 
 
 def render_comparison_matrix(df, class_col, sales_col):
@@ -2398,77 +962,49 @@ def render_comparison_matrix(df, class_col, sales_col):
 
 
 def render_kpi_cards(df, class_col, sales_col, time_col):
-    """كروت الـ KPI الرئيسية للداشبورد — 8 كروت في صفين."""
-    has_class = class_col and class_col in df.columns
-    has_sales = sales_col and sales_col in df.columns
+    has_class = bool(class_col and class_col in df.columns)
+    has_sales = bool(sales_col and sales_col in df.columns)
     has_wasted = WASTED_TIME_COL in df.columns
-
     total_calls = len(df)
     success_count = int((df[class_col] == 1).sum()) if has_class else None
     fail_count = int((df[class_col] == 0).sum()) if has_class else None
     success_rate = round(success_count / total_calls * 100, 1) if has_class and total_calls else None
     total_wasted = round(df[WASTED_TIME_COL].sum(), 1) if has_wasted else None
-    n_agents = df[sales_col].nunique() if has_sales else None
+    n_agents = int(df[sales_col].nunique()) if has_sales else None
+    st.subheader("📌 مؤشرات الأداء الرئيسية")
+    row1 = st.columns(4)
+    row1[0].metric("📞 إجمالي المكالمات", total_calls)
+    row1[1].metric("✅ ناجحة", success_count if has_class else "—", f"{success_rate}%" if has_class else "")
+    row1[2].metric("⛔ غير ناجحة", fail_count if has_class else "—")
+    row1[3].metric("👥 عدد المحصلين", n_agents if has_sales else "—")
+    row2 = st.columns(4)
+    row2[0].metric("🎯 نسبة النجاح", f"{success_rate}%" if has_class else "—")
+    if has_sales and has_wasted:
+        wasted_sum = df.groupby(sales_col)[WASTED_TIME_COL].sum()
+        row2[1].metric("🐌 أعلى إهدار للوقت", str(wasted_sum.idxmax()), f"{wasted_sum.max():.1f} دقيقة")
+    else:
+        row2[1].metric("🐌 أعلى إهدار للوقت", "—")
+    row2[2].metric("⏱️ إجمالي الوقت المهدر", total_wasted if has_wasted else "—")
+    row2[3].metric("📊 متوسط الوقت المهدر", f"{df[WASTED_TIME_COL].mean():.1f}" if has_wasted else "—")
 
-    with st.container(border=True):
-        st.markdown('<div class="chart-card-title">📌 مؤشرات الأداء الرئيسية</div>', unsafe_allow_html=True)
-        row1 = st.columns(4)
-        row1[0].metric("📞 إجمالي المكالمات", total_calls)
-        row1[1].metric("✅ ناجحة", success_count if has_class else "—", f"{success_rate}%" if has_class else "")
-        row1[2].metric("⛔ غير ناجحة", fail_count if has_class else "—")
-        row1[3].metric("👥 عدد المحصّلين", n_agents if has_sales else "—")
-
-        row2 = st.columns(4)
-        if has_class and has_sales:
-            perf_all = _compute_agent_perf(df, class_col, sales_col)
-            perf_qualified = perf_all[perf_all["إجمالي المكالمات"] >= 3]
-            top = perf_qualified.iloc[0] if len(perf_qualified) else (perf_all.iloc[0] if len(perf_all) else None)
-            top_val = f"{top['نسبة النجاح %']}% نجاح" if top is not None else "—"
-            top_name = str(top[sales_col]) if top is not None else "—"
-            row2[0].metric("🏅 نسبة النجاح الإجمالية", f"{success_rate}%" if has_class else "—", top_val)
-        else:
-            row2[0].metric("🏅 نسبة النجاح الإجمالية", f"{success_rate}%" if has_class else "—")
-
-        if has_sales and has_wasted:
-            wasted_sum = df.groupby(sales_col)[WASTED_TIME_COL].sum()
-            row2[1].metric("🐌 أعلى إهدار للوقت", f"{wasted_sum.idxmax()}", f"{round(wasted_sum.max(), 1)} دقيقة")
-        else:
-            row2[1].metric("🐌 أعلى إهدار للوقت", "—")
-
-        if has_wasted:
-            avg_dur = round(df[WASTED_TIME_COL].mean(), 1) if total_calls else 0
-            row2[2].metric("⏱️ إجمالي الوقت المهدر (دقيقة)", total_wasted, f"متوسط {avg_dur} د/مكالمة")
-        else:
-            row2[2].metric("⏱️ الوقت المهدر", "—")
-
-        if has_class:
-            row2[3].metric("🎯 نسبة النجاح الإجمالية", f"{success_rate}%")
-        else:
-            row2[3].metric("🎯 نسبة النجاح", "—")
 
 
 def render_full_dashboard(df, class_col=None, sales_col=None, time_col=None):
-    """الداشبورد الاحترافية — كروت KPI + أبرز النقاط + شبكة شارتات + جدول مقارنة."""
     render_kpi_cards(df, class_col, sales_col, time_col)
-    st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
     render_highlights(df, class_col, sales_col, time_col)
-    st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
-
-    col_a, col_b = st.columns(2)
-    with col_a:
+    a, b = st.columns(2)
+    with a:
         render_pie_chart(df, class_col)
-    with col_b:
+    with b:
         render_trend_chart(df, class_col, time_col)
-
     render_agent_perf_chart(df, class_col, sales_col, with_table=True)
-
-    col_c, col_d = st.columns(2)
-    with col_c:
+    c, d = st.columns(2)
+    with c:
         render_wasted_bar(df, sales_col, top_n=None)
-    with col_d:
+    with d:
         render_wasted_hist(df)
-
     render_comparison_matrix(df, class_col, sales_col)
+
 
 
 # ==========================================================
@@ -2489,346 +1025,40 @@ def _fig_to_div(fig, div_id, height=420):
 
 
 def build_dashboard_html(df, class_col, sales_col, time_col, source_name="", filter_hint="") -> str:
-    """بيبني صفحة HTML مستقلة (تفتح في أي متصفح، تفاعلية زي الأصل)
-    فيها نفس تصميم وألوان الداشبورد جوه التطبيق، عشان تتبعت أو تتحفظ كصفحة ويب."""
-
-    has_class = bool(class_col and class_col in df.columns)
-    has_sales = bool(sales_col and sales_col in df.columns)
-    has_time = bool(time_col and time_col in df.columns)
-    has_wasted = WASTED_TIME_COL in df.columns
-
-    total_calls = len(df)
-    success_count = int((df[class_col] == 1).sum()) if has_class else None
-    fail_count = int((df[class_col] == 0).sum()) if has_class else None
-    success_rate = round(success_count / total_calls * 100, 1) if has_class and total_calls else None
-    total_wasted = round(df[WASTED_TIME_COL].sum(), 1) if has_wasted else None
-    avg_wasted = round(df[WASTED_TIME_COL].mean(), 1) if has_wasted and total_calls else None
-
-    # ---- كروت أبرز النقاط ----
-    top_agent_html = '<div class="highlight-sub">محتاجين عمود التصنيف والمحصّل</div>'
-    if has_class and has_sales:
-        perf_all = _compute_agent_perf(df, class_col, sales_col)
-        perf_qualified = perf_all[perf_all["إجمالي المكالمات"] >= 3]
-        if len(perf_qualified):
-            top = perf_qualified.iloc[0]
-            top_agent_html = (
-                f'<div class="highlight-value">{top[sales_col]}</div>'
-                f'<div class="highlight-sub">{top["نسبة النجاح %"]}% نجاح '
-                f'({int(top["إجمالي المكالمات"])} مكالمة)</div>'
-            )
-        else:
-            top_agent_html = '<div class="highlight-sub">مفيش بيانات كافية</div>'
-
-    slow_agent_html = '<div class="highlight-sub">محتاجين عمود المحصّل والوقت المهدر</div>'
-    if has_wasted and has_sales:
-        wasted_totals = df.groupby(sales_col)[WASTED_TIME_COL].sum().sort_values(ascending=False)
-        if len(wasted_totals):
-            slow_agent_html = (
-                f'<div class="highlight-value">{wasted_totals.index[0]}</div>'
-                f'<div class="highlight-sub">{round(wasted_totals.iloc[0], 1)} دقيقة مهدرة</div>'
-            )
-        else:
-            slow_agent_html = '<div class="highlight-sub">مفيش بيانات كافية</div>'
-
-    busiest_day_html = '<div class="highlight-sub">محتاجين عمود التاريخ</div>'
-    if has_time:
-        t = pd.to_datetime(df[time_col], errors="coerce")
-        if t.notna().any():
-            daily_counts = t.dt.date.value_counts()
-            busiest_day_html = (
-                f'<div class="highlight-value">{daily_counts.index[0]}</div>'
-                f'<div class="highlight-sub">{int(daily_counts.iloc[0])} مكالمة</div>'
-            )
-        else:
-            busiest_day_html = '<div class="highlight-sub">مفيش تواريخ صالحة</div>'
-
-    # ---- الشارتس (بنبنيها في متغيرات الأول، وبعدين نرتبها بالترتيب اللي هيبقى شكله منظم) ----
-    chart_pie = chart_hist = chart_trend = chart_agents = chart_wasted = chart_scatter = None
-
-    if has_class:
-        labels_series = df[class_col].map({1: "ناجحة", 0: "غير ناجحة"})
-        pie_df = labels_series.value_counts().reset_index()
-        pie_df.columns = ["التصنيف", "العدد"]
-        fig_pie = px.pie(pie_df, names="التصنيف", values="العدد", hole=0.62,
-                          color="التصنيف", color_discrete_map=CHART_COLORS)
-        fig_pie.update_traces(textinfo="percent", textfont_size=13,
-                               marker=dict(line=dict(color="#0E1420", width=3)))
-        fig_pie.update_layout(showlegend=True,
-                               legend=dict(orientation="h", yanchor="bottom", y=-0.15, x=0.5, xanchor="center"),
-                               annotations=[dict(text=f"{success_rate}%<br><span style='font-size:11px;color:#B9C6D6'>نجاح</span>",
-                                                  x=0.5, y=0.5, font_size=22, font_color=COLOR_SUCCESS, showarrow=False)])
-        chart_pie = ("🎯 توزيع نتائج التصنيف", _fig_to_div(fig_pie, "fig_pie"), False)
-
-    if has_wasted:
-        fig_hist = px.histogram(df, x=WASTED_TIME_COL, nbins=20, color_discrete_sequence=[COLOR_ACCENT])
-        fig_hist.update_layout(bargap=0.08, xaxis_title="الوقت المهدر (دقيقة)", yaxis_title="عدد المرات")
-        chart_hist = ("⏱️ توزيع الوقت المهدر بين المكالمات", _fig_to_div(fig_hist, "fig_hist"), False)
-
-    if has_time:
-        trend_df = df.copy()
-        trend_df[time_col] = pd.to_datetime(trend_df[time_col], errors="coerce")
-        trend_df["اليوم"] = trend_df[time_col].dt.date
-        if has_class:
-            trend_df["الحالة"] = trend_df[class_col].map({1: "ناجحة", 0: "غير ناجحة"})
-            daily = trend_df.groupby(["اليوم", "الحالة"]).size().reset_index(name="عدد المكالمات")
-            fig_trend = px.area(daily, x="اليوم", y="عدد المكالمات", color="الحالة", color_discrete_map=CHART_COLORS)
-        else:
-            daily = trend_df.groupby("اليوم").size().reset_index(name="عدد المكالمات")
-            fig_trend = px.area(daily, x="اليوم", y="عدد المكالمات", color_discrete_sequence=[COLOR_ACCENT])
-        fig_trend.update_traces(line_width=2)
-        fig_trend.update_layout(legend_title_text="", xaxis_title="", yaxis_title="عدد المكالمات",
-                                 xaxis=dict(tickformat="%Y-%m-%d", nticks=8))
-        chart_trend = ("📅 اتجاه عدد المكالمات يوميًا", _fig_to_div(fig_trend, "fig_trend"), True)
-
-    if has_class and has_sales:
-        agent_perf = _compute_agent_perf(df, class_col, sales_col)
-        fig_agents = px.bar(agent_perf, x=sales_col, y=["ناجحة", "غير ناجحة"],
-                             color_discrete_sequence=[COLOR_SUCCESS, COLOR_FAIL], barmode="stack")
-        fig_agents.update_traces(marker_line_width=0)
-        fig_agents.update_layout(legend_title_text="", xaxis_title="", yaxis_title="عدد المكالمات")
-        chart_agents = ("📊 أداء كل محصّل (ناجحة مقابل غير ناجحة)", _fig_to_div(fig_agents, "fig_agents"), True)
-
-    if has_wasted and has_sales:
-        wasted_by_agent = df.groupby(sales_col)[WASTED_TIME_COL].sum().sort_values(ascending=False).reset_index()
-        chart_height = max(300, 28 * len(wasted_by_agent))
-        fig_wasted = px.bar(wasted_by_agent, x=WASTED_TIME_COL, y=sales_col, orientation="h",
-                             color=WASTED_TIME_COL, color_continuous_scale=[COLOR_ACCENT, COLOR_WARN, COLOR_FAIL])
-        fig_wasted.update_traces(marker_line_width=0)
-        fig_wasted.update_layout(yaxis={"categoryorder": "total ascending", "title": ""},
-                                  xaxis_title="الوقت المهدر (دقيقة)", coloraxis_showscale=False, height=chart_height)
-        chart_wasted = ("🏆 كل المحصّلين حسب الوقت المهدر", _fig_to_div(fig_wasted, "fig_wasted", height=chart_height), True)
-
-
-    comparison_table_html = ""
-    chart_scatter = None
-    if has_class and has_sales:
-        perf = _compute_agent_perf(df, class_col, sales_col)
-        if has_wasted:
-            wasted_agg = df.groupby(sales_col)[WASTED_TIME_COL].agg(["sum", "mean"]).round(1)
-            wasted_agg.columns = ["إجمالي الوقت المهدر", "متوسط الوقت المهدر"]
-            perf = perf.merge(wasted_agg, left_on=sales_col, right_index=True, how="left")
-
-            fig_scatter = px.scatter(perf, x="نسبة النجاح %", y="إجمالي الوقت المهدر", size="إجمالي المكالمات",
-                                      hover_name=sales_col, color="نسبة النجاح %",
-                                      color_continuous_scale=[COLOR_FAIL, COLOR_WARN, COLOR_SUCCESS])
-            fig_scatter.add_vline(x=perf["نسبة النجاح %"].mean(), line_dash="dot", line_color=THEME["text_dim"], opacity=0.5)
-            fig_scatter.add_hline(y=perf["إجمالي الوقت المهدر"].mean(), line_dash="dot", line_color=THEME["text_dim"], opacity=0.5)
-            fig_scatter.update_traces(hovertemplate=f"%{{hovertext}}<br>نسبة النجاح: %{{x:.1f}}%<br>الوقت المهدر: %{{y:.1f}} دقيقة<extra></extra>",
-                                       marker=dict(line=dict(color=THEME["chart_marker"], width=1)))
-            fig_scatter.update_layout(coloraxis_showscale=False, xaxis_title="نسبة النجاح %",
-                                       yaxis_title="إجمالي الوقت المهدر (دقيقة)", height=520)
-            chart_scatter = ("🧭 خريطة الأداء: نسبة النجاح مقابل الوقت المهدر", _fig_to_div(fig_scatter, "fig_scatter", height=520), True)
-
-        comparison_table_html = perf.rename(columns={sales_col: "المحصّل"}).to_html(
-            index=False, classes="comp-table", border=0, justify="right"
-        )
-
-    # ترتيب نهائي منظم: الاتنين نص العرض (دائري + هيستوجرام) جنب بعض، وبعدين كل شارت واسع في صف لوحده
-    charts_html = [c for c in [chart_pie, chart_hist, chart_trend, chart_agents, chart_wasted, chart_scatter] if c]
-
-    def metric_card(label, value, sub=""):
-        return f'''<div class="metric-box">
-            <div class="metric-label">{label}</div>
-            <div class="metric-value">{value}</div>
-            <div class="metric-sub">{sub}</div>
-        </div>'''
-
-    n_agents = df[sales_col].nunique() if has_sales else None
-
-    # كارت أفضل محصّل (نفس منطق كروت الداشبورد)
-    top_agent_value, top_agent_sub = "—", ""
-    if has_class and has_sales:
-        perf_all = _compute_agent_perf(df, class_col, sales_col)
-        perf_qualified = perf_all[perf_all["إجمالي المكالمات"] >= 3]
-        top = perf_qualified.iloc[0] if len(perf_qualified) else (perf_all.iloc[0] if len(perf_all) else None)
-        if top is not None:
-            top_agent_value = str(top[sales_col])
-            top_agent_sub = f"{top['نسبة النجاح %']}% نجاح ({int(top['إجمالي المكالمات'])} مكالمة)"
-
-    # كارت أعلى إهدار للوقت
-    max_wasted_value, max_wasted_sub = "—", ""
-    if has_wasted and has_sales:
-        wasted_sum = df.groupby(sales_col)[WASTED_TIME_COL].sum()
-        if len(wasted_sum):
-            max_wasted_value = str(wasted_sum.idxmax())
-            max_wasted_sub = f"{round(wasted_sum.max(), 1)} دقيقة مهدرة"
-
-    metrics_html = "".join([
-        metric_card("📞 إجمالي المكالمات", total_calls),
-        metric_card("✅ ناجحة", success_count if has_class else "—", f"{success_rate}%" if has_class else ""),
-        metric_card("⛔ غير ناجحة", fail_count if has_class else "—"),
-        metric_card("👥 عدد المحصّلين", n_agents if has_sales else "—"),
-        metric_card("🎯 نسبة النجاح الإجمالية", f"{success_rate}%" if has_class else "—"),
-        metric_card("🏅 أفضل محصّل", top_agent_value, top_agent_sub),
-        metric_card("🐌 أعلى إهدار للوقت", max_wasted_value, max_wasted_sub),
-        metric_card("⏱️ إجمالي الوقت المهدر (دقيقة)", total_wasted if has_wasted else "—",
-                     f"متوسط {avg_wasted} د/مكالمة" if has_wasted else ""),
-    ])
-
-    charts_grid_html = "".join(
-        f'''<div class="chart-box{' wide' if wide else ''}">
-            <div class="chart-box-title">{title}</div>
-            {div}
-        </div>''' for title, div, wide in charts_html
-    )
-
-    generated_at = datetime.now().strftime("%Y-%m-%d %H:%M")
-    export_theme = THEME
-    
-    # بناء لوحة الفلاتر في الـ HTML
-    filter_tags_html = ""
+    """تصدير بسيط يعتمد على HTML الدلالي ورسوم Plotly؛ بلا CSS مخصص."""
+    from html import escape
+    figs = []
+    if class_col and class_col in df.columns:
+        labels = df[class_col].map({1: "ناجحة", 0: "غير ناجحة"}).value_counts().reset_index()
+        labels.columns = ["التصنيف", "العدد"]
+        fig = px.pie(labels, names="التصنيف", values="العدد", hole=0.55, color="التصنيف", color_discrete_map=CHART_COLORS, template=PLOTLY_TEMPLATE)
+        fig.update_layout(**PLOTLY_LAYOUT, title="🎯 توزيع نتائج التصنيف")
+        figs.append(fig)
+    if time_col and time_col in df.columns:
+        trend = df.copy()
+        trend[time_col] = pd.to_datetime(trend[time_col], errors="coerce")
+        trend["اليوم"] = trend[time_col].dt.date
+        daily = trend.groupby("اليوم").size().reset_index(name="عدد المكالمات")
+        fig = px.area(daily, x="اليوم", y="عدد المكالمات", color_discrete_sequence=[COLOR_ACCENT], template=PLOTLY_TEMPLATE)
+        fig.update_layout(**PLOTLY_LAYOUT, title="📅 اتجاه عدد المكالمات يوميًا")
+        figs.append(fig)
+    if sales_col and sales_col in df.columns and WASTED_TIME_COL in df.columns:
+        totals = df.groupby(sales_col)[WASTED_TIME_COL].sum().sort_values(ascending=False).reset_index()
+        fig = px.bar(totals, x=WASTED_TIME_COL, y=sales_col, orientation="h", color=WASTED_TIME_COL, color_continuous_scale=[COLOR_ACCENT, COLOR_WARN, COLOR_FAIL], template=PLOTLY_TEMPLATE)
+        fig.update_layout(**PLOTLY_LAYOUT, title="🏆 الوقت المهدر حسب المحصل", yaxis_title="")
+        figs.append(fig)
+    parts = ['<!doctype html><html lang="ar" dir="rtl"><head><meta charset="utf-8"><title>داشبورد النشاط</title></head><body>']
+    parts.append(f"<h1>📊 تحليل نشاط المحصلين</h1><p>{escape(source_name)}</p>")
     if filter_hint:
-        parts = filter_hint.split(" · ")
-        icons = {"المحصّلين": "👤", "التاريخ": "📅", "التصنيف": "🏷️", "الحالة": "📊"}
-        for p in parts:
-            icon = "🔍"
-            for k, ic in icons.items():
-                if k in p:
-                    icon = ic
-                    break
-            filter_tags_html += f'<div class="filter-tag"><span>{icon}</span> {p}</div>'
-    
-    filter_panel_html = f'<div class="filter-panel">{filter_tags_html}</div>' if filter_tags_html else ''
+        parts.append(f"<p>الفلاتر: {escape(filter_hint)}</p>")
+    parts.append(f"<p>إجمالي المكالمات: {len(df):,}</p>")
+    include_js = True
+    for index, fig in enumerate(figs):
+        parts.append(pio.to_html(fig, full_html=False, include_plotlyjs=include_js, config=PLOTLY_CONFIG, div_id=f"plot_{index}"))
+        include_js = False
+    parts.append("</body></html>")
+    return "".join(parts)
 
-    return f"""<!DOCTYPE html>
-<html lang="ar" dir="rtl">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>تحليل نشاط المحصّلين | 7oudaModel</title>
-<script src="https://cdn.plot.ly/plotly-2.32.0.min.js"></script>
-<style>
-@import url('https://fonts.googleapis.com/css2?family=Tajawal:wght@400;500;700;900&family=JetBrains+Mono:wght@500;700&display=swap');
-:root {{
-    --bg: {export_theme["bg"]}; --bg-glow: {export_theme["bg_glow"]};
-    --surface: {export_theme["surface"]}; --surface-2: {export_theme["surface_2"]};
-    --accent: {export_theme["accent"]}; --success: {export_theme["success"]};
-    --danger: {export_theme["danger"]}; --warn: {export_theme["warn"]};
-    --text: {export_theme["text"]}; --text-dim: {export_theme["text_dim"]};
-}}
-* {{ box-sizing: border-box; }}
-body {{
-    margin: 0; font-family: 'Tajawal', sans-serif; color: var(--text);
-    background: radial-gradient(circle at 20% 0%, #10192C 0%, var(--bg) 55%);
-    min-height: 100vh;
-}}
-.wrap {{ max-width: 1280px; margin: 0 auto; padding: 1.5rem 1.5rem 4rem; }}
-.header {{ margin-bottom: 1rem; text-align: center; }}
-.eyebrow {{
-    font-family: 'JetBrains Mono', monospace; font-size: 0.72rem; letter-spacing: 0.14em;
-    color: var(--accent); text-transform: uppercase; margin-bottom: 0.3rem;
-}}
-h1 {{ font-weight: 900; font-size: 1.9rem; margin: 0; }}
-.subtitle {{ color: var(--text-dim); font-size: 0.95rem; margin-top: 0.4rem; }}
-
-/* لوحة الفلاتر المطبقة */
-.filter-panel {{
-    background: rgba(94, 234, 212, 0.04);
-    border: 1px solid rgba(94, 234, 212, 0.15);
-    border-radius: 12px;
-    padding: 0.8rem 1.2rem;
-    margin-bottom: 1.5rem;
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.8rem;
-    align-items: center;
-    justify-content: center;
-}}
-.filter-tag {{
-    background: var(--surface-2);
-    border: 1px solid rgba(255,255,255,0.08);
-    border-radius: 6px;
-    padding: 0.3rem 0.7rem;
-    font-size: 0.8rem;
-    color: var(--accent);
-    display: flex;
-    align-items: center;
-    gap: 0.4rem;
-}}
-.filter-label {{ color: var(--text-dim); font-size: 0.75rem; margin-left: 4px; }}
-.export-info {{ font-size: 0.7rem; color: var(--text-dim); margin-top: 1.5rem; text-align: center; opacity: 0.6; }}
-
-.divider {{
-    height: 1px; background: linear-gradient(90deg, transparent, rgba(94,234,212,0.35), transparent);
-    margin: 1.6rem 0; border: none;
-}}
-.metrics-grid {{ display: grid; grid-template-columns: repeat(4, 1fr); gap: 1rem; }}
-.metric-box {{
-    background: var(--surface); border: 1px solid rgba(255,255,255,0.06); border-radius: 14px;
-    padding: 1rem 1.1rem;
-}}
-.metric-label {{ font-size: 0.82rem; color: var(--text-dim); margin-bottom: 0.4rem; }}
-.metric-value {{ font-family: 'JetBrains Mono', monospace; font-weight: 700; font-size: 1.5rem; color: var(--accent); }}
-.metric-sub {{ font-size: 0.78rem; color: var(--text-dim); margin-top: 0.3rem; }}
-.highlights-grid {{ display: grid; grid-template-columns: repeat(3, 1fr); gap: 1rem; }}
-.highlight-box {{
-    background: var(--surface); border: 1px solid rgba(255,255,255,0.06); border-radius: 14px; padding: 1rem 1.1rem;
-}}
-.highlight-label {{ font-size: 0.82rem; color: var(--text-dim); margin-bottom: 0.5rem; }}
-.highlight-value {{ font-weight: 900; font-size: 1.2rem; color: var(--accent); line-height: 1.3; }}
-.highlight-sub {{ font-size: 0.8rem; color: var(--text-dim); margin-top: 0.2rem; }}
-.charts-grid {{ display: grid; grid-template-columns: repeat(2, 1fr); gap: 1rem; align-items: start; }}
-.chart-box {{
-    background: var(--surface); border: 1px solid rgba(255,255,255,0.07); border-radius: 14px; padding: 1rem 1.1rem;
-    overflow: hidden;
-}}
-.chart-box.wide {{ grid-column: 1 / -1; }}
-.chart-box .plotly-graph-div {{ width: 100% !important; }}
-.chart-box-title {{
-    font-weight: 700; font-size: 0.95rem; margin-bottom: 0.5rem; padding-bottom: 0.5rem;
-    border-bottom: 1px solid rgba(255,255,255,0.06);
-}}
-.table-box {{
-    background: var(--surface); border: 1px solid rgba(255,255,255,0.07); border-radius: 14px;
-    padding: 1rem 1.1rem; margin-top: 1rem; overflow-x: auto;
-}}
-.comp-table {{ width: 100%; border-collapse: collapse; font-size: 0.85rem; }}
-.comp-table th {{
-    background: var(--surface-2); color: var(--accent); padding: 0.55rem 0.7rem; text-align: right;
-    position: sticky; top: 0;
-}}
-.comp-table td {{ padding: 0.5rem 0.7rem; border-bottom: 1px solid rgba(255,255,255,0.05); }}
-.comp-table tr:hover td {{ background: rgba(94,234,212,0.05); }}
-.footer {{ text-align: center; color: var(--text-dim); font-size: 0.78rem; margin-top: 2.5rem; }}
-.filters-chip {{
-    display: inline-block; margin-top: 0.6rem; padding: 0.35rem 0.9rem; border-radius: 999px;
-    background: rgba(94,234,212,0.08); border: 1px solid rgba(94,234,212,0.25);
-    color: var(--accent); font-size: 0.8rem; font-weight: 500;
-}}
-@media (max-width: 900px) {{
-    .metrics-grid, .highlights-grid, .charts-grid {{ grid-template-columns: 1fr; }}
-}}
-</style>
-</head>
-<body>
-<div class="wrap">
-    <div class="header">
-        <div class="eyebrow">7oudaModel Activity Analytics</div>
-        <h1>📊 تحليل نشاط المحصّلين</h1>
-        <div class="subtitle">تقرير شامل لتحليل الأداء وجودة المكالمات {('· ' + source_name) if source_name else ''}</div>
-    </div>
-
-    {filter_panel_html}
-
-    <div class="divider"></div>
-    <div class="chart-box-title" style="margin-bottom: 1rem; border-bottom: 2px solid var(--accent); display: inline-block;">📈 مؤشرات الأداء الرئيسية</div>
-    <div class="metrics-grid">{metrics_html}</div>
-    <div class="divider"></div>
-    <div class="chart-box-title" style="margin-bottom: 1rem; border-bottom: 2px solid var(--accent); display: inline-block;">💡 أهم الملاحظات والتميز</div>
-    <div class="highlights-grid">
-        <div class="highlight-box"><div class="highlight-label">🏅 أفضل محصّل (نسبة نجاح)</div>{top_agent_html}</div>
-        <div class="highlight-box"><div class="highlight-label">🐌 الأكثر إهدارًا للوقت</div>{slow_agent_html}</div>
-        <div class="highlight-box"><div class="highlight-label">📅 أكثر يوم نشاطًا</div>{busiest_day_html}</div>
-    </div>
-    <div class="divider"></div>
-    <div class="charts-grid">{charts_grid_html}</div>
-    {f'<div class="table-box"><div class="chart-box-title">📋 جدول المقارنة الشامل — كل المحصّلين</div>{comparison_table_html}</div>' if comparison_table_html else ''}
-    <div class="export-info">
-        تقرير نشاط مصدّر بتاريخ: <b>{generated_at}</b> · جميع الحقوق محفوظة لـ 7oudaModel
-    </div>
-</div>
-</body>
-</html>"""
 
 
 # ==========================================================
@@ -2920,303 +1150,120 @@ def init_activity_state():
 
 def render_company_logo(company_name: str, size: int = 62):
     cfg = COMPANIES[company_name]
-    st.markdown(
-        f"""<div class="company-logo actual-logo" style="width:{size}px;height:{size}px;background:{cfg['surface']};border-color:{cfg['accent']};">
-        <img src="{cfg['logo']}" alt="{company_name}" /></div>""",
-        unsafe_allow_html=True,
-    )
+    st.image(cfg["logo"], width=size, caption=company_name)
+
 
 def render_company_selector():
-    st.markdown('<div class="section-kicker">🏢 اختر شركة التصنيف</div>', unsafe_allow_html=True)
-    st.markdown(
-        '<div class="section-help">اختار الشركة الأول، وبعدها هنحدد فترة النشاط ومواعيدها.</div>',
-        unsafe_allow_html=True,
-    )
-
+    st.subheader("🏢 اختر شركة التصنيف")
+    st.caption("اختار الشركة الأول، وبعدها حدّد فترة النشاط ومواعيدها.")
     c1, c2 = st.columns(2)
     for col, company_name in zip((c1, c2), COMPANIES.keys()):
         cfg = COMPANIES[company_name]
         with col:
-            st.markdown(
-                f"""
-                <div class="company-card">
-                    <div class="company-mark"
-                         style="background:{cfg['surface']};border-color:{cfg['accent']};">
-                        <img src="{cfg['logo']}" alt="شعار {company_name}">
-                    </div>
-                    <div>
-                        <div class="company-name">{company_name}</div>
-                        <div class="company-sub">تصنيف مكالمات الشركة</div>
-                    </div>
-                </div>
-                """,
-                unsafe_allow_html=True,
-            )
+            st.image(cfg["logo"], width=72)
+            st.write(company_name)
+            st.caption("تصنيف مكالمات الشركة")
             selected = st.session_state.get("selected_company") == company_name
-            label = "✓ الشركة المختارة" if selected else f"اختيار {company_name}"
-            if st.button(
-                label,
-                key=f"company_{company_name}",
-                use_container_width=True,
-                type="primary" if selected else "secondary",
-            ):
+            if st.button("✓ الشركة المختارة" if selected else f"اختيار {company_name}", key=f"company_{company_name}", use_container_width=True, type="primary" if selected else "secondary"):
                 st.session_state["selected_company"] = company_name
                 st.session_state["selected_period"] = None
                 st.rerun()
+    company = st.session_state.get("selected_company")
+    if company:
+        st.success(f"الشركة المختارة: {company}")
 
-    if st.session_state.get("selected_company"):
-        company = st.session_state["selected_company"]
-        cfg = COMPANIES[company]
-        st.markdown(
-            f"""
-            <div class="selected-company">
-                <div class="company-logo large"
-                     style="background:{cfg['surface']};border-color:{cfg['accent']};">
-                    <img src="{cfg['logo']}" alt="شعار {company}">
-                </div>
-                <div>
-                    <div class="selected-company-label">الشركة المختارة</div>
-                    <div class="selected-company-name">{company}</div>
-                    <div class="selected-company-sub">جاهزة لتحديد فترة النشاط</div>
-                </div>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
 
 
 def render_period_selector():
     if not st.session_state.get("selected_company"):
         return
-
-    st.markdown('<div class="section-kicker">🕒 اختر فترة النشاط</div>', unsafe_allow_html=True)
-    p1, p2, pd = st.columns(3)
-
-    p_weekly, p_monthly = st.columns(2)
-    buttons = [
-        (p1, "الفترة الأولى", "🟢", "period_1"),
-        (p2, "الفترة الثانية", "🔵", "period_2"),
-        (pd, "المجمع اليومي", "📊", "daily"),
-        (p_weekly, "المجمع الأسبوعي", "📅", "weekly"),
-        (p_monthly, "المجمع الشهري", "🗓️", "monthly"),
-    ]
-
-    for col, title, icon, key in buttons:
+    st.subheader("🕒 اختر فترة النشاط")
+    cols = st.columns(5)
+    buttons = [("الفترة الأولى", "🟢", "period_1"), ("الفترة الثانية", "🔵", "period_2"), ("المجمع اليومي", "📊", "daily"), ("المجمع الأسبوعي", "📅", "weekly"), ("المجمع الشهري", "🗓️", "monthly")]
+    for col, (title, icon, key) in zip(cols, buttons):
         with col:
             selected = st.session_state.get("selected_period") == key
-            if st.button(
-                f"{icon} {title}",
-                key=f"period_btn_{key}",
-                use_container_width=True,
-                type="primary" if selected else "secondary",
-            ):
+            if st.button(f"{icon} {title}", key=f"period_btn_{key}", use_container_width=True, type="primary" if selected else "secondary"):
                 st.session_state["selected_period"] = key
                 st.rerun()
-
     selected_period = st.session_state.get("selected_period")
     if not selected_period:
         return
-
     company = st.session_state["selected_company"]
-
     if selected_period == "period_1":
         render_period_settings("period_1", "الفترة الأولى")
     elif selected_period == "period_2":
         render_period_settings("period_2", "الفترة الثانية")
     elif selected_period == "daily":
-        st.markdown(
-            f"""
-            <div class="period-banner daily">
-                <div class="period-icon">📊</div>
-                <div>
-                    <div class="period-label">المجمع اليومي</div>
-                    <div class="period-desc">{company} · من بداية اليوم إلى نهايته</div>
-                </div>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
+        st.subheader("📊 المجمع اليومي")
+        st.caption(f"{company} · من بداية اليوم إلى نهايته")
         render_aggregate_tab("daily", "المجمع اليومي")
     elif selected_period == "weekly":
-        st.markdown(
-            f"""
-            <div class="period-banner daily" style="background: rgba(167, 139, 250, 0.08); border-color: rgba(167, 139, 250, 0.25);">
-                <div class="period-icon" style="color: #A78BFA;">📅</div>
-                <div>
-                    <div class="period-label" style="color: #A78BFA;">المجمع الأسبوعي</div>
-                    <div class="period-desc">{company} · اختر الأسبوع لرفع الملف</div>
-                </div>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
-        # أزرار اختيار الأسبوع
-        st.markdown('<div class="section-kicker" style="font-size:0.9rem; margin-top:10px;">📅 اختر الأسبوع المحدد:</div>', unsafe_allow_html=True)
-        w1, w2, w3, w4 = st.columns(4)
-        weeks = [
-            (w1, "الأسبوع الأول", "week_1"),
-            (w2, "الأسبوع الثاني", "week_2"),
-            (w3, "الأسبوع الثالث", "week_3"),
-            (w4, "الأسبوع الرابع", "week_4"),
-        ]
-        for w_col, w_title, w_key in weeks:
-            with w_col:
-                w_selected = st.session_state.get("selected_week") == w_key
-                if st.button(w_title, key=f"btn_{w_key}", use_container_width=True, type="primary" if w_selected else "secondary"):
-                    st.session_state["selected_week"] = w_key
+        st.subheader("📅 المجمع الأسبوعي")
+        st.caption(f"{company} · اختر الأسبوع لرفع الملف")
+        weeks = [("الأسبوع الأول", "week_1"), ("الأسبوع الثاني", "week_2"), ("الأسبوع الثالث", "week_3"), ("الأسبوع الرابع", "week_4")]
+        week_cols = st.columns(4)
+        for col, (title, key) in zip(week_cols, weeks):
+            with col:
+                if st.button(title, key=f"btn_{key}", use_container_width=True, type="primary" if st.session_state.get("selected_week") == key else "secondary"):
+                    st.session_state["selected_week"] = key
                     st.rerun()
-        
-        current_week_key = st.session_state.get("selected_week", "week_1")
-        week_display_name = next(w[1] for w in weeks if w[2] == current_week_key)
-        render_aggregate_tab(f"weekly_{current_week_key}", f"المجمع الأسبوعي ({week_display_name})")
+        current = st.session_state.get("selected_week", "week_1")
+        title = next(label for label, key in weeks if key == current)
+        render_aggregate_tab(f"weekly_{current}", f"المجمع الأسبوعي ({title})")
     elif selected_period == "monthly":
-        st.markdown(
-            f"""
-            <div class="period-banner daily" style="background: rgba(244, 114, 182, 0.08); border-color: rgba(244, 114, 182, 0.25);">
-                <div class="period-icon" style="color: #F472B6;">🗓️</div>
-                <div>
-                    <div class="period-label" style="color: #F472B6;">المجمع الشهري</div>
-                    <div class="period-desc">{company} · نشاط الشهر بالكامل</div>
-                </div>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
+        st.subheader("🗓️ المجمع الشهري")
+        st.caption(f"{company} · نشاط الشهر بالكامل")
         render_aggregate_tab("monthly", "المجمع الشهري")
 
 
+
 def render_period_upload_and_classify(period_key: str, period_title: str):
-    uploaded_file = st.file_uploader(
-        f"📂 ارفع ملف {period_title} (CSV أو Excel)",
-        type=["csv", "xlsx", "xls"],
-        key=f"upload_{period_key}",
-    )
+    uploaded_file = st.file_uploader(f"📂 ارفع ملف {period_title} (CSV أو Excel)", type=["csv", "xlsx", "xls"], key=f"upload_{period_key}")
     if uploaded_file is not None:
-        st.markdown(
-            f"<div class='upload-status'>📄 الملف المختار: <b>{uploaded_file.name}</b></div>",
-            unsafe_allow_html=True,
-        )
+        st.caption(f"الملف المختار: {uploaded_file.name}")
         classify_period_file(uploaded_file, period_key)
     else:
-        # 💾 مفيش ملف مرفوع دلوقتي — لو فيه نتائج محفوظة من آخر تصنيف نعرضها بصمت
         _show_period_results_from_cache(period_key)
 
 
-def _render_break_switch(label: str, has_break_key: str):
-    """سويتش البريك: بدل نعم/لا — سويتش لو فيه بريك بيظهر بداية البريك ومدته.
 
-    تنفيذ Streamlit-native: st.toggle فعلي متخزن في الـ session state
-    (بدون label مرئي)، وبنعرض سطر مخصص فيه السويتش وشكله ونص الحالة.
-    """
-    # السويتش الفعلي — بيتحفظ في session state مباشرة
-    st.session_state[has_break_key] = st.toggle(
-        label,
-        value=st.session_state[has_break_key],
-        key=f"{has_break_key}_switch",
-        label_visibility="hidden",
-    )
-    st.markdown(
-        f"""
-        <div class='break-switch-row'>
-            <span class='break-switch-label'>{label}</span>
-            <span class='break-switch-text'>{"✅ نعم — فيه بريك" if st.session_state[has_break_key] else "لا — مفيش بريك"}</span>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
+def _render_break_switch(label: str, has_break_key: str):
+    st.session_state[has_break_key] = st.toggle(label, value=st.session_state[has_break_key], key=f"{has_break_key}_switch")
+    st.caption("✅ يوجد بريك" if st.session_state[has_break_key] else "لا يوجد بريك")
+
 
 
 def render_period_settings(period_key: str, period_title: str):
     company = st.session_state["selected_company"]
-    start_key = f"{period_key}_start"
-    end_key = f"{period_key}_end"
+    start_key, end_key = f"{period_key}_start", f"{period_key}_end"
     has_break_key = f"{period_key}_has_break"
-    break_start_key = f"{period_key}_break_start"
-    break_end_key = f"{period_key}_break_end"
-
-    st.markdown(
-        f"""
-        <div class="period-banner">
-            <div class="period-icon">⏱️</div>
-            <div>
-                <div class="period-label">{period_title}</div>
-                <div class="period-desc">نشاط {company} · حدّد الميعاد قبل رفع ملف الفترة</div>
-            </div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-
+    break_start_key, break_end_key = f"{period_key}_break_start", f"{period_key}_break_end"
+    st.subheader(f"⏱️ {period_title}")
+    st.caption(f"نشاط {company} · حدّد الميعاد قبل رفع ملف الفترة")
     c1, c2 = st.columns(2)
     with c1:
-        st.session_state[start_key] = st.time_input(
-            f"بداية {period_title}",
-            value=st.session_state[start_key],
-            key=f"{start_key}_input",
-        )
+        st.session_state[start_key] = st.time_input(f"بداية {period_title}", value=st.session_state[start_key], key=f"{start_key}_input")
     with c2:
-        st.session_state[end_key] = st.time_input(
-            f"نهاية {period_title}",
-            value=st.session_state[end_key],
-            key=f"{end_key}_input",
-        )
-
+        st.session_state[end_key] = st.time_input(f"نهاية {period_title}", value=st.session_state[end_key], key=f"{end_key}_input")
     if st.session_state[start_key] >= st.session_state[end_key]:
-        st.warning("⚠️ بداية الفترة لازم تكون قبل نهايتها.")
-
-    # 🕐 سويتش البريك: لو مفعّل بيظهر بداية البريك ومدته
+        st.warning("بداية الفترة لازم تكون قبل نهايتها.")
     _render_break_switch(f"هل يوجد بريك في {period_title}؟", has_break_key)
-
     if st.session_state[has_break_key]:
         b1, b2 = st.columns(2)
         with b1:
-            st.session_state[break_start_key] = st.time_input(
-                "🕐 بداية البريك",
-                value=st.session_state[break_start_key],
-                key=f"{break_start_key}_input",
-            )
+            st.session_state[break_start_key] = st.time_input("🕐 بداية البريك", value=st.session_state[break_start_key], key=f"{break_start_key}_input")
         with b2:
-            duration_min_key = f"{period_key}_break_duration"
-            st.session_state[duration_min_key] = st.slider(
-                "⏳ مدة البريك (دقيقة)",
-                min_value=5,
-                max_value=120,
-                step=5,
-                value=int(
-                    max(5, (st.session_state[break_end_key].hour * 60 + st.session_state[break_end_key].minute)
-                        - (st.session_state[break_start_key].hour * 60 + st.session_state[break_start_key].minute))
-                ),
-                key=f"{duration_min_key}_slider",
-            )
-            total = (st.session_state[break_start_key].hour * 60 + st.session_state[break_start_key].minute)
-            end_min = total + st.session_state[duration_min_key]
-            st.session_state[break_end_key] = dt_time(end_min // 60, end_min % 60)
-
-        if st.session_state[break_start_key] >= st.session_state[break_end_key]:
-            st.warning("⚠️ بداية البريك لازم تكون قبل نهايته.")
-
-        st.markdown(
-            f"<div class='schedule-summary' style='margin-top:-8px;margin-bottom:10px;'>"
-            f"☕ البريك من <b>{st.session_state[break_start_key].strftime('%H:%M')}</b> "
-            f"ل<b>{st.session_state[break_end_key].strftime('%H:%M')}</b> "
-            f"(المدة <b>{st.session_state[duration_min_key]} دقيقة</b>)</div>",
-            unsafe_allow_html=True,
-        )
-
-    st.markdown(
-        f"""
-        <div class="schedule-summary">
-            <span>📌 النشاط:</span> {period_title} {company}
-            <span>من</span> <b>{st.session_state[start_key].strftime("%H:%M")}</b>
-            <span>إلى</span> <b>{st.session_state[end_key].strftime("%H:%M")}</b>
-            <span>· البريك:</span>
-            <b>{"موجود" if st.session_state[has_break_key] else "لا يوجد"}</b>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-
+            duration_key = f"{period_key}_break_duration"
+            current_duration = max(5, int(st.session_state[duration_key]))
+            st.session_state[duration_key] = st.slider("⏳ مدة البريك (دقيقة)", 5, 120, current_duration, 5, key=f"{duration_key}_slider")
+            start_minutes = st.session_state[break_start_key].hour * 60 + st.session_state[break_start_key].minute
+            end_minutes = start_minutes + st.session_state[duration_key]
+            st.session_state[break_end_key] = dt_time(end_minutes // 60, end_minutes % 60)
+        st.info(f"☕ البريك من {st.session_state[break_start_key]:%H:%M} إلى {st.session_state[break_end_key]:%H:%M} ({st.session_state[duration_key]} دقيقة)")
+    st.info(f"النشاط: {period_title} {company} من {st.session_state[start_key]:%H:%M} إلى {st.session_state[end_key]:%H:%M}")
     render_period_upload_and_classify(period_key, period_title)
+
 
 
 @st.cache_data(show_spinner=False)
@@ -3432,266 +1479,88 @@ def build_agent_activity(df, sales_col):
 
 def render_period_charts(df, sales_col, time_col, period_title):
     if not sales_col or sales_col not in df.columns:
-        st.info("لا يوجد عمود واضح للمحصّل لعرض نشاط المحصلين.")
+        st.info("لا يوجد عمود واضح للمحصل لعرض نشاط المحصلين.")
         return
-
     agent = build_agent_activity(df, sales_col)
     if agent.empty:
         return
-
     total = len(df)
-    success = int((df[CLASSIFICATION_COL] == 1).sum())
-    num_agents = len(agent)
+    success = int((df[CLASSIFICATION_COL] == 1).sum()) if CLASSIFICATION_COL in df.columns else 0
     success_rate = round(success / total * 100, 1) if total else 0
-
-    # ===== كروت الإحصائيات العامة =====
-    avg_dur_label = "⏱️ متوسط مدة المكالمات (دقيقة)"
-    avg_dur_total = round(pd.to_numeric(df[WASTED_TIME_COL], errors="coerce").mean(), 1) if WASTED_TIME_COL in df.columns and df[WASTED_TIME_COL].notna().any() else 0.0
-    num_grid_cols = 6 if WASTED_TIME_COL in df.columns and df[WASTED_TIME_COL].notna().any() else 5
-    total_wasted_card = ""
-    if num_grid_cols == 6:
-        total_wasted_val = round(pd.to_numeric(df[WASTED_TIME_COL], errors="coerce").sum(), 1)
-        total_wasted_card = f"""
-            <div class="agent-card" style="text-align:center; padding:1.2rem 0.8rem;">
-                <div class="stat-num" style="font-family:'JetBrains Mono',monospace; font-weight:700; font-size:1.6rem; color:#FBBF24;">{total_wasted_val:,}</div>
-                <div class="stat-label" style="color:var(--text-dim); margin-top:0.3rem;">🚨 إجمالي الوقت المهدر (دقيقة)</div>
-            </div>"""
-
-    st.markdown(
-        f"""
-        <div class="section-kicker">📊 ملخص {period_title}</div>
-        <div style="display:grid; grid-template-columns: repeat({num_grid_cols}, 1fr); gap: 0.9rem; margin-bottom: 1.4rem;">{total_wasted_card}
-            <div class="agent-card" style="text-align:center; padding:1.2rem 0.8rem;">
-                <div class="stat-num acc" style="font-family:'JetBrains Mono',monospace; font-weight:700; font-size:1.6rem; color:var(--accent);">{total:,}</div>
-                <div class="stat-label" style="color:var(--text-dim); margin-top:0.3rem;">📞 إجمالي المكالمات</div>
-            </div>
-            <div class="agent-card" style="text-align:center; padding:1.2rem 0.8rem;">
-                <div class="stat-num good" style="font-family:'JetBrains Mono',monospace; font-weight:700; font-size:1.6rem; color:var(--success);">{success:,}</div>
-                <div class="stat-label" style="color:var(--text-dim); margin-top:0.3rem;">✅ إجمالي المكالمات الناجحة</div>
-            </div>
-            <div class="agent-card" style="text-align:center; padding:1.2rem 0.8rem;">
-                <div class="stat-num" style="font-family:'JetBrains Mono',monospace; font-weight:700; font-size:1.6rem;">{num_agents:,}</div>
-                <div class="stat-label" style="color:var(--text-dim); margin-top:0.3rem;">👥 عدد المحصلين</div>
-            </div>
-            <div class="agent-card" style="text-align:center; padding:1.2rem 0.8rem;">
-                <div class="stat-num good" style="font-family:'JetBrains Mono',monospace; font-weight:700; font-size:1.6rem; color:var(--success);">{success_rate}%</div>
-                <div class="stat-label" style="color:var(--text-dim); margin-top:0.3rem;">📈 نسبة المكالمات الناجحة من الإجمالي</div>
-            </div>
-            <div class="agent-card" style="text-align:center; padding:1.2rem 0.8rem;">
-                <div class="stat-num acc" style="font-family:'JetBrains Mono',monospace; font-weight:700; font-size:1.6rem; color:var(--accent);">{avg_dur_total:,}</div>
-                <div class="stat-label" style="color:var(--text-dim); margin-top:0.3rem;">⏱️ متوسط مدة المكالمات (دقيقة)</div>
-            </div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-
-    # ===== شارتات نشاط المحصلين =====
+    avg_duration = round(pd.to_numeric(df[WASTED_TIME_COL], errors="coerce").mean(), 1) if WASTED_TIME_COL in df.columns else 0
+    metrics = st.columns(5 if WASTED_TIME_COL in df.columns else 4)
+    metrics[0].metric("📞 إجمالي المكالمات", total)
+    metrics[1].metric("✅ المكالمات الناجحة", success)
+    metrics[2].metric("👥 عدد المحصلين", len(agent))
+    metrics[3].metric("📈 نسبة النجاح", f"{success_rate}%")
+    if WASTED_TIME_COL in df.columns:
+        metrics[4].metric("⏱️ متوسط الوقت المهدر", f"{avg_duration:.1f}")
     render_agent_activity_charts(agent, df, sales_col, period_title)
-
-    with st.expander("📋 جدول تفاصيل كل محصّل", expanded=False):
-        # عمودا "إفادات لا يرد" و"نسبة لا يرد (%)" مضافان تلقائيًا في جدول التفاصيل
+    with st.expander("📋 جدول تفاصيل كل محصل"):
         st.dataframe(agent, use_container_width=True, hide_index=True)
 
 
+
 def render_agent_activity_charts(agent, df, sales_col, period_title):
-    """شارتات توضح نشاط كل المحصلين: مقارنة إجمالي المكالمات والمكالمات الناجحة ونسبة النجاح."""
     agent_sorted = agent.sort_values("ناجحة", ascending=False).reset_index(drop=True)
     names = [str(n) for n in agent_sorted["المحصّل"]]
-
-    # ===== شارت 1: إجمالي المكالمات مقابل المكالمات الناجحة لكل محصّل =====
-    fig_total = go.Figure()
-    fig_total.add_trace(
-        go.Bar(
-            name="إجمالي المكالمات",
-            x=names,
-            y=agent_sorted["إجمالي المكالمات"],
-            marker_color="#4C6A92",
-        )
-    )
-    fig_total.add_trace(
-        go.Bar(
-            name="المكالمات الناجحة",
-            x=names,
-            y=agent_sorted["ناجحة"],
-            marker_color="#4ADE9A",
-        )
-    )
-    fig_total.update_layout(
-        title=f"📞 إجمالي المكالمات والمكالمات الناجحة لكل محصّل ({period_title})",
-        barmode="group",
-        template=PLOTLY_TEMPLATE,
-        paper_bgcolor="#0E1420",
-        plot_bgcolor="#0E1420",
-        font=dict(color="#F3F6FA", size=13),
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
-        margin=dict(l=10, r=10, t=45, b=10),
-        yaxis=dict(gridcolor="#1E2B42"),
-        xaxis=dict(gridcolor="#1E2B42"),
-    )
-    st.plotly_chart(fig_total, use_container_width=True)
-
-    # ===== شارت 2: نسبة نجاح كل محصّل =====
-    success_rates = []
-    for _, row in agent_sorted.iterrows():
-        t = int(row["إجمالي المكالمات"])
-        s = int(row["ناجحة"])
-        success_rates.append(round(s / t * 100, 1) if t else 0)
-
-    fig_rate = go.Figure(
-        go.Bar(
-            x=success_rates,
-            y=names,
-            orientation="h",
-            marker=dict(
-                color="#3DE0C9",
-                line=dict(color="#2BC7B4", width=1),
-            ),
-            text=[f"{r}%" for r in success_rates],
-            textposition="outside",
-        )
-    )
-    fig_rate.update_layout(
-        title="📈 نسبة نجاح كل محصّل من إجمالي مكالماته",
-        template=PLOTLY_TEMPLATE,
-        paper_bgcolor="#0E1420",
-        plot_bgcolor="#0E1420",
-        font=dict(color="#F3F6FA", size=13),
-        margin=dict(l=10, r=40, t=45, b=10),
-        xaxis=dict(gridcolor="#1E2B42", range=[0, 100]),
-        yaxis=dict(gridcolor="#1E2B42"),
-    )
-    st.plotly_chart(fig_rate, use_container_width=True)
-
-    # ===== شارت 3: المكالمات الناجحة مقابل غير الناجحة لكل محصّل =====
+    fig = go.Figure([
+        go.Bar(name="إجمالي المكالمات", x=names, y=agent_sorted["إجمالي المكالمات"], marker_color=THEME["text_dim"]),
+        go.Bar(name="المكالمات الناجحة", x=names, y=agent_sorted["ناجحة"], marker_color=COLOR_SUCCESS),
+    ])
+    fig.update_layout(**PLOTLY_LAYOUT, title=f"📞 إجمالي وناجح المكالمات لكل محصل ({period_title})", barmode="group", xaxis_title="", yaxis_title="عدد المكالمات")
+    st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG)
+    rates = [(int(r["ناجحة"]) / int(r["إجمالي المكالمات"]) * 100) if int(r["إجمالي المكالمات"]) else 0 for _, r in agent_sorted.iterrows()]
+    fig = px.bar(agent_sorted.assign(**{"نسبة النجاح": rates}), x="نسبة النجاح", y="المحصّل", orientation="h", text="نسبة النجاح", color="نسبة النجاح", color_continuous_scale=[COLOR_FAIL, COLOR_WARN, COLOR_SUCCESS], template=PLOTLY_TEMPLATE)
+    fig.update_layout(**PLOTLY_LAYOUT, title="📈 نسبة نجاح كل محصل", xaxis_range=[0, 100], xaxis_title="النسبة %", yaxis_title="")
+    st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG)
     render_success_fail_chart(agent, period_title)
-
-    # ===== شارت 4: متوسط مدة المكالمات لكل محصّل =====
     render_avg_duration_chart(agent, period_title)
-
-    # ===== شارت 5: عدد إفادات "لا يرد" لكل محصّل =====
     render_no_answer_chart(df, sales_col, period_title)
 
 
-def render_success_fail_chart(agent, period_title):
-    """شارت تفصيلي: المكالمات الناجحة مقابل غير الناجحة لكل محصّل."""
-    agent_sorted = agent.sort_values("ناجحة", ascending=False).reset_index(drop=True)
-    names = [str(n) for n in agent_sorted["المحصّل"]]
 
-    fig = go.Figure()
-    fig.add_trace(
-        go.Bar(
-            name="المكالمات الناجحة",
-            x=names,
-            y=agent_sorted["ناجحة"],
-            marker_color="#4ADE9A",
-            text=[str(int(v)) for v in agent_sorted["ناجحة"]],
-            textposition="outside",
-        )
-    )
-    fig.add_trace(
-        go.Bar(
-            name="المكالمات غير الناجحة",
-            x=names,
-            y=agent_sorted["إجمالي المكالمات"] - agent_sorted["ناجحة"],
-            marker_color="#FB7185",
-            text=[str(int(v)) for v in (agent_sorted["إجمالي المكالمات"] - agent_sorted["ناجحة"])],
-            textposition="outside",
-        )
-    )
-    fig.update_layout(
-        title=f"✅ المكالمات الناجحة مقابل غير الناجحة لكل محصّل ({period_title})",
-        barmode="group",
-        template=PLOTLY_TEMPLATE,
-        paper_bgcolor="#0E1420",
-        plot_bgcolor="#0E1420",
-        font=dict(color="#F3F6FA", size=13),
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
-        margin=dict(l=10, r=10, t=45, b=10),
-        yaxis=dict(gridcolor="#1E2B42"),
-        xaxis=dict(gridcolor="#1E2B42"),
-    )
-    st.plotly_chart(fig, use_container_width=True)
+def render_success_fail_chart(agent, period_title):
+    ordered = agent.sort_values("ناجحة", ascending=False).reset_index(drop=True)
+    names = [str(n) for n in ordered["المحصّل"]]
+    failed = ordered["إجمالي المكالمات"] - ordered["ناجحة"]
+    fig = go.Figure([
+        go.Bar(name="المكالمات الناجحة", x=names, y=ordered["ناجحة"], marker_color=COLOR_SUCCESS),
+        go.Bar(name="المكالمات غير الناجحة", x=names, y=failed, marker_color=COLOR_FAIL),
+    ])
+    fig.update_layout(**PLOTLY_LAYOUT, title=f"✅ الناجحة مقابل غير الناجحة ({period_title})", barmode="group", xaxis_title="", yaxis_title="عدد المكالمات")
+    st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG)
+
 
 
 def render_avg_duration_chart(agent, period_title):
-    """شارت متوسط مدة المكالمات لكل محصّل."""
-    dur_key = "متوسط مدة المكالمة (دقيقة)"
-    if dur_key not in agent.columns:
+    key = "متوسط مدة المكالمة (دقيقة)"
+    if key not in agent.columns:
         return
+    ordered = agent.sort_values(key, ascending=True)
+    fig = px.bar(ordered, x=key, y="المحصّل", orientation="h", text=key, color=key, color_continuous_scale=[COLOR_ACCENT, COLOR_WARN], template=PLOTLY_TEMPLATE)
+    fig.update_layout(**PLOTLY_LAYOUT, title=f"⏱️ متوسط مدة المكالمات ({period_title})", xaxis_title="دقيقة", yaxis_title="")
+    st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG)
 
-    agent_sorted = agent.sort_values(dur_key, ascending=True).reset_index(drop=True)
-    names = [str(n) for n in agent_sorted["المحصّل"]]
-    values = [round(float(v), 1) for v in agent_sorted[dur_key]]
-
-    fig = go.Figure(
-        go.Bar(
-            x=values,
-            y=names,
-            orientation="h",
-            marker=dict(
-                color="#60A5FA",
-                line=dict(color="#3B82F6", width=1),
-            ),
-            text=[f"{v:,} دقيقة" for v in values],
-            textposition="outside",
-        )
-    )
-    fig.update_layout(
-        title=f"⏱️ متوسط مدة المكالمات لكل محصّل ({period_title})",
-        template=PLOTLY_TEMPLATE,
-        paper_bgcolor="#0E1420",
-        plot_bgcolor="#0E1420",
-        font=dict(color="#F3F6FA", size=13),
-        margin=dict(l=10, r=70, t=45, b=10),
-        xaxis=dict(gridcolor="#1E2B42"),
-        yaxis=dict(gridcolor="#1E2B42"),
-    )
-    st.plotly_chart(fig, use_container_width=True)
 
 
 def render_no_answer_chart(df, sales_col, period_title):
-    """شارت عدد إفادات \"لا يرد\" في عمود Notes لكل محصّل."""
     notes_col = ORIGINAL_TEXT_COL if ORIGINAL_TEXT_COL in df.columns else None
     if not notes_col or sales_col not in df.columns:
         return
-
     work = df.copy()
-    work["_lrd"] = work[notes_col].astype(str).str.contains("لا يرد|لايرد|لا\\s*يرد", regex=True, na=False)
-    lrd = work[work["_lrd"] == True].groupby(sales_col).size()
-    totals = work.groupby(sales_col).size()
-    agent_sorted = totals.sort_values(ascending=False).reset_index()
-    names = [str(n) for n in agent_sorted[sales_col]]
-    counts = [int(lrd.get(n, 0)) for n in agent_sorted[sales_col]]
+    work["_lrd"] = work[notes_col].astype(str).str.contains(r"لا يرد|لايرد|لا\s*يرد", regex=True, na=False)
+    counts = work[work["_lrd"]].groupby(sales_col).size().reset_index(name="عدد إفادات لا يرد")
+    if counts.empty:
+        return
+    fig = px.bar(counts, x=sales_col, y="عدد إفادات لا يرد", color_discrete_sequence=[COLOR_FAIL], template=PLOTLY_TEMPLATE)
+    fig.update_layout(**PLOTLY_LAYOUT, title=f"📝 إفادات لا يرد لكل محصل ({period_title})", xaxis_title="", yaxis_title="العدد")
+    st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG)
 
-    fig = go.Figure(
-        go.Bar(
-            x=names,
-            y=counts,
-            marker=dict(
-                color="#FB7185",
-                line=dict(color="#F43F5E", width=1),
-            ),
-            text=[str(c) for c in counts],
-            textposition="outside",
-        )
-    )
-    fig.update_layout(
-        title=f"📝 عدد إفادات \"لا يرد\" في عمود Notes لكل محصّل ({period_title})",
-        template=PLOTLY_TEMPLATE,
-        paper_bgcolor="#0E1420",
-        plot_bgcolor="#0E1420",
-        font=dict(color="#F3F6FA", size=13),
-        margin=dict(l=10, r=10, t=45, b=10),
-        yaxis=dict(gridcolor="#1E2B42", title="عدد إفادات لا يرد"),
-        xaxis=dict(gridcolor="#1E2B42"),
-    )
-    st.plotly_chart(fig, use_container_width=True)
 
 
 
 def _render_aggregate_break_settings(period_key, period_title):
-    """إعدادات البريك للمجمعات (يومي/أسبوعي/شهري): سويتش + بداية البريك + مدته."""
     has_break_key = f"{period_key}_has_break"
     break_start_key = f"{period_key}_break_start"
     break_end_key = f"{period_key}_break_end"
@@ -3699,50 +1568,25 @@ def _render_aggregate_break_settings(period_key, period_title):
     if st.session_state[has_break_key]:
         b1, b2 = st.columns(2)
         with b1:
-            st.session_state[break_start_key] = st.time_input(
-                "🕐 بداية البريك",
-                value=st.session_state[break_start_key],
-                key=f"{break_start_key}_input",
-            )
+            st.session_state[break_start_key] = st.time_input("🕐 بداية البريك", value=st.session_state[break_start_key], key=f"{break_start_key}_input")
         with b2:
             duration_key = f"{period_key}_break_duration"
-            st.session_state[duration_key] = st.slider(
-                "⏳ مدة البريك (دقيقة)",
-                min_value=5,
-                max_value=120,
-                step=5,
-                value=int(st.session_state[duration_key]),
-                key=f"{duration_key}_slider",
-            )
-            total = (st.session_state[break_start_key].hour * 60 + st.session_state[break_start_key].minute)
-            end_min = total + st.session_state[duration_key]
-            st.session_state[break_end_key] = dt_time(end_min // 60, end_min % 60)
-        if st.session_state[break_start_key] >= st.session_state[break_end_key]:
-            st.warning("⚠️ بداية البريك لازم تكون قبل نهايته.")
-        st.markdown(
-            f"<div class='schedule-summary' style='margin-top:-8px;margin-bottom:10px;'>"
-            f"☕ البريك من <b>{st.session_state[break_start_key].strftime('%H:%M')}</b> "
-            f"ل<b>{st.session_state[break_end_key].strftime('%H:%M')}</b> "
-            f"(المدة <b>{st.session_state[duration_key]} دقيقة</b>)</div>",
-            unsafe_allow_html=True,
-        )
+            st.session_state[duration_key] = st.slider("⏳ مدة البريك (دقيقة)", 5, 120, int(st.session_state[duration_key]), 5, key=f"{duration_key}_slider")
+            total = st.session_state[break_start_key].hour * 60 + st.session_state[break_start_key].minute + st.session_state[duration_key]
+            st.session_state[break_end_key] = dt_time(total // 60, total % 60)
+        st.info(f"☕ البريك من {st.session_state[break_start_key]:%H:%M} إلى {st.session_state[break_end_key]:%H:%M}")
+
 
 def render_aggregate_tab(period_key, period_title):
     company = st.session_state["selected_company"]
     _render_aggregate_break_settings(period_key, period_title)
-    uploaded_file = st.file_uploader(
-        f"📂 ارفع ملف {period_title} (CSV أو Excel) — الموديل هيصفّنه دفعة واحدة",
-        type=["csv", "xlsx", "xls"],
-        key=f"upload_{period_key}",
-    )
+    uploaded_file = st.file_uploader(f"📂 ارفع ملف {period_title} (CSV أو Excel)", type=["csv", "xlsx", "xls"], key=f"upload_{period_key}")
     if uploaded_file is not None:
-        st.markdown(
-            f"<div class='upload-status'>📄 الملف المختار: <b>{uploaded_file.name}</b></div>",
-            unsafe_allow_html=True,
-        )
+        st.caption(f"الملف المختار: {uploaded_file.name}")
         _classify_aggregate_file(uploaded_file, company, period_key, period_title)
     else:
         _show_aggregate_results_from_cache(period_key, period_title)
+
 
 def _classify_aggregate_file(uploaded_file, company, period_key, period_title):
     result_key = f"{period_key}_result"
@@ -3816,17 +1660,10 @@ def _show_aggregate_results_from_cache(period_key, period_title):
         _render_aggregate_results(stored, period_title)
 def page_classification():
     init_activity_state()
-
-    page_header(
-        "CALL QUALITY CLASSIFIER",
-        "🎯 تصنيف المكالمات",
-        "اختار الشركة → اختار الفترة → حدّد الميعاد والبريك → ارفع الملف → ابدأ التصنيف",
-        show_wave=True,
-    )
-
+    page_header("CALL QUALITY CLASSIFIER", "🎯 تصنيف المكالمات", "اختار الشركة → اختار الفترة → حدّد الميعاد والبريك → ارفع الملف → ابدأ التصنيف", show_wave=True)
     render_company_selector()
-    st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
     render_period_selector()
+
 
 
 # ==========================================================
@@ -3835,15 +1672,8 @@ def page_classification():
 
 def page_placeholder(eyebrow, title, subtitle, icon):
     page_header(eyebrow, f"{icon} {title}", subtitle)
-    st.markdown(
-        f"""
-        <div class="placeholder-card">
-            {icon}<br><br>
-            التويب ده لسه Placeholder — هنحدد منطقها ومصدر بياناتها خطوة خطوة.
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
+    st.info("التويب ده لسه Placeholder — هنحدد منطقها ومصدر بياناتها خطوة خطوة.")
+
 
 
 # ==========================================================
@@ -3901,38 +1731,20 @@ def _run_neglect_followup_pipeline(new_file, old_file):
         st.error(f"خطأ في معالجة الملفات: {e}")
 
 def _show_neglect_followup_results(df):
-    st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
-    st.markdown('<div class="chart-card-title">📊 نتائج متابعة الإهمال</div>', unsafe_allow_html=True)
-    
-    # KPI Cards
-    covered = len(df[df['الملاحظات'] == "تم التغطية"])
-    not_covered = len(df[df['الملاحظات'] == "لم يتم التغطية"])
-    
+    st.subheader("📊 نتائج متابعة الإهمال")
+    covered = int((df["الملاحظات"] == "تم التغطية").sum())
+    not_covered = int((df["الملاحظات"] == "لم يتم التغطية").sum())
+    pct = covered / len(df) * 100 if len(df) else 0
     c1, c2, c3 = st.columns(3)
-    with c1:
-        st.markdown(f'<div class="metric-box"><div class="metric-label">✅ تم التغطية</div><div class="metric-value">{covered}</div></div>', unsafe_allow_html=True)
-    with c2:
-        st.markdown(f'<div class="metric-box"><div class="metric-label">❌ لم يتم التغطية</div><div class="metric-value" style="color:#F87171;">{not_covered}</div></div>', unsafe_allow_html=True)
-    with c3:
-        coverage_pct = (covered / len(df) * 100) if len(df) > 0 else 0
-        st.markdown(f'<div class="metric-box"><div class="metric-label">📈 نسبة التغطية</div><div class="metric-value">{coverage_pct:.1f}%</div></div>', unsafe_allow_html=True)
-    
-    st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
+    c1.metric("✅ تم التغطية", covered)
+    c2.metric("❌ لم يتم التغطية", not_covered)
+    c3.metric("📈 نسبة التغطية", f"{pct:.1f}%")
     st.dataframe(df, use_container_width=True, hide_index=True)
-    
-    # Download
     out_excel = io.BytesIO()
     with pd.ExcelWriter(out_excel, engine="openpyxl") as writer:
         df.to_excel(writer, index=False, sheet_name="متابعة الإهمال")
-    
-    st.download_button(
-        "⬇️ تحميل تقرير متابعة الإهمال المحدث (Excel)",
-        data=out_excel.getvalue(),
-        file_name=f"متابعة_الإهمال_{datetime.now().strftime('%Y-%m-%d')}.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        use_container_width=True,
-        type="primary",
-    )
+    st.download_button("⬇️ تحميل تقرير متابعة الإهمال المحدث (Excel)", data=out_excel.getvalue(), file_name=f"متابعة_الإهمال_{datetime.now():%Y-%m-%d}.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True, type="primary")
+
 
 def page_neglect():
     """تويب الإهمال: فلترة الحالات المتأخرة في المتابعة + حساب فرق الأيام + داشبورد."""
@@ -3957,14 +1769,14 @@ def page_neglect():
             st.session_state["neglect_mode"] = "followup"
             st.rerun()
 
-    st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
+    st.divider()
     
     if st.session_state["neglect_mode"] == "neglect":
         # إدارة حالات Sub State
         with st.expander("⚙️ إدارة حالات Sub State المستهدفة (الإهمال)"):
             available = st.session_state.get("neglect_available_states", [])
             if available:
-                st.markdown('<div class="section-kicker">🔍 اختر حالات إضافية من الملف المرفوع:</div>', unsafe_allow_html=True)
+                st.subheader("🔍 اختر حالات إضافية من الملف المرفوع")
                 to_add_options = [s for s in available if s not in st.session_state["neglect_sub_states"]]
                 selected_to_add = st.multiselect("اختر الحالات لإضافتها لقائمة الإهمال:", to_add_options)
                 if st.button("➕ إضافة الحالات المختارة"):
@@ -3975,7 +1787,7 @@ def page_neglect():
             else:
                 st.info("💡 ارفع ملف أولاً عشان أقدر أطلع لك كل الحالات المتاحة تختار منها.")
             
-            st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
+            st.divider()
             st.write("📋 الحالات المشمولة حالياً في الإهمال:")
             cols = st.columns(3)
             for i, state in enumerate(st.session_state["neglect_sub_states"]):
@@ -4069,30 +1881,15 @@ def _run_neglect_pipeline(uploaded):
 def _show_neglect_results(df, meta):
     sales_col = meta["sales_col"]
     net_col = meta["net_col"]
-    
-    # Dashboard
     render_promises_dashboard(df, sales_col, net_col, "الإهمال")
-    
-    st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
-    
-    # Table
-    st.markdown('<div class="chart-card-title">📋 جدول حالات الإهمال التفصيلي</div>', unsafe_allow_html=True)
+    st.subheader("📋 جدول حالات الإهمال التفصيلي")
     display_cols = [c for c in [sales_col, meta["substate_col"], meta["duedate_col"], meta["lastdate_col"], "فرق_الأيام", net_col] if c in df.columns]
     st.dataframe(df[display_cols], use_container_width=True, hide_index=True)
-    
-    # Download
     out_excel = io.BytesIO()
     with pd.ExcelWriter(out_excel, engine="openpyxl") as writer:
         df[display_cols].to_excel(writer, index=False, sheet_name="حالات الإهمال")
-    
-    st.download_button(
-        "⬇️ تحميل تقرير الإهمال (Excel)",
-        data=out_excel.getvalue(),
-        file_name=f"تقرير_الإهمال_{datetime.now().strftime('%Y-%m-%d')}.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        use_container_width=True,
-        type="primary",
-    )
+    st.download_button("⬇️ تحميل تقرير الإهمال (Excel)", data=out_excel.getvalue(), file_name=f"تقرير_الإهمال_{datetime.now():%Y-%m-%d}.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True, type="primary")
+
 
 
 def page_dashboard():
@@ -4164,210 +1961,60 @@ def page_dashboard():
 
 def _render_dashboard(df, class_col, sales_col, time_col, source_name, filter_hint=""):
     if filter_hint:
-        st.markdown(f'<div class="filter-badge">{filter_hint}</div>', unsafe_allow_html=True)
+        st.info(f"الفلاتر المطبقة: {filter_hint}")
     render_full_dashboard(df, class_col=class_col, sales_col=sales_col, time_col=time_col)
+    dashboard_html = build_dashboard_html(df, class_col=class_col, sales_col=sales_col, time_col=time_col, source_name=source_name, filter_hint=filter_hint)
+    st.download_button("🌐 تحميل الداشبورد كصفحة ويب HTML", data=dashboard_html.encode("utf-8"), file_name="داشبورد_النشاط.html", mime="text/html", use_container_width=True, key="dash_html_download_v3", type="primary")
+    st.download_button("⬇️ تحميل البيانات كـ CSV", data=df.to_csv(index=False).encode("utf-8-sig"), file_name="بيانات_النشاط.csv", mime="text/csv", use_container_width=True, key="dash_csv_download_v3")
 
-    dashboard_html = build_dashboard_html(
-        df, class_col=class_col, sales_col=sales_col, time_col=time_col,
-        source_name=source_name, filter_hint=filter_hint
-    )
-    st.download_button(
-        "🌐 تحميل الداشبورد كصفحة ويب (HTML) — تفتحها كأي موقع",
-        data=dashboard_html.encode("utf-8"),
-        file_name="داشبورد_النشاط.html",
-        mime="text/html",
-        use_container_width=True,
-        key="dash_html_download_v3",
-        type="primary",
-    )
-    st.download_button(
-        "⬇️ تحميل البيانات كـ CSV",
-        data=df.to_csv(index=False).encode("utf-8-sig"),
-        file_name="بيانات_النشاط.csv",
-        mime="text/csv",
-        use_container_width=True,
-        key="dash_csv_download_v3",
-    )
 
 
 def _render_slicers(df, sales_col, time_col):
-    """سلايسرز الداشبورد في لوحة منسقة: المحصّلين + التواريخ + الحالة (Sub State) + التصنيف.
-    بتشتغل على الـ df المفلتر للعرض فقط — الكاش الأصلي مبيتلووش."""
-    # ---------- استخراج القيم المتاحة ----------
-    agents = []
-    if sales_col and sales_col in df.columns:
-        agents = sorted([str(a) for a in df[sales_col].dropna().unique()])
-    date_min, date_max = None, None
+    st.subheader("🎚️ فلاتر عرض الداشبورد")
+    agents = sorted([str(a) for a in df[sales_col].dropna().unique()]) if sales_col and sales_col in df.columns else []
+    date_min = date_max = None
     if time_col and time_col in df.columns:
         ts = pd.to_datetime(df[time_col], errors="coerce")
         if ts.notna().any():
             date_min, date_max = ts.min().date(), ts.max().date()
-    substates = []
     sub_col = find_column(df, PROMISE_SUB_STATE_CANDIDATES)
-    if sub_col and sub_col in df.columns:
-        substates = sorted([str(s) for s in df[sub_col].dropna().unique()])
+    substates = sorted([str(s) for s in df[sub_col].dropna().unique()]) if sub_col and sub_col in df.columns else []
     class_col = CLASSIFICATION_COL if CLASSIFICATION_COL in df.columns else None
-
-    # ---------- اللوحة ----------
-    # حقن ستايل داكن لستخدام تاريخ input اللي streamlit بيرسمه بخلفية بيضاء
-    st.markdown(
-        """<style>
-        .stDateInputField, input[data-testid="stDateInputField"], input[placeholder*="YYYY"], input[placeholder*="YYYY/MM/DD"] {
-            background: var(--input-bg) !important;
-            border: 1px solid rgba(94,234,212,0.3) !important;
-            color: var(--text) !important;
-            border-radius: 10px !important;
-            box-shadow: none !important;
-        }
-        input[data-testid="stDateInputField"]::placeholder,
-        input[placeholder*="YYYY"]::placeholder {
-            color: var(--placeholder) !important;
-            opacity: 1 !important;
-        }
-        input[data-testid="stDateInputField"]:focus {
-            border-color: rgba(94,234,212,0.55) !important;
-            box-shadow: 0 0 0 3px rgba(94,234,212,0.12) !important;
-            outline: none !important;
-        }
-        </style>""",
-        unsafe_allow_html=True,
-    )
-    st.markdown('<div class="slicer-panel">', unsafe_allow_html=True)
-    st.markdown('<div class="slicer-panel-title">🎚️ فلاتر عرض الداشبورد</div>', unsafe_allow_html=True)
-    st.markdown(
-        """<style>
-        div[data-testid="stDateInput"] .stDateInputField, div[data-testid="stDateInput"] .stDateInputField div {
-            background: var(--input-bg) !important;
-        }
-        div[data-testid="stDateInput"] div[class*="st-"] { background: var(--input-bg) !important; border-radius: 10px; }
-        div[data-testid="stDateInput"] input[type="text"], div[data-testid="stDateInput"] input {
-            background: var(--input-bg) !important; color: var(--text) !important;
-        }
-        </style>""",
-        unsafe_allow_html=True,
-    )
-    st.components.v1.html(
-        """<script>
-        (function(){
-            function darkDate(){
-                var wrap = document.querySelector('div[data-testid="stDateInput"]');
-                if(!wrap) return;
-                wrap.querySelectorAll('div').forEach(function(x){
-                    if(getComputedStyle(x).backgroundColor === 'rgb(240, 242, 246)'){
-                        x.style.background = 'var(--input-bg)';
-                        x.style.borderRadius = '10px';
-                    }
-                });
-            }
-            darkDate();
-            var iv = setInterval(function(){ darkDate(); }, 400);
-            var obs = new MutationObserver(function(){ darkDate(); });
-            obs.observe(document.body, {childList: true, subtree: true});
-        })();
-        </script>""",
-        height=0,
-    )
-
-    # ---------- شبكة الفلاتر: 4 أعمدة متساوية ومنسقة ----------
-    class_options = {"ناجحة (1)": 1, "غير ناجحة (0)": 0, "الكل": None}
-    s1, s2, s3, s4 = st.columns(4)
-    with s1:
-        st.markdown('<div class="slicer-cell">', unsafe_allow_html=True)
-        st.markdown('<div class="slicer-section-title">👤 المحصّلين</div>', unsafe_allow_html=True)
-        selected_agents = st.multiselect(
-            "المحصّلين", options=agents, default=agents,
-            label_visibility="collapsed",
-            key="dash_agent_filter",
-            help="حدد المحصّلين اللي عايز تعرض نشاطهم",
-        )
-        if agents:
-            st.markdown(
-                f'<div class="slicer-cell-count">{len(selected_agents) or 0} من {len(agents)} محصّل</div>',
-                unsafe_allow_html=True,
-            )
-        st.markdown('</div>', unsafe_allow_html=True)
-    with s2:
-        st.markdown('<div class="slicer-cell">', unsafe_allow_html=True)
-        st.markdown('<div class="slicer-section-title">📅 التواريخ</div>', unsafe_allow_html=True)
-        if date_min is not None:
-            date_range = st.date_input(
-                "التواريخ",
-                value=(date_min, date_max), min_value=date_min, max_value=date_max,
-                label_visibility="collapsed",
-                key="dash_date_filter",
-                help="حدد نطاق التاريخ من عمود Created On",
-            )
-        else:
-            date_range = None
-        st.markdown('</div>', unsafe_allow_html=True)
-    with s3:
-        st.markdown('<div class="slicer-cell">', unsafe_allow_html=True)
-        st.markdown('<div class="slicer-section-title">🏷️ التصنيف</div>', unsafe_allow_html=True)
-        selected_class = st.radio(
-            "التصنيف",
-            options=list(class_options.keys()),
-            index=2,
-            key="dash_class_filter",
-            horizontal=True,
-            label_visibility="collapsed",
-            help="فلترة حسب نتيجة التصنيف (عمود التصنيف)",
-        )
-        st.markdown('</div>', unsafe_allow_html=True)
-    with s4:
-        st.markdown('<div class="slicer-cell">', unsafe_allow_html=True)
-        st.markdown('<div class="slicer-section-title">📊 الحالة (Sub State)</div>', unsafe_allow_html=True)
-        selected_substates = []
-        if substates:
-            selected_substates = st.multiselect(
-                "الحالة (Sub State)", options=substates, default=substates,
-                label_visibility="collapsed",
-                key="dash_substate_filter",
-                help="حدد حالات المتابعة من عمود Sub State",
-            )
-        st.markdown('</div>', unsafe_allow_html=True)
-
-    # ---------- التطبيق ----------
-    is_empty = False
+    c1, c2, c3, c4 = st.columns(4)
+    with c1:
+        selected_agents = st.multiselect("👤 المحصلون", agents, default=agents, key="dash_agent_filter")
+    with c2:
+        date_range = st.date_input("📅 التواريخ", value=(date_min, date_max) if date_min is not None else None, min_value=date_min, max_value=date_max, key="dash_date_filter") if date_min is not None else None
+    with c3:
+        class_options = {"ناجحة (1)": 1, "غير ناجحة (0)": 0, "الكل": None}
+        selected_class = st.radio("🏷️ التصنيف", list(class_options.keys()), index=2, key="dash_class_filter", horizontal=True)
+    with c4:
+        selected_substates = st.multiselect("📊 الحالة", substates, default=substates, key="dash_substate_filter") if substates else []
     if sales_col and not selected_agents:
-        is_empty = True
-    if sub_col and substates and not selected_substates:
-        is_empty = True
-
-    if is_empty:
-        st.markdown(
-            """<div class="slicer-empty">
-                <div class="slicer-empty-icon">🔍</div>
-                <div class="slicer-empty-title">لا توجد نتائج لعرضها</div>
-                <div class="slicer-empty-sub">
-                    الفلاتر دلوقتي مش محددة — ظبّط اختيار المحصّلين و/أو الحالة فوق عشان الداشبورد تظهر تاني.
-                </div>
-            </div>""",
-            unsafe_allow_html=True,
-        )
+        st.warning("لا توجد نتائج: اختر محصلًا واحدًا على الأقل.")
         return pd.DataFrame(columns=df.columns), ""
-
+    if sub_col and substates and not selected_substates:
+        st.warning("لا توجد نتائج: اختر حالة واحدة على الأقل.")
+        return pd.DataFrame(columns=df.columns), ""
     filtered = df.copy()
     hint_parts = []
     if sales_col and selected_agents != agents:
         filtered = filtered[filtered[sales_col].astype(str).isin(selected_agents)]
-        hint_parts.append(f"المحصّلين: {len(selected_agents)} من {len(agents)}")
+        hint_parts.append(f"المحصلون: {len(selected_agents)} من {len(agents)}")
     if time_col and isinstance(date_range, tuple) and len(date_range) == 2:
         d0, d1 = date_range
         if d0 != date_min or d1 != date_max:
             ts = pd.to_datetime(filtered[time_col], errors="coerce")
-            keep = ts.notna() & (ts.dt.date >= d0) & (ts.dt.date <= d1)
-            filtered = filtered[keep]
+            filtered = filtered[ts.notna() & (ts.dt.date >= d0) & (ts.dt.date <= d1)]
             hint_parts.append(f"التاريخ من {d0} إلى {d1}")
-    if class_col and selected_class and selected_class in class_options and class_options[selected_class] is not None:
-        target = class_options[selected_class]
-        filtered = filtered[filtered[class_col] == target]
+    if class_col and class_options[selected_class] is not None:
+        filtered = filtered[filtered[class_col] == class_options[selected_class]]
         hint_parts.append(f"التصنيف: {selected_class}")
     if sub_col and selected_substates != substates:
         filtered = filtered[filtered[sub_col].astype(str).isin(selected_substates)]
         hint_parts.append(f"الحالة: {len(selected_substates)} من {len(substates)}")
+    return filtered, " · ".join(hint_parts)
 
-    hint = " · ".join(hint_parts)
-    return filtered, hint
 
 
 def _show_dashboard_from_cache():
@@ -4397,15 +2044,8 @@ PAGES = {
 }
 
 with st.sidebar:
-    st.markdown(
-        """
-        <div class="sidebar-brand">
-            <div class="subtitle">7OUDA MODEL</div>
-            <div class="title">🎙️ لوحة تحليل المكالمات</div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
+    st.caption("7OUDA MODEL")
+    st.title("🎙️ لوحة تحليل المكالمات")
     selected_page = st.radio("التنقل", list(PAGES.keys()), label_visibility="collapsed")
 
 PAGES[selected_page]()

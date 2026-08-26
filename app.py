@@ -2023,19 +2023,31 @@ def _show_dashboard_from_cache():
 # ==========================================================
 
 PAGES = {
-    "🎯 التصنيف": page_classification,
+    "🎯 تصنيف المكالمات": page_classification,
     "📗 الوعود القائمة": page_standing_promises,
     "📕 الوعود المكسورة": page_broken_promises,
-    "⚠️ الإهمال": page_neglect,
+    "⚠️ الإهمال والمتابعة": page_neglect,
     "🧾 أخطاء الحالات": lambda: page_placeholder(
         "CASE ERRORS", "أخطاء الحالات", "الحالات اللي فيها أخطاء في التسجيل أو المتابعة", "🧾"
     ),
-    "📊 الداشبورد": page_dashboard,
+    "📊 تحليل نشاط المحصلين": page_dashboard,
 }
 
+DEFAULT_PAGE = next(iter(PAGES))
 with st.sidebar:
     st.caption("7OUDA MODEL")
-    st.title("🎙️ لوحة تحليل المكالمات")
-    selected_page = st.radio("التنقل", list(PAGES.keys()), label_visibility="collapsed")
+    st.title("🎙️ لوحة التحكم")
+    st.caption("اختر القسم الذي تريد فتحه")
+    st.divider()
+    selected_page = st.session_state.get("selected_page", DEFAULT_PAGE)
+    for page_label in PAGES:
+        if st.button(
+            page_label,
+            key=f"sidebar_page_{page_label}",
+            use_container_width=True,
+            type="primary" if selected_page == page_label else "secondary",
+        ):
+            st.session_state["selected_page"] = page_label
+            st.rerun()
 
 PAGES[selected_page]()

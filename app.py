@@ -357,7 +357,6 @@ def page_standing_promises():
         "STANDING PROMISES",
         "📗 الوعود القائمة",
         "ارفع المحفظة (Excel) وهنفلتر واعد بالسداد لليوم بس — مع ملخص لكل محصّل وصافي المديونية",
-        show_wave=True,
     )
 
     uploaded = st.file_uploader(
@@ -393,7 +392,6 @@ def page_broken_promises():
         "BROKEN PROMISES",
         "📕 الوعود المكسورة",
         "ارفع المحفظة (Excel) وهنفلتر واعد بالسداد اللي تاريخ متابعتها فات — يعني الوعد اتكسر — مع ملخص لكل محصّل وصافي المديونية",
-        show_wave=True,
     )
 
     uploaded = st.file_uploader(
@@ -558,18 +556,11 @@ THEME = THEMES.get(THEME_NAME, THEMES["dark"])
 # Streamlit native theme is the source of truth for the app UI.
 # Plotly receives the matching palette below; no custom CSS is injected.
 
-def render_waveform(n_bars: int = 24):
-    st.caption("▁▃▅▇▅▃▁  ▁▃▆▇▆▃▁  ▁▂▅▇▅▂▁")
-
-
-
-def page_header(eyebrow: str, title: str, subtitle: str, show_wave: bool = False, centered: bool = False):
+def page_header(eyebrow: str, title: str, subtitle: str, centered: bool = False):
     if eyebrow:
         st.caption(eyebrow)
     st.title(title)
     st.write(subtitle)
-    if show_wave:
-        render_waveform()
     st.divider()
 
 
@@ -1660,7 +1651,7 @@ def _show_aggregate_results_from_cache(period_key, period_title):
         _render_aggregate_results(stored, period_title)
 def page_classification():
     init_activity_state()
-    page_header("CALL QUALITY CLASSIFIER", "🎯 تصنيف المكالمات", "اختار الشركة → اختار الفترة → حدّد الميعاد والبريك → ارفع الملف → ابدأ التصنيف", show_wave=True)
+    page_header("CALL QUALITY CLASSIFIER", "🎯 تصنيف المكالمات", "اختار الشركة → اختار الفترة → حدّد الميعاد والبريك → ارفع الملف → ابدأ التصنيف")
     render_company_selector()
     render_period_selector()
 
@@ -1755,7 +1746,6 @@ def page_neglect():
         "NEGLECT TRACKING",
         "⚠️ الإهمال ومتابعة الإهمال",
         "ارفع المحفظة وهنطلع لك الحالات اللي بقالها أكتر من 7 أيام بدون متابعة ومحتاجة تدخل سريع",
-        show_wave=True,
     )
     
     # اختيار الوضع
@@ -1900,7 +1890,7 @@ def page_dashboard():
         "ACTIVITY DASHBOARD",
         "📊 تحليل نشاط المحصّلين",
         "ارفع ملف النشاط المصنّف بعد التصنيف وهنبني لك داشبورد احترافية كاملة",
-        show_wave=True, centered=True,
+        centered=True,
     )
 
     init_activity_state()

@@ -2035,9 +2035,11 @@ PAGES = {
 
 DEFAULT_PAGE = next(iter(PAGES))
 with st.sidebar:
-    st.caption("7OUDA MODEL")
-    st.title("🎙️ لوحة التحكم")
-    st.caption("اختر القسم الذي تريد فتحه")
+    brand_left, brand_center, brand_right = st.columns([0.18, 0.64, 0.18])
+    with brand_center:
+        st.caption("7OUDA MODEL")
+        st.title("🎙️ لوحة التحكم")
+        st.caption("اختر القسم الذي تريد فتحه")
     st.divider()
     selected_page = st.session_state.get("selected_page", DEFAULT_PAGE)
     for page_label in PAGES:

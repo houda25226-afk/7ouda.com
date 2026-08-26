@@ -965,27 +965,25 @@ header[data-testid="stHeader"] .stDeployButton button {
     text-align: right;
 }
 
-#MainMenu {visibility: visible !important;}
-#MainMenu, #MainMenu * { opacity: 1 !important; }
+/* إظهار قائمة Streamlit الأصلية بدون إعادة رسمها أو تحويلها لزر مخصص */
+#MainMenu { visibility: visible !important; }
 header[data-testid="stHeader"] [data-testid="stMainMenu"],
 header[data-testid="stHeader"] [data-testid="stMainMenuButton"],
 header[data-testid="stHeader"] [aria-label*="Main menu"],
 header[data-testid="stHeader"] [aria-label*="main menu"] {
     visibility: visible !important;
     opacity: 1 !important;
-    display: flex !important;
     color: var(--text) !important;
 }
 header[data-testid="stHeader"] [data-testid="stMainMenu"] svg,
 header[data-testid="stHeader"] [data-testid="stMainMenuButton"] svg,
 header[data-testid="stHeader"] [aria-label*="Main menu"] svg,
 header[data-testid="stHeader"] [aria-label*="main menu"] svg {
-    display: block !important;
     visibility: visible !important;
     opacity: 1 !important;
-    fill: var(--text) !important;
+    fill: currentColor !important;
     color: var(--text) !important;
-    stroke: var(--text) !important;
+    stroke: currentColor !important;
 }
 footer {visibility: hidden;}
 
@@ -1933,92 +1931,6 @@ div[data-testid="stRadio"] label {
 """
 DARK_UI_FIX = apply_theme_tokens(DARK_UI_FIX)
 st.markdown(DARK_UI_FIX, unsafe_allow_html=True)
-
-# زر إعدادات عائم داخل شريط الـ header قبل علامة GitHub.
-HEADER_SETTINGS_CSS = """
-<style>
-/* زر الإعدادات يظهر كعنصر Header أصلي قريب من Share وقبل GitHub */
-[data-testid="stHeader"] [data-testid="stPopover"] {
-    position: fixed !important;
-    top: 0.18rem !important;
-    right: 5.65rem !important;
-    z-index: 1000000 !important;
-    margin: 0 !important;
-}
-[data-testid="stHeader"] [data-testid="stPopover"] > button,
-[data-testid="stHeader"] [data-testid="stPopoverButton"],
-[data-testid="stPopover"] > button,
-[data-testid="stPopoverButton"] {
-    width: 2.25rem !important;
-    min-width: 2.25rem !important;
-    height: 2.25rem !important;
-    padding: 0 !important;
-    margin: 0 !important;
-    border-radius: 0.55rem !important;
-    border: 1px solid transparent !important;
-    background: transparent !important;
-    color: var(--text) !important;
-    box-shadow: none !important;
-    font-size: 1.12rem !important;
-    line-height: 1 !important;
-    transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease, transform 0.15s ease !important;
-}
-[data-testid="stPopover"] > button p,
-[data-testid="stPopoverButton"] p {
-    margin: 0 !important;
-    color: inherit !important;
-    font-size: 1.12rem !important;
-    line-height: 1 !important;
-}
-[data-testid="stHeader"] [data-testid="stPopover"] > button:hover,
-[data-testid="stPopoverButton"]:hover {
-    border-color: var(--border-soft) !important;
-    color: var(--accent) !important;
-    background: var(--surface-2) !important;
-    transform: translateY(-1px) !important;
-}
-[data-testid="stPopoverBody"] {
-    min-width: 18rem !important;
-    padding: 1rem !important;
-    border: 1px solid var(--border-soft) !important;
-    border-radius: 0.8rem !important;
-    background: var(--surface) !important;
-    box-shadow: 0 12px 32px rgba(15, 23, 42, 0.20) !important;
-}
-.header-settings-title {
-    color: var(--text) !important;
-    font-size: 1rem;
-    font-weight: 900;
-    margin-bottom: 0.2rem;
-}
-.header-settings-help {
-    color: var(--text-dim) !important;
-    font-size: 0.78rem;
-    margin-bottom: 0.8rem;
-}
-@media (max-width: 700px) {
-    [data-testid="stHeader"] [data-testid="stPopover"] { right: 5.35rem !important; }
-}
-</style>
-"""
-st.markdown(HEADER_SETTINGS_CSS, unsafe_allow_html=True)
-
-
-def render_header_settings():
-    """عرض زر الترس في الـ header ونافذة إعدادات المظهر عند الضغط عليه."""
-    with st.popover("⚙️", help="إعدادات التطبيق"):
-        st.markdown('<div class="header-settings-title">⚙️ إعدادات التطبيق</div>', unsafe_allow_html=True)
-        st.markdown('<div class="header-settings-help">اختار شكل الواجهة المناسب لك</div>', unsafe_allow_html=True)
-        st.radio(
-            "المظهر",
-            options=["dark", "light"],
-            format_func=lambda value: "🌙 الوضع الداكن" if value == "dark" else "☀️ الوضع الفاتح",
-            key="theme_mode",
-            label_visibility="collapsed",
-        )
-
-
-render_header_settings()
 
 
 def render_waveform(n_bars: int = 24):

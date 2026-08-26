@@ -1897,6 +1897,77 @@ div[data-testid="stRadio"] label {
 DARK_UI_FIX = apply_theme_tokens(DARK_UI_FIX)
 st.markdown(DARK_UI_FIX, unsafe_allow_html=True)
 
+# زر إعدادات عائم داخل شريط الـ header قبل علامة GitHub.
+HEADER_SETTINGS_CSS = """
+<style>
+/* تثبيت زر الترس في أعلى الواجهة بجوار أدوات Streamlit */
+[data-testid="stPopover"] {
+    position: fixed !important;
+    top: 0.22rem !important;
+    right: 4.15rem !important;
+    z-index: 1000000 !important;
+}
+[data-testid="stPopover"] > button,
+[data-testid="stPopoverButton"] {
+    width: 2.35rem !important;
+    min-width: 2.35rem !important;
+    height: 2.35rem !important;
+    padding: 0 !important;
+    border-radius: 0.55rem !important;
+    border: 1px solid var(--border-soft) !important;
+    background: var(--surface-2) !important;
+    color: var(--text) !important;
+    box-shadow: 0 2px 8px rgba(15, 23, 42, 0.10) !important;
+}
+[data-testid="stPopover"] > button:hover,
+[data-testid="stPopoverButton"]:hover {
+    border-color: var(--accent) !important;
+    color: var(--accent) !important;
+    background: var(--surface-hover) !important;
+}
+[data-testid="stPopoverBody"] {
+    min-width: 18rem !important;
+    padding: 1rem !important;
+    border: 1px solid var(--border-soft) !important;
+    border-radius: 0.8rem !important;
+    background: var(--surface) !important;
+    box-shadow: 0 12px 32px rgba(15, 23, 42, 0.20) !important;
+}
+.header-settings-title {
+    color: var(--text) !important;
+    font-size: 1rem;
+    font-weight: 900;
+    margin-bottom: 0.2rem;
+}
+.header-settings-help {
+    color: var(--text-dim) !important;
+    font-size: 0.78rem;
+    margin-bottom: 0.8rem;
+}
+@media (max-width: 700px) {
+    [data-testid="stPopover"] { right: 3.9rem !important; }
+}
+</style>
+"""
+st.markdown(HEADER_SETTINGS_CSS, unsafe_allow_html=True)
+
+
+def render_header_settings():
+    """عرض زر الترس في الـ header ونافذة إعدادات المظهر عند الضغط عليه."""
+    with st.popover("⚙️", help="إعدادات التطبيق"):
+        st.markdown('<div class="header-settings-title">⚙️ إعدادات التطبيق</div>', unsafe_allow_html=True)
+        st.markdown('<div class="header-settings-help">اختار شكل الواجهة المناسب لك</div>', unsafe_allow_html=True)
+        st.radio(
+            "المظهر",
+            options=["dark", "light"],
+            format_func=lambda value: "🌙 الوضع الداكن" if value == "dark" else "☀️ الوضع الفاتح",
+            key="theme_mode",
+            label_visibility="collapsed",
+        )
+
+
+render_header_settings()
+
 
 def render_waveform(n_bars: int = 24):
     heights = [14, 22, 30, 18, 26, 30, 20, 26, 16, 22] * (n_bars // 10 + 1)
@@ -4353,16 +4424,6 @@ with st.sidebar:
         """,
         unsafe_allow_html=True,
     )
-    st.markdown('<div class="theme-setting-title">المظهر</div>', unsafe_allow_html=True)
-    st.radio(
-        "اختار مظهر التطبيق",
-        options=["dark", "light"],
-        format_func=lambda value: "🌙 الوضع الداكن" if value == "dark" else "☀️ الوضع الفاتح",
-        key="theme_mode",
-        horizontal=True,
-        label_visibility="collapsed",
-    )
-    st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
     selected_page = st.radio("التنقل", list(PAGES.keys()), label_visibility="collapsed")
 
 PAGES[selected_page]()

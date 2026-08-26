@@ -208,12 +208,12 @@ def render_promises_dashboard(df, sales_col, net_col, title_suffix):
         fig1 = px.bar(
             top_agents, x="عدد الوعود", y="المحصل", orientation="h",
             title="🔝 أعلى 10 محصلين (من حيث العدد)",
-            color="عدد الوعود", color_continuous_scale=["#1E293B", "#5EEAD4"],
-            template="plotly_dark"
+            color="عدد الوعود", color_continuous_scale=[THEME["surface_2"], COLOR_ACCENT],
+            template=PLOTLY_TEMPLATE
         )
         fig1.update_layout(PLOTLY_LAYOUT, height=400, margin=dict(t=80, b=40, l=150, r=20))
-        fig1.update_traces(marker_line_color='rgba(255,255,255,0.2)', marker_line_width=1.5)
-        fig1.update_xaxes(showgrid=True, gridcolor='rgba(255,255,255,0.05)')
+        fig1.update_traces(marker_line_color=THEME["border_soft"], marker_line_width=1.5)
+        fig1.update_xaxes(showgrid=True, gridcolor=THEME["border_soft"])
         fig1.update_yaxes(tickfont=dict(size=12))
         
         with ch1:
@@ -228,19 +228,19 @@ def render_promises_dashboard(df, sales_col, net_col, title_suffix):
             agent_amounts = agent_amounts.sort_values("إجمالي المبالغ", ascending=False)
             
             # Using a more professional teal/blue scale
-            colors = ['#5EEAD4', '#3B82F6', '#6366F1', '#A78BFA', '#F472B6', '#FBBF24', '#2DD4BF', '#0EA5E9']
+            colors = [COLOR_ACCENT, COLOR_SUCCESS, COLOR_WARN, COLOR_FAIL, THEME["accent_strong"], "#3B82F6", "#8B5CF6", "#EC4899"]
             fig2 = px.pie(
                 agent_amounts.head(8), values="إجمالي المبالغ", names="المحصل",
                 title="🍩 توزيع المبالغ على المحصلين",
-                hole=0.5, template="plotly_dark",
+                hole=0.5, template=PLOTLY_TEMPLATE,
                 color_discrete_sequence=colors
             )
             fig2.update_layout(PLOTLY_LAYOUT, height=400, showlegend=True, legend=dict(orientation="h", yanchor="bottom", y=-0.3, xanchor="center", x=0.5))
             fig2.update_traces(
                 textposition='inside', 
                 textinfo='percent', 
-                textfont=dict(size=14, color="white", family="JetBrains Mono"),
-                marker=dict(line=dict(color='#0F172A', width=2))
+                textfont=dict(size=14, color=THEME["chart_text"], family="JetBrains Mono"),
+                marker=dict(line=dict(color=THEME["chart_marker"], width=2))
             )
             
             with ch2:
@@ -706,6 +706,174 @@ st.set_page_config(
 # عشان الـ Sidebar يفضل ثابت فعليًا على الشمال زي ما اتطلب،
 # بدل ما ينقلب يمين بسبب انعكاس اتجاه الـ flex layout.
 
+
+# ==========================================================
+# إعدادات المظهر (Light / Dark Mode)
+# ==========================================================
+THEMES = {
+    "dark": {
+        "bg": "#0E1420",
+        "bg_glow": "#10192C",
+        "surface": "#151F30",
+        "surface_2": "#1B2A42",
+        "surface_3": "#111B2C",
+        "surface_hover": "#1D304C",
+        "sidebar_bg": "#0B111C",
+        "accent_surface": "#122B2A",
+        "accent": "#0F9D8A",
+        "accent_strong": "#0B806F",
+        "on_accent": "#FFFFFF",
+        "success": "#059669",
+        "danger": "#E11D48",
+        "warn": "#D97706",
+        "text": "#F3F6FA",
+        "text_dim": "#B9C6D6",
+        "text_muted": "#9FB0C6",
+        "placeholder": "#8FA3B8",
+        "border": "rgba(15, 157, 138, 0.20)",
+        "border_soft": "rgba(148, 163, 184, 0.18)",
+        "input_bg": "#1B2A42",
+        "chart_marker": "#0E1420",
+        "chart_text": "#FFFFFF",
+        "danger_soft": "#3B1420", "danger_text": "#FECDD3",
+        "warn_soft": "#3A2A08", "warn_text": "#FDE68A",
+    },
+    "light": {
+        "bg": "#F4F7FB",
+        "bg_glow": "#EAF1F8",
+        "surface": "#FFFFFF",
+        "surface_2": "#EEF4F8",
+        "surface_3": "#F7FAFC",
+        "surface_hover": "#E2ECF3",
+        "sidebar_bg": "#FFFFFF",
+        "accent_surface": "#E6F7F4",
+        "accent": "#087F70",
+        "accent_strong": "#0B9F8B",
+        "on_accent": "#FFFFFF",
+        "success": "#047857",
+        "danger": "#BE123C",
+        "warn": "#B45309",
+        "text": "#172033",
+        "text_dim": "#526174",
+        "text_muted": "#6B7A8C",
+        "placeholder": "#718096",
+        "border": "rgba(8, 127, 112, 0.22)",
+        "border_soft": "rgba(71, 85, 105, 0.18)",
+        "input_bg": "#FFFFFF",
+        "chart_marker": "#CBD5E1",
+        "chart_text": "#172033",
+        "danger_soft": "#FDE2E7", "danger_text": "#7F1D35",
+        "warn_soft": "#FEF3C7", "warn_text": "#78350F",
+    },
+}
+
+if "theme_mode" not in st.session_state:
+    st.session_state["theme_mode"] = "dark"
+
+THEME_NAME = st.session_state.get("theme_mode", "dark")
+THEME = THEMES.get(THEME_NAME, THEMES["dark"])
+
+
+def apply_theme_tokens(css: str) -> str:
+    """تحويل الألوان الثابتة القديمة إلى متغيرات الثيم الحالية."""
+    token_map = {
+        "#0E1420": "var(--bg)", "#10192C": "var(--bg-glow)", "#151F30": "var(--surface)",
+        "#1B2A42": "var(--surface-2)", "#0B111C": "var(--sidebar-bg)", "#5EEAD4": "var(--accent)",
+        "#34D399": "var(--success)", "#FB7185": "var(--danger)", "#FBBF24": "var(--warn)",
+        "#F3F6FA": "var(--text)", "#B9C6D6": "var(--text-dim)", "#3FD9C7": "var(--accent-strong)",
+        "#06251F": "var(--on-accent)", "#17243A": "var(--surface-2)", "#121C2E": "var(--surface-3)",
+        "#E7ECF3": "var(--text)", "#1D304C": "var(--surface-hover)", "#E2E8F0": "var(--text-dim)",
+        "#C9D3E2": "var(--text-dim)", "#15203a": "var(--surface-2)", "#1a2a47": "var(--surface-3)",
+        "#F87171": "var(--danger)", "#F3F7FB": "var(--text)", "#C6D2E2": "var(--text-dim)",
+        "#F4F7FB": "var(--text)", "#C3CEDC": "var(--text-dim)", "#132A2C": "var(--accent-surface)",
+        "#F8FAFC": "var(--text)", "#182A43": "var(--surface-2)", "#132136": "var(--surface-3)",
+        "#142F2E": "var(--accent-surface)", "#142237": "var(--surface-3)", "#F5F8FC": "var(--text)",
+        "#111B2C": "var(--surface-3)", "#C8D2E0": "var(--text-dim)", "#E8EEF6": "var(--text)",
+        "#9FB0C6": "var(--text-muted)", "#122B2A": "var(--accent-surface)", "#F7FAFC": "var(--text)",
+        "#E7EEF6": "var(--text)", "#8FA3B8": "var(--placeholder)", "#0F172A": "var(--chart-marker)",
+    }
+    for old, new in token_map.items():
+        css = css.replace(old, new)
+    return css
+
+
+def build_runtime_theme_css(theme: dict) -> str:
+    """متغيرات CSS العامة مع overrides للعناصر التي يرسمها Streamlit داخليًا."""
+    css = """
+<style>
+:root {
+    --bg: __bg__;
+    --bg-glow: __bg_glow__;
+    --surface: __surface__;
+    --surface-2: __surface_2__;
+    --surface-3: __surface_3__;
+    --surface-hover: __surface_hover__;
+    --sidebar-bg: __sidebar_bg__;
+    --accent-surface: __accent_surface__;
+    --accent: __accent__;
+    --accent-strong: __accent_strong__;
+    --on-accent: __on_accent__;
+    --success: __success__;
+    --danger: __danger__;
+    --warn: __warn__;
+    --text: __text__;
+    --text-dim: __text_dim__;
+    --text-muted: __text_muted__;
+    --placeholder: __placeholder__;
+    --border: __border__;
+    --border-soft: __border_soft__;
+    --input-bg: __input_bg__;
+    --chart-marker: __chart_marker__;
+    --chart-text: __chart_text__;
+    --danger-soft: __danger_soft__;
+    --danger-text: __danger_text__;
+    --warn-soft: __warn_soft__;
+    --warn-text: __warn_text__;
+}
+
+.stApp {
+    background: radial-gradient(circle at 20% 0%, var(--bg-glow) 0%, var(--bg) 55%) !important;
+    color: var(--text) !important;
+}
+header[data-testid="stHeader"] { background: var(--bg) !important; border-bottom-color: var(--border-soft) !important; }
+section[data-testid="stSidebar"] { background: var(--sidebar-bg) !important; border-right-color: var(--border-soft) !important; }
+.stApp input, .stApp textarea, div[data-baseweb="select"] > div,
+[data-testid="stDateInput"] input, [data-testid="stDateInput"] [data-testid="stDateInputField"] {
+    background: var(--input-bg) !important;
+    color: var(--text) !important;
+}
+.stApp input::placeholder, .stApp textarea::placeholder { color: var(--placeholder) !important; }
+.stApp [data-testid="stDataFrame"], .stApp [data-testid="stMetric"],
+.stApp [data-testid="stExpander"], .stApp div[data-testid="stVerticalBlockBorderWrapper"] {
+    background: var(--surface) !important;
+    color: var(--text) !important;
+    border-color: var(--border-soft) !important;
+}
+.stApp [data-testid="stFileUploader"], .stApp [data-testid="stFileUploaderDropzone"] {
+    background: var(--surface) !important;
+    border-color: var(--border) !important;
+}
+.stApp [data-baseweb="popover"], .stApp [role="listbox"], .stApp [role="option"] { background: var(--surface-2) !important; color: var(--text) !important; }
+.stApp [role="option"]:hover, .stApp [aria-selected="true"] { background: var(--surface-hover) !important; }
+.stApp [data-testid="stTabs"] [data-baseweb="tab"] { color: var(--text-dim) !important; }
+.stApp [data-testid="stTabs"] [aria-selected="true"] { color: var(--accent) !important; }
+.stApp .stAlert, .stApp [data-testid="stAlert"] { background: var(--surface) !important; color: var(--text) !important; }
+.stApp .stButton > button[kind="secondary"] { background: var(--surface-2) !important; color: var(--text) !important; border-color: var(--border) !important; }
+.stApp [data-testid="stFileUploaderFile"] { background: var(--surface-2) !important; border-color: var(--border) !important; }
+.stApp .company-card, .stApp .agent-card { background: linear-gradient(135deg, var(--surface-2), var(--surface-3)) !important; }
+.stApp .period-banner, .stApp .daily-total-card, .stApp .slicer-panel, .stApp .schedule-summary,
+.stApp .break-switch-row, .stApp .slicer-cell, .stApp .slicer-empty { background: var(--surface-3) !important; color: var(--text) !important; }
+.stApp .page-title, .stApp .company-name, .stApp .selected-company-name,
+.stApp .slicer-empty-title, .stApp .daily-total-title { color: var(--text) !important; }
+.stApp .page-subtitle, .stApp .company-sub, .stApp .selected-company-sub, .stApp .period-desc,
+.stApp .schedule-summary, .stApp .break-switch-text, .stApp .section-help { color: var(--text-dim) !important; }
+.stApp .stFileUploader button { background: var(--surface-2) !important; color: var(--text) !important; border-color: var(--border-soft) !important; }
+</style>
+"""
+    for key, value in theme.items():
+        css = css.replace(f"__{key}__", value)
+    return css
+
 CSS_THEME = """
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Tajawal:wght@400;500;700;900&family=JetBrains+Mono:wght@500;700&display=swap');
@@ -727,7 +895,7 @@ html, body, [class*="css"] {
 }
 
 .stApp {
-    background: radial-gradient(circle at 20% 0%, #10192C 0%, var(--bg) 55%);
+    background: radial-gradient(circle at 20% 0%, var(--bg-glow) 0%, var(--bg) 55%);
     color: var(--text);
 }
 
@@ -1281,6 +1449,7 @@ div[data-testid="stAlert"] p { color: var(--text) !important; }
 </style>
 """
 
+CSS_THEME = apply_theme_tokens(CSS_THEME) + build_runtime_theme_css(THEME)
 st.markdown(CSS_THEME, unsafe_allow_html=True)
 
 
@@ -1328,7 +1497,7 @@ DARK_UI_FIX = """
     box-shadow: 0 2px 8px rgba(0,0,0,.25);
 }
 .stApp [data-testid="stFileUploader"] .stFileChipName {
-    color: #F3F6FA !important;
+    color: var(--text) !important;
     font-weight: 700 !important;
     font-size: .95rem !important;
     direction: ltr !important;
@@ -1345,7 +1514,7 @@ DARK_UI_FIX = """
 .stApp [data-testid="stFileUploader"] [data-testid="stFileChipDeleteBtn"] button svg,
 .stApp [data-testid="stFileUploader"] [data-testid="stFileChipDeleteBtn"] svg {
     fill: #F3F6FA !important;
-    color: #F3F6FA !important;
+    color: var(--text) !important;
 }
 .stApp [data-testid="stFileUploader"] [data-testid="stFileUploaderFile"] svg {
     fill: var(--accent) !important;
@@ -1633,14 +1802,14 @@ div[data-testid="stMultiSelect"] > div > div > div:last-child {
 div[data-testid="stDateInput"] > div > div > div,
 .stDateInputField > div,
 div[data-testid="stDateInput"] div[data-testid] {
-    background: rgba(255,255,255,0.06) !important;
+    background: var(--input-bg) !important;
     border-radius: 10px !important;
     box-shadow: none !important;
 }
 /* المربع الأبيض: الـ div اللي فوق الـ input مباشرة واللي بيعرض "2026/08/10 – 2026/08/17" */
 div[data-testid="stDateInput"] > div > div:not(> div),
 div[data-testid="stDateInput"] > div > div {
-    background: rgba(255,255,255,0.06) !important;
+    background: var(--input-bg) !important;
     border-radius: 10px !important;
     box-shadow: none !important;
 }
@@ -1649,15 +1818,15 @@ div[data-testid="stDateInputField"],
 input[data-testid="stDateInputField"],
 input[placeholder*="YYYY"],
 .slicer-panel input[type="text"] {
-    background: rgba(255,255,255,0.06) !important;
+    background: var(--input-bg) !important;
     border: 1px solid rgba(94,234,212,0.3) !important;
-    color: #E7EEF6 !important;
+    color: var(--text) !important;
     border-radius: 10px !important;
     box-shadow: none !important;
 }
 input[data-testid="stDateInputField"]::placeholder,
 input[placeholder*="YYYY"]::placeholder {
-    color: #8FA3B8 !important;
+    color: var(--placeholder) !important;
     opacity: 1 !important;
 }
 input[data-testid="stDateInputField"]:focus {
@@ -1725,7 +1894,94 @@ div[data-testid="stRadio"] label {
 }
 </style>
 """
+DARK_UI_FIX = apply_theme_tokens(DARK_UI_FIX)
 st.markdown(DARK_UI_FIX, unsafe_allow_html=True)
+
+# زر إعدادات عائم داخل شريط الـ header قبل علامة GitHub.
+HEADER_SETTINGS_CSS = """
+<style>
+/* زر الإعدادات يظهر كعنصر Header أصلي قريب من Share وقبل GitHub */
+[data-testid="stHeader"] [data-testid="stPopover"] {
+    position: fixed !important;
+    top: 0.18rem !important;
+    right: 3.05rem !important;
+    z-index: 1000000 !important;
+    margin: 0 !important;
+}
+[data-testid="stHeader"] [data-testid="stPopover"] > button,
+[data-testid="stHeader"] [data-testid="stPopoverButton"],
+[data-testid="stPopover"] > button,
+[data-testid="stPopoverButton"] {
+    width: 2.25rem !important;
+    min-width: 2.25rem !important;
+    height: 2.25rem !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    border-radius: 0.55rem !important;
+    border: 1px solid transparent !important;
+    background: transparent !important;
+    color: var(--text) !important;
+    box-shadow: none !important;
+    font-size: 1.12rem !important;
+    line-height: 1 !important;
+    transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease, transform 0.15s ease !important;
+}
+[data-testid="stPopover"] > button p,
+[data-testid="stPopoverButton"] p {
+    margin: 0 !important;
+    color: inherit !important;
+    font-size: 1.12rem !important;
+    line-height: 1 !important;
+}
+[data-testid="stHeader"] [data-testid="stPopover"] > button:hover,
+[data-testid="stPopoverButton"]:hover {
+    border-color: var(--border-soft) !important;
+    color: var(--accent) !important;
+    background: var(--surface-2) !important;
+    transform: translateY(-1px) !important;
+}
+[data-testid="stPopoverBody"] {
+    min-width: 18rem !important;
+    padding: 1rem !important;
+    border: 1px solid var(--border-soft) !important;
+    border-radius: 0.8rem !important;
+    background: var(--surface) !important;
+    box-shadow: 0 12px 32px rgba(15, 23, 42, 0.20) !important;
+}
+.header-settings-title {
+    color: var(--text) !important;
+    font-size: 1rem;
+    font-weight: 900;
+    margin-bottom: 0.2rem;
+}
+.header-settings-help {
+    color: var(--text-dim) !important;
+    font-size: 0.78rem;
+    margin-bottom: 0.8rem;
+}
+@media (max-width: 700px) {
+    [data-testid="stHeader"] [data-testid="stPopover"] { right: 2.85rem !important; }
+}
+</style>
+"""
+st.markdown(HEADER_SETTINGS_CSS, unsafe_allow_html=True)
+
+
+def render_header_settings():
+    """عرض زر الترس في الـ header ونافذة إعدادات المظهر عند الضغط عليه."""
+    with st.popover("⚙️", help="إعدادات التطبيق"):
+        st.markdown('<div class="header-settings-title">⚙️ إعدادات التطبيق</div>', unsafe_allow_html=True)
+        st.markdown('<div class="header-settings-help">اختار شكل الواجهة المناسب لك</div>', unsafe_allow_html=True)
+        st.radio(
+            "المظهر",
+            options=["dark", "light"],
+            format_func=lambda value: "🌙 الوضع الداكن" if value == "dark" else "☀️ الوضع الفاتح",
+            key="theme_mode",
+            label_visibility="collapsed",
+        )
+
+
+render_header_settings()
 
 
 def render_waveform(n_bars: int = 24):
@@ -1852,9 +2108,9 @@ def highlight_wasted(val):
     if pd.isna(val):
         return ""
     if val > 10:
-        return "background-color: #ffb3b3; color: #3a0000;"
+        return f"background-color: {THEME['danger_soft']}; color: {THEME['danger_text']};"
     elif val < 1:
-        return "background-color: #fff59d; color: #3a3300;"
+        return f"background-color: {THEME['warn_soft']}; color: {THEME['warn_text']};"
     return ""
 
 
@@ -1862,16 +2118,17 @@ def highlight_wasted(val):
 # داشبورد مشترك (يُستخدم بعد التصنيف مباشرة، وكمان في تويب الداشبورد)
 # ==========================================================
 
-# لوحة ألوان موحّدة للداشبورد كله
-COLOR_SUCCESS = "#34D399"   # أخضر زمردي — ناجحة
-COLOR_FAIL = "#FB7185"      # وردي-أحمر — غير ناجحة
-COLOR_ACCENT = "#5EEAD4"    # تركواز — لوني أساسي
-COLOR_WARN = "#FBBF24"      # كهرماني — تحذيري/متوسط
+# لوحة ألوان موحّدة للداشبورد كله — تتبدل حسب المود المختار
+COLOR_SUCCESS = THEMES[THEME_NAME]["success"]
+COLOR_FAIL = THEMES[THEME_NAME]["danger"]
+COLOR_ACCENT = THEMES[THEME_NAME]["accent"]
+COLOR_WARN = THEMES[THEME_NAME]["warn"]
 CHART_COLORS = {"ناجحة": COLOR_SUCCESS, "غير ناجحة": COLOR_FAIL}
+PLOTLY_TEMPLATE = "plotly_dark" if THEME_NAME == "dark" else "plotly_white"
 PLOTLY_LAYOUT = dict(
     paper_bgcolor="rgba(0,0,0,0)",
     plot_bgcolor="rgba(0,0,0,0)",
-    font_color="#E2E8F0",
+    font_color=THEME["text_dim"],
     font_family="Tajawal, sans-serif",
     font_size=13,
     margin=dict(t=60, b=50, l=50, r=20),
@@ -2156,10 +2413,10 @@ def render_comparison_matrix(df, class_col, sales_col):
             )
             avg_success = perf["نسبة النجاح %"].mean()
             avg_wasted = perf["إجمالي الوقت المهدر"].mean()
-            fig.add_vline(x=avg_success, line_dash="dot", line_color="#B9C6D6", opacity=0.5)
-            fig.add_hline(y=avg_wasted, line_dash="dot", line_color="#B9C6D6", opacity=0.5)
+            fig.add_vline(x=avg_success, line_dash="dot", line_color=THEME["text_dim"], opacity=0.5)
+            fig.add_hline(y=avg_wasted, line_dash="dot", line_color=THEME["text_dim"], opacity=0.5)
             fig.update_traces(hovertemplate=f"%{{text}}<br>نسبة النجاح: %{{x:.1f}}%<br>الوقت المهدر: %{{y:.1f}} دقيقة<extra></extra>",
-                              marker=dict(line=dict(color="#0E1420", width=1)))
+                              marker=dict(line=dict(color=THEME["chart_marker"], width=1)))
             fig.update_layout(
                 **PLOTLY_LAYOUT, coloraxis_showscale=False,
                 xaxis_title="نسبة النجاح %", yaxis_title="إجمالي الوقت المهدر (دقيقة)", height=520,
@@ -2387,10 +2644,10 @@ def build_dashboard_html(df, class_col, sales_col, time_col, source_name="", fil
             fig_scatter = px.scatter(perf, x="نسبة النجاح %", y="إجمالي الوقت المهدر", size="إجمالي المكالمات",
                                       hover_name=sales_col, color="نسبة النجاح %",
                                       color_continuous_scale=[COLOR_FAIL, COLOR_WARN, COLOR_SUCCESS])
-            fig_scatter.add_vline(x=perf["نسبة النجاح %"].mean(), line_dash="dot", line_color="#B9C6D6", opacity=0.5)
-            fig_scatter.add_hline(y=perf["إجمالي الوقت المهدر"].mean(), line_dash="dot", line_color="#B9C6D6", opacity=0.5)
+            fig_scatter.add_vline(x=perf["نسبة النجاح %"].mean(), line_dash="dot", line_color=THEME["text_dim"], opacity=0.5)
+            fig_scatter.add_hline(y=perf["إجمالي الوقت المهدر"].mean(), line_dash="dot", line_color=THEME["text_dim"], opacity=0.5)
             fig_scatter.update_traces(hovertemplate=f"%{{hovertext}}<br>نسبة النجاح: %{{x:.1f}}%<br>الوقت المهدر: %{{y:.1f}} دقيقة<extra></extra>",
-                                       marker=dict(line=dict(color="#0E1420", width=1)))
+                                       marker=dict(line=dict(color=THEME["chart_marker"], width=1)))
             fig_scatter.update_layout(coloraxis_showscale=False, xaxis_title="نسبة النجاح %",
                                        yaxis_title="إجمالي الوقت المهدر (دقيقة)", height=520)
             chart_scatter = ("🧭 خريطة الأداء: نسبة النجاح مقابل الوقت المهدر", _fig_to_div(fig_scatter, "fig_scatter", height=520), True)
@@ -2449,6 +2706,7 @@ def build_dashboard_html(df, class_col, sales_col, time_col, source_name="", fil
     )
 
     generated_at = datetime.now().strftime("%Y-%m-%d %H:%M")
+    export_theme = THEME
     
     # بناء لوحة الفلاتر في الـ HTML
     filter_tags_html = ""
@@ -2475,9 +2733,11 @@ def build_dashboard_html(df, class_col, sales_col, time_col, source_name="", fil
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Tajawal:wght@400;500;700;900&family=JetBrains+Mono:wght@500;700&display=swap');
 :root {{
-    --bg: #0E1420; --surface: #151F30; --surface-2: #1B2A42;
-    --accent: #5EEAD4; --success: #34D399; --danger: #FB7185; --warn: #FBBF24;
-    --text: #F3F6FA; --text-dim: #B9C6D6;
+    --bg: {export_theme["bg"]}; --bg-glow: {export_theme["bg_glow"]};
+    --surface: {export_theme["surface"]}; --surface-2: {export_theme["surface_2"]};
+    --accent: {export_theme["accent"]}; --success: {export_theme["success"]};
+    --danger: {export_theme["danger"]}; --warn: {export_theme["warn"]};
+    --text: {export_theme["text"]}; --text-dim: {export_theme["text_dim"]};
 }}
 * {{ box-sizing: border-box; }}
 body {{
@@ -3293,7 +3553,7 @@ def render_agent_activity_charts(agent, df, sales_col, period_title):
     fig_total.update_layout(
         title=f"📞 إجمالي المكالمات والمكالمات الناجحة لكل محصّل ({period_title})",
         barmode="group",
-        template="plotly_dark",
+        template=PLOTLY_TEMPLATE,
         paper_bgcolor="#0E1420",
         plot_bgcolor="#0E1420",
         font=dict(color="#F3F6FA", size=13),
@@ -3326,7 +3586,7 @@ def render_agent_activity_charts(agent, df, sales_col, period_title):
     )
     fig_rate.update_layout(
         title="📈 نسبة نجاح كل محصّل من إجمالي مكالماته",
-        template="plotly_dark",
+        template=PLOTLY_TEMPLATE,
         paper_bgcolor="#0E1420",
         plot_bgcolor="#0E1420",
         font=dict(color="#F3F6FA", size=13),
@@ -3375,7 +3635,7 @@ def render_success_fail_chart(agent, period_title):
     fig.update_layout(
         title=f"✅ المكالمات الناجحة مقابل غير الناجحة لكل محصّل ({period_title})",
         barmode="group",
-        template="plotly_dark",
+        template=PLOTLY_TEMPLATE,
         paper_bgcolor="#0E1420",
         plot_bgcolor="#0E1420",
         font=dict(color="#F3F6FA", size=13),
@@ -3412,7 +3672,7 @@ def render_avg_duration_chart(agent, period_title):
     )
     fig.update_layout(
         title=f"⏱️ متوسط مدة المكالمات لكل محصّل ({period_title})",
-        template="plotly_dark",
+        template=PLOTLY_TEMPLATE,
         paper_bgcolor="#0E1420",
         plot_bgcolor="#0E1420",
         font=dict(color="#F3F6FA", size=13),
@@ -3451,7 +3711,7 @@ def render_no_answer_chart(df, sales_col, period_title):
     )
     fig.update_layout(
         title=f"📝 عدد إفادات \"لا يرد\" في عمود Notes لكل محصّل ({period_title})",
-        template="plotly_dark",
+        template=PLOTLY_TEMPLATE,
         paper_bgcolor="#0E1420",
         plot_bgcolor="#0E1420",
         font=dict(color="#F3F6FA", size=13),
@@ -3986,15 +4246,15 @@ def _render_slicers(df, sales_col, time_col):
     st.markdown(
         """<style>
         .stDateInputField, input[data-testid="stDateInputField"], input[placeholder*="YYYY"], input[placeholder*="YYYY/MM/DD"] {
-            background: rgba(255,255,255,0.06) !important;
+            background: var(--input-bg) !important;
             border: 1px solid rgba(94,234,212,0.3) !important;
-            color: #E7EEF6 !important;
+            color: var(--text) !important;
             border-radius: 10px !important;
             box-shadow: none !important;
         }
         input[data-testid="stDateInputField"]::placeholder,
         input[placeholder*="YYYY"]::placeholder {
-            color: #8FA3B8 !important;
+            color: var(--placeholder) !important;
             opacity: 1 !important;
         }
         input[data-testid="stDateInputField"]:focus {
@@ -4010,11 +4270,11 @@ def _render_slicers(df, sales_col, time_col):
     st.markdown(
         """<style>
         div[data-testid="stDateInput"] .stDateInputField, div[data-testid="stDateInput"] .stDateInputField div {
-            background: rgba(255,255,255,0.06) !important;
+            background: var(--input-bg) !important;
         }
-        div[data-testid="stDateInput"] div[class*="st-"] { background: rgba(255,255,255,0.06) !important; border-radius: 10px; }
+        div[data-testid="stDateInput"] div[class*="st-"] { background: var(--input-bg) !important; border-radius: 10px; }
         div[data-testid="stDateInput"] input[type="text"], div[data-testid="stDateInput"] input {
-            background: rgba(255,255,255,0.06) !important; color: #F3F6FA !important;
+            background: var(--input-bg) !important; color: var(--text) !important;
         }
         </style>""",
         unsafe_allow_html=True,
@@ -4027,7 +4287,7 @@ def _render_slicers(df, sales_col, time_col):
                 if(!wrap) return;
                 wrap.querySelectorAll('div').forEach(function(x){
                     if(getComputedStyle(x).backgroundColor === 'rgb(240, 242, 246)'){
-                        x.style.background = 'rgba(255,255,255,0.06)';
+                        x.style.background = 'var(--input-bg)';
                         x.style.borderRadius = '10px';
                     }
                 });

@@ -767,10 +767,28 @@ THEMES = {
     },
 }
 
-if "theme_mode" not in st.session_state:
-    st.session_state["theme_mode"] = "dark"
+def _detect_native_streamlit_theme() -> str:
+    """
+    بيقرأ الوضع (Light/Dark) اللي المستخدم مختاره فعليًا من قائمة
+    إعدادات Streamlit نفسها ("⋮" ← Settings ← Choose app theme)
+    عن طريق st.context.theme.type (متاحة من Streamlit 1.46+).
+    لو مش متاحة لأي سبب (نسخة قديمة من Streamlit)، بيرجع لآخر قيمة
+    محفوظة في session_state، ولو مفيش هيستخدم "dark" كافتراضي.
+    """
+    try:
+        ctx_theme = st.context.theme
+        theme_type = getattr(ctx_theme, "type", None)
+        if theme_type is None and hasattr(ctx_theme, "get"):
+            theme_type = ctx_theme.get("type")
+        if theme_type in ("light", "dark"):
+            return theme_type
+    except Exception:
+        pass
+    return st.session_state.get("theme_mode", "dark")
 
-THEME_NAME = st.session_state.get("theme_mode", "dark")
+
+THEME_NAME = _detect_native_streamlit_theme()
+st.session_state["theme_mode"] = THEME_NAME
 THEME = THEMES.get(THEME_NAME, THEMES["dark"])
 
 

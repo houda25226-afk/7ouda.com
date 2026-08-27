@@ -3227,6 +3227,10 @@ def _render_dashboard(df, class_col, sales_col, time_col, source_name, filter_hi
 
 
 
+def _clear_dashboard_chart_filter():
+    st.session_state.pop(DASHBOARD_AGENT_FILTER_KEY, None)
+
+
 def _render_slicers(df, sales_col, time_col):
     agents = sorted([str(a) for a in df[sales_col].dropna().unique()]) if sales_col and sales_col in df.columns else []
     date_min = date_max = None
@@ -3237,44 +3241,74 @@ def _render_slicers(df, sales_col, time_col):
     sub_col = find_column(df, PROMISE_SUB_STATE_CANDIDATES)
     substates = sorted([str(s) for s in df[sub_col].dropna().unique()]) if sub_col and sub_col in df.columns else []
     class_col = CLASSIFICATION_COL if CLASSIFICATION_COL in df.columns else None
-    with st.expander("🎚️ فلاتر عرض لوحة التحكم", expanded=False):
-        head_left, head_right = st.columns([5, 1])
-        with head_left:
-            st.caption("اختار أي قيمة من القوائم لتصفية اللوحة؛ ترك القائمة فارغًا يعرض كل القيم.")
-        with head_right:
-            if st.button("↺ مسح الفلاتر", key="clear_dashboard_slicers_v2", use_container_width=True):
-                for key in ("dash_agent_filter_v2", "dash_substate_filter_v2", "dash_date_filter_v2", "dash_class_filter_v2"):
+    class_options = {"ناجحة (1)": 1, "غير ناجحة (0)": 0, "الكل": None}
+    all_agent_label = "كل المحصلين"
+    all_state_label = "كل الحالات"
+
+    # شريط فلاتر ظاهر وثابت: كل عنصر مستقل مثل Slicer في Power BI، بدون Expander أو وسوم مزدحمة.
+    with st.container(border=True):
+        title_col, action_col = st.columns([5, 1])
+        with title_col:
+            st.subheader("🎚️ فلاتر التحليل")
+            st.caption("استخدم القوائم لتصفية كل الكروت والرسوم والجدول. اترك الاختيار على «الكل» لعرض كل البيانات.")
+        with action_col:
+            st.write("")
+            if st.button("↺ إعادة ضبط", key="clear_dashboard_slicers_v3", use_container_width=True):
+                for key in ("dash_agent_slicer_v3", "dash_state_slicer_v3", "dash_date_slicer_v3", "dash_class_slicer_v3"):
                     st.session_state.pop(key, None)
+                _clear_dashboard_chart_filter()
                 st.rerun()
-        c1, c2 = st.columns(2)
-        with c1:
-            selected_agents = st.multiselect("👤 المحصّلون", agents, default=[], key="dash_agent_filter_v2", placeholder="اتركه فارغًا لعرض كل المحصلين")
-        with c2:
-            selected_substates = st.multiselect("📊 الحالات الفرعية", substates, default=[], key="dash_substate_filter_v2", placeholder="اتركه فارغًا لعرض كل الحالات") if substates else []
-        c3, c4 = st.columns(2)
-        with c3:
-            date_range = st.date_input("📅 نطاق التواريخ", value=(date_min, date_max) if date_min is not None else None, min_value=date_min, max_value=date_max, key="dash_date_filter_v2") if date_min is not None else None
-        with c4:
-            class_options = {"ناجحة (1)": 1, "غير ناجحة (0)": 0, "الكل": None}
-            selected_class = st.radio("🏷️ التصنيف", list(class_options.keys()), index=2, key="dash_class_filter_v2", horizontal=True)
-    # القائمة الفارغة تعني عرض الكل، وده يمنع ازدحام الواجهة بوسوم كل المحصلين والحالات.
+
+        f1, f2, f3, f4 = st.columns([1.35, 1.35, 1.15, 1.35])
+        with f1:
+            agent_choice = st.selectbox(
+                "👤 المحصل",
+                [all_agent_label] + agents,
+                key="dash_agent_slicer_v3",
+                on_change=_clear_dashboard_chart_filter,
+            )
+        with f2:
+            state_choice = st.selectbox(
+                "📊 الحالة الفرعية",
+                [all_state_label] + substates,
+                key="dash_state_slicer_v3",
+            ) if substates else all_state_label
+        with f3:
+            date_range = st.date_input(
+                "📅 التاريخ",
+                value=(date_min, date_max) if date_min is not None else None,
+                min_value=date_min,
+                max_value=date_max,
+                key="dash_date_slicer_v3",
+            ) if date_min is not None else None
+        with f4:
+            selected_class = st.radio(
+                "🏷️ التصنيف",
+                list(class_options.keys()),
+                index=2,
+                key="dash_class_slicer_v3",
+                horizontal=True,
+            )
+
+    selected_agents = [] if agent_choice == all_agent_label else [agent_choice]
+    selected_substates = [] if state_choice == all_state_label else [state_choice]
     filtered = df.copy()
     hint_parts = []
     if sales_col and selected_agents:
         filtered = filtered[filtered[sales_col].astype(str).isin(selected_agents)]
-        hint_parts.append(f"المحصّلون: {len(selected_agents)} من {len(agents)}")
+        hint_parts.append(f"المحصل: {agent_choice}")
     if time_col and isinstance(date_range, tuple) and len(date_range) == 2:
         d0, d1 = date_range
         if d0 != date_min or d1 != date_max:
             ts = pd.to_datetime(filtered[time_col], errors="coerce")
             filtered = filtered[ts.notna() & (ts.dt.date >= d0) & (ts.dt.date <= d1)]
-            hint_parts.append(f"التاريخ من {d0} إلى {d1}")
+            hint_parts.append(f"التاريخ: {d0} إلى {d1}")
     if class_col and class_options[selected_class] is not None:
         filtered = filtered[filtered[class_col] == class_options[selected_class]]
         hint_parts.append(f"التصنيف: {selected_class}")
-    if sub_col and substates and selected_substates:
+    if sub_col and selected_substates:
         filtered = filtered[filtered[sub_col].astype(str).isin(selected_substates)]
-        hint_parts.append(f"الحالات: {len(selected_substates)} من {len(substates)}")
+        hint_parts.append(f"الحالة: {state_choice}")
     return filtered, " · ".join(hint_parts)
 
 

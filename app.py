@@ -1911,30 +1911,25 @@ def _render_activity_daily_chart(work, time_col):
     if trend.empty:
         st.info("لا توجد تواريخ صالحة لعرض النشاط اليومي.")
         return
-    trend["اليوم"] = trend["_activity_time"].dt.normalize()
+    trend["اليوم"] = trend["_activity_time"].dt.strftime("%Y-%m-%d")
     daily = trend.groupby(["اليوم", "_agent_display"], as_index=False).size().rename(columns={"size": "عدد المكالمات"})
-    day_values = pd.to_datetime(daily["اليوم"], errors="coerce").dropna()
-    daily_axis = {"type": "date", "tickformat": "%d/%m", "nticks": 8}
-    if day_values.nunique() == 1:
-        center_day = day_values.iloc[0]
-        daily_axis.update({
-            "range": [center_day - pd.Timedelta(hours=12), center_day + pd.Timedelta(hours=12)],
-            "dtick": 86400000,
-        })
-    fig = px.area(
-        daily, x="اليوم", y="عدد المكالمات", color="_agent_display", markers=True,
-        template=PLOTLY_TEMPLATE, labels={"_agent_display": "المحصّل"},
-        color_discrete_sequence=px.colors.qualitative.Safe,
+    fig = px.bar(
+        daily, x="اليوم", y="عدد المكالمات", color="_agent_display", barmode="group",
+        text_auto=True, custom_data=["_agent_display"], template=PLOTLY_TEMPLATE,
+        labels={"_agent_display": "المحصّل"}, color_discrete_sequence=px.colors.qualitative.Safe,
     )
     fig.update_layout(**_activity_layout(
-        title="📅 نشاط المحصلين على مدار الأيام", title_x=0.5, xaxis_title="اليوم", yaxis_title="عدد المكالمات",
-        height=470, legend_title_text="", hovermode="x unified",
+        title="📊 Histogram يومي لنشاط المحصلين", title_x=0.5, xaxis_title="اليوم", yaxis_title="عدد المكالمات",
+        height=470, bargap=0.18, legend_title_text="",
         legend={"orientation": "h", "yanchor": "top", "y": -0.22, "x": 0.5, "xanchor": "center"},
         margin={"t": 72, "b": 105, "l": 55, "r": 20},
-        xaxis=daily_axis,
+        xaxis={"type": "category", "categoryorder": "category ascending", "tickangle": -25},
     ))
-    fig.update_traces(hovertemplate="<b>%{fullData.name}</b><br>اليوم: %{x}<br>المكالمات: %{y:,}<extra></extra>")
-    _set_chart_agent_customdata(fig)
+    fig.update_traces(
+        marker_line_width=0,
+        customdata=trend["_agent_display"],
+        hovertemplate="<b>%{x}</b><br>%{fullData.name}: %{y:,} مكالمة<extra></extra>",
+    )
     render_selectable_chart(fig, "dashboard_activity_daily", filter_key=DASHBOARD_AGENT_FILTER_KEY)
 
 
@@ -1950,19 +1945,22 @@ def _render_activity_hourly_chart(work, time_col):
         return
     trend["الساعة"] = trend["_activity_time"].dt.hour
     hourly = trend.groupby(["الساعة", "_agent_display"], as_index=False).size().rename(columns={"size": "عدد المكالمات"})
-    fig = px.line(
-        hourly, x="الساعة", y="عدد المكالمات", color="_agent_display", markers=True,
-        template=PLOTLY_TEMPLATE, labels={"_agent_display": "المحصّل"},
-        color_discrete_sequence=px.colors.qualitative.Safe,
+    fig = px.bar(
+        hourly, x="الساعة", y="عدد المكالمات", color="_agent_display", barmode="stack",
+        text_auto=True, custom_data=["_agent_display"], template=PLOTLY_TEMPLATE,
+        labels={"_agent_display": "المحصّل"}, color_discrete_sequence=px.colors.qualitative.Safe,
     )
     fig.update_layout(**_activity_layout(
-        title="🕒 نشاط المحصلين على مدار الساعة", title_x=0.5, xaxis_title="ساعة اليوم", yaxis_title="عدد المكالمات",
-        xaxis={"dtick": 1, "range": [-0.5, 23.5]}, height=470, legend_title_text="",
+        title="🕒 Histogram ساعي لنشاط المحصلين", title_x=0.5, xaxis_title="ساعة اليوم", yaxis_title="عدد المكالمات",
+        xaxis={"dtick": 1, "range": [-0.5, 23.5]}, height=470, bargap=0.08, legend_title_text="",
         legend={"orientation": "h", "yanchor": "top", "y": -0.22, "x": 0.5, "xanchor": "center"},
         margin={"t": 72, "b": 105, "l": 55, "r": 20},
     ))
-    fig.update_traces(hovertemplate="<b>%{fullData.name}</b><br>الساعة: %{x}:00<br>المكالمات: %{y:,}<extra></extra>")
-    _set_chart_agent_customdata(fig)
+    fig.update_traces(
+        marker_line_width=0,
+        customdata=trend["_agent_display"],
+        hovertemplate="<b>الساعة %{x}:00</b><br>%{fullData.name}: %{y:,} مكالمة<extra></extra>",
+    )
     render_selectable_chart(fig, "dashboard_activity_hourly", filter_key=DASHBOARD_AGENT_FILTER_KEY)
 
 
@@ -2162,24 +2160,19 @@ def build_dashboard_html(df, class_col, sales_col, time_col, source_name="", fil
         work["_activity_time"] = pd.to_datetime(work[time_col], errors="coerce")
         timed = work.dropna(subset=["_activity_time"]).copy()
         if not timed.empty:
-            timed["اليوم"] = timed["_activity_time"].dt.normalize()
+            timed["اليوم"] = timed["_activity_time"].dt.strftime("%Y-%m-%d")
             daily = timed.groupby(["اليوم", "_agent_display"], as_index=False).size().rename(columns={"size":"عدد المكالمات"})
-            day_fig = px.area(daily, x="اليوم", y="عدد المكالمات", color="_agent_display", markers=True, template=PLOTLY_TEMPLATE, labels={"_agent_display":"المحصل"}, color_discrete_sequence=px.colors.qualitative.Safe)
-            day_values = pd.to_datetime(daily["اليوم"], errors="coerce").dropna()
-            axis = {"type":"date","tickformat":"%d/%m","nticks":8}
-            if day_values.nunique() == 1:
-                center = day_values.iloc[0]
-                axis.update({"range":[center-pd.Timedelta(hours=12),center+pd.Timedelta(hours=12)],"dtick":86400000})
-            day_fig.update_layout(**_activity_layout(title="📅 نشاط المحصلين على مدار الأيام", title_x=0.5, xaxis_title="اليوم", yaxis_title="عدد المكالمات", height=430, margin={"t":68,"b":95,"l":55,"r":20}, hovermode="x unified", xaxis=axis, legend={"orientation":"h","y":-0.2,"x":0.5,"xanchor":"center"}))
-            day_fig.update_traces(hovertemplate="<b>%{fullData.name}</b><br>اليوم: %{x}<br>المكالمات: %{y:,}<extra></extra>")
-            figs.append(("📅 النشاط اليومي", day_fig))
+            day_fig = px.bar(daily, x="اليوم", y="عدد المكالمات", color="_agent_display", barmode="group", text_auto=True, custom_data=["_agent_display"], template=PLOTLY_TEMPLATE, labels={"_agent_display":"المحصل"}, color_discrete_sequence=px.colors.qualitative.Safe)
+            day_fig.update_layout(**_activity_layout(title="📊 Histogram يومي لنشاط المحصلين", title_x=0.5, xaxis_title="اليوم", yaxis_title="عدد المكالمات", height=430, bargap=0.18, margin={"t":68,"b":95,"l":55,"r":20}, xaxis={"type":"category","categoryorder":"category ascending","tickangle":-25}, legend={"orientation":"h","y":-0.2,"x":0.5,"xanchor":"center"}))
+            day_fig.update_traces(marker_line_width=0, hovertemplate="<b>%{x}</b><br>%{fullData.name}: %{y:,} مكالمة<extra></extra>")
+            figs.append(("📊 Histogram النشاط اليومي", day_fig))
 
             timed["الساعة"] = timed["_activity_time"].dt.hour
             hourly = timed.groupby(["الساعة", "_agent_display"], as_index=False).size().rename(columns={"size":"عدد المكالمات"})
-            hour_fig = px.line(hourly, x="الساعة", y="عدد المكالمات", color="_agent_display", markers=True, template=PLOTLY_TEMPLATE, labels={"_agent_display":"المحصل"}, color_discrete_sequence=px.colors.qualitative.Safe)
-            hour_fig.update_layout(**_activity_layout(title="🕒 نشاط المحصلين على مدار الساعة", title_x=0.5, xaxis_title="ساعة اليوم", yaxis_title="عدد المكالمات", height=430, margin={"t":68,"b":95,"l":55,"r":20}, xaxis={"dtick":1,"range":[-0.5,23.5]}, legend={"orientation":"h","y":-0.2,"x":0.5,"xanchor":"center"}))
-            hour_fig.update_traces(hovertemplate="<b>%{fullData.name}</b><br>الساعة: %{x}:00<br>المكالمات: %{y:,}<extra></extra>")
-            figs.append(("🕒 النشاط الساعي", hour_fig))
+            hour_fig = px.bar(hourly, x="الساعة", y="عدد المكالمات", color="_agent_display", barmode="stack", text_auto=True, custom_data=["_agent_display"], template=PLOTLY_TEMPLATE, labels={"_agent_display":"المحصل"}, color_discrete_sequence=px.colors.qualitative.Safe)
+            hour_fig.update_layout(**_activity_layout(title="🕒 Histogram ساعي لنشاط المحصلين", title_x=0.5, xaxis_title="ساعة اليوم", yaxis_title="عدد المكالمات", height=430, bargap=0.08, margin={"t":68,"b":95,"l":55,"r":20}, xaxis={"dtick":1,"range":[-0.5,23.5]}, legend={"orientation":"h","y":-0.2,"x":0.5,"xanchor":"center"}))
+            hour_fig.update_traces(marker_line_width=0, hovertemplate="<b>الساعة %{x}:00</b><br>%{fullData.name}: %{y:,} مكالمة<extra></extra>")
+            figs.append(("🕒 Histogram النشاط الساعي", hour_fig))
 
     sub_col = find_column(work, PROMISE_SUB_STATE_CANDIDATES)
     if sub_col:

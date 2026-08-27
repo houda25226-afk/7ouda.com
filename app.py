@@ -2146,11 +2146,11 @@ def _fig_to_div(fig, div_id, height=420):
     )
 
 
-def build_dashboard_html(df, class_col, sales_col, time_col, source_name="", filter_hint="") -> str:
+def build_dashboard_html(df, class_col, sales_col, time_col, source_name="", filter_hint="", filter_summary=None) -> str:
     """إنشاء نسخة HTML مستقلة من Dashboard النشاط بنفس التسلسل والألوان والرسوم الأساسية."""
     from html import escape
 
-    background = THEME.get("background", "#0B1020")
+    background = THEME.get("bg", "#0E1420")
     surface = THEME.get("surface", "#151F30")
     border = THEME.get("border", "rgba(15,157,138,.28)")
     text = THEME.get("text", "#F8FAFC")
@@ -2166,6 +2166,13 @@ def build_dashboard_html(df, class_col, sales_col, time_col, source_name="", fil
     rate = success / total * 100 if total else 0
     wasted = pd.to_numeric(work.get(WASTED_TIME_COL, pd.Series(dtype=float)), errors="coerce").fillna(0).sum()
     agent_count = int(work["_agent_display"].nunique()) if total else 0
+    filter_summary = filter_summary or {}
+    filter_items = [
+        ("👤 المحصل", filter_summary.get("المحصل", "كل المحصلين")),
+        ("📊 الحالة الفرعية", filter_summary.get("الحالة الفرعية", "كل الحالات")),
+        ("📅 التاريخ", filter_summary.get("التاريخ", "كل التواريخ")),
+        ("🏷️ التصنيف", filter_summary.get("التصنيف", "الكل")),
+    ]
 
     def metric_card(label, value, color):
         return (
@@ -2190,6 +2197,18 @@ def build_dashboard_html(df, class_col, sales_col, time_col, source_name="", fil
         parts.append(f'<div style="margin-top:12px;color:{text_dim};font-size:13px">الفلاتر النشطة: {escape(filter_hint)}</div>')
     parts.extend([
         '</header>',
+        f'<section style="background:{surface};border:1px solid {border};border-radius:16px;padding:18px 20px;margin-bottom:24px">',
+        f'<h2 style="margin:0 0 14px;text-align:center;font-size:20px;color:{text}">🎚️ فلاتر التقرير</h2>',
+        '<section style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px">',
+    ])
+    for filter_label, filter_value in filter_items:
+        parts.append(
+            f'<div style="background:{background};border:1px solid {border};border-radius:10px;padding:12px 14px;min-height:58px;box-sizing:border-box">'
+            f'<div style="color:{text_dim};font-size:12px;margin-bottom:4px">{escape(str(filter_label))}</div>'
+            f'<div style="color:{text};font-size:15px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{escape(str(filter_value))}</div></div>'
+        )
+    parts.extend([
+        '</section></section>',
         '<section style="display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:14px;margin-bottom:24px">',
         metric_card("👥 عدد المحصلين", f"{agent_count:,}", text),
         metric_card("📞 إجمالي المكالمات", f"{total:,}", text),
@@ -3375,7 +3394,11 @@ def _render_dashboard(df, class_col, sales_col, time_col, source_name, filter_hi
         st.info(f"الفلاتر المطبقة: {filter_hint}")
     render_full_dashboard(df, class_col=class_col, sales_col=sales_col, time_col=time_col,
                           break_start=break_start, break_end=break_end)
-    dashboard_html = build_dashboard_html(df, class_col=class_col, sales_col=sales_col, time_col=time_col, source_name=source_name, filter_hint=filter_hint)
+    dashboard_html = build_dashboard_html(
+        df, class_col=class_col, sales_col=sales_col, time_col=time_col,
+        source_name=source_name, filter_hint=filter_hint,
+        filter_summary=st.session_state.get("dashboard_filter_summary", {}),
+    )
     st.download_button("🌐 تحميل لوحة التحكم كصفحة ويب HTML", data=dashboard_html.encode("utf-8"), file_name="داشبورد_النشاط.html", mime="text/html", use_container_width=True, key="dash_html_download_v3", type="primary")
     st.download_button("⬇️ تحميل البيانات كـ CSV", data=df.to_csv(index=False).encode("utf-8-sig"), file_name="بيانات_النشاط.csv", mime="text/csv", use_container_width=True, key="dash_csv_download_v3")
 
@@ -3395,39 +3418,41 @@ def _render_slicers(df, sales_col, time_col):
     sub_col = find_column(df, PROMISE_SUB_STATE_CANDIDATES)
     substates = sorted([str(s) for s in df[sub_col].dropna().unique()]) if sub_col and sub_col in df.columns else []
     class_col = CLASSIFICATION_COL if CLASSIFICATION_COL in df.columns else None
-    class_options = {"ناجحة (1)": 1, "غير ناجحة (0)": 0, "الكل": None}
     all_agent_label = "كل المحصلين"
     all_state_label = "كل الحالات"
+    class_labels = ["الكل", "ناجحة", "غير ناجحة"]
+    class_values = {"الكل": None, "ناجحة": 1, "غير ناجحة": 0}
 
-    # شريط فلاتر ظاهر وثابت: كل عنصر مستقل مثل Slicer في Power BI، بدون Expander أو وسوم مزدحمة.
-    with st.container(border=True):
-        title_col, action_col = st.columns([5, 1])
-        with title_col:
-            st.subheader("🎚️ فلاتر التحليل")
-            st.caption("استخدم القوائم لتصفية كل الكروت والرسوم والجدول. اترك الاختيار على «الكل» لعرض كل البيانات.")
-        with action_col:
-            st.write("")
-            if st.button("↺ إعادة ضبط", key="clear_dashboard_slicers_v3", use_container_width=True):
-                for key in ("dash_agent_slicer_v3", "dash_state_slicer_v3", "dash_date_slicer_v3", "dash_class_slicer_v4"):
-                    st.session_state.pop(key, None)
-                _clear_dashboard_chart_filter()
-                st.rerun()
+    # عنوان مستقل للفلاتر، وكل Slicer في خانة مستقلة بذاتها مثل لوحات Power BI.
+    header_col, action_col = st.columns([5, 1])
+    with header_col:
+        st.subheader("🎚️ فلاتر التحليل")
+        st.caption("كل فلتر مستقل؛ اترك الاختيار على «الكل» لعرض كل البيانات.")
+    with action_col:
+        if st.button("↺ إعادة ضبط", key="clear_dashboard_slicers_v4", use_container_width=True):
+            for key in ("dash_agent_slicer_v3", "dash_state_slicer_v3", "dash_date_slicer_v3", "dash_class_slicer_v4"):
+                st.session_state.pop(key, None)
+            _clear_dashboard_chart_filter()
+            st.rerun()
 
-        f1, f2, f3, f4 = st.columns([1.35, 1.35, 1.15, 1.35])
-        with f1:
+    f1, f2, f3, f4 = st.columns(4)
+    with f1:
+        with st.container(border=True):
             agent_choice = st.selectbox(
                 "👤 المحصل",
                 [all_agent_label] + agents,
                 key="dash_agent_slicer_v3",
                 on_change=_clear_dashboard_chart_filter,
             )
-        with f2:
+    with f2:
+        with st.container(border=True):
             state_choice = st.selectbox(
                 "📊 الحالة الفرعية",
                 [all_state_label] + substates,
                 key="dash_state_slicer_v3",
             ) if substates else all_state_label
-        with f3:
+    with f3:
+        with st.container(border=True):
             date_range = st.date_input(
                 "📅 التاريخ",
                 value=(date_min, date_max) if date_min is not None else None,
@@ -3435,9 +3460,8 @@ def _render_slicers(df, sales_col, time_col):
                 max_value=date_max,
                 key="dash_date_slicer_v3",
             ) if date_min is not None else None
-        with f4:
-            class_labels = ["الكل", "ناجحة", "غير ناجحة"]
-            class_values = {"الكل": None, "ناجحة": 1, "غير ناجحة": 0}
+    with f4:
+        with st.container(border=True):
             selected_class = st.selectbox(
                 "🏷️ التصنيف",
                 class_labels,
@@ -3447,6 +3471,15 @@ def _render_slicers(df, sales_col, time_col):
 
     selected_agents = [] if agent_choice == all_agent_label else [agent_choice]
     selected_substates = [] if state_choice == all_state_label else [state_choice]
+    date_summary = "كل التواريخ"
+    if isinstance(date_range, tuple) and len(date_range) == 2:
+        date_summary = f"{date_range[0]} إلى {date_range[1]}"
+    st.session_state["dashboard_filter_summary"] = {
+        "المحصل": agent_choice,
+        "الحالة الفرعية": state_choice,
+        "التاريخ": date_summary,
+        "التصنيف": selected_class,
+    }
     filtered = df.copy()
     hint_parts = []
     if sales_col and selected_agents:

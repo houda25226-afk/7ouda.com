@@ -790,6 +790,22 @@ def render_combined_promises_dashboard(df, meta, company_label):
         )
         st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG, key="promises_combined_type_share")
 
+    if sales_col and sales_col in df.columns and "نوع الوعد" in df.columns:
+        agent_promise_table = (
+            df.groupby([sales_col, "نوع الوعد"]).size()
+            .unstack(fill_value=0)
+            .reset_index()
+        )
+        if "الوعود القائمة" not in agent_promise_table.columns:
+            agent_promise_table["الوعود القائمة"] = 0
+        if "الوعود المكسورة" not in agent_promise_table.columns:
+            agent_promise_table["الوعود المكسورة"] = 0
+        agent_promise_table["الإجمالي"] = agent_promise_table["الوعود القائمة"] + agent_promise_table["الوعود المكسورة"]
+        agent_promise_table = agent_promise_table.rename(columns={sales_col: "المحصّل"})
+        agent_promise_table = agent_promise_table[["المحصّل", "الوعود القائمة", "الوعود المكسورة", "الإجمالي"]].sort_values("الإجمالي", ascending=False)
+        st.subheader("📊 ملخص الوعود حسب المحصّل")
+        st.dataframe(agent_promise_table, use_container_width=True, hide_index=True)
+
     display_cols = [c for c in [sales_col, "نوع الوعد", meta.get("substate_col") if meta else None, meta.get("duedate_col") if meta else None, net_col] if c and c in df.columns]
     st.subheader("📋 تفاصيل الوعود القائمة والمكسورة")
     if display_cols:

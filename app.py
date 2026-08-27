@@ -704,8 +704,26 @@ def render_combined_promises_dashboard(df, meta, company_label):
                 color_discrete_map={"الوعود القائمة": COLOR_SUCCESS, "الوعود المكسورة": COLOR_FAIL},
                 template=PLOTLY_TEMPLATE,
             )
-            fig.update_layout(**PLOTLY_LAYOUT, title="القائمة والمكسورة حسب المحصّل", xaxis_title="عدد الوعود", yaxis_title="", height=470, legend_title_text="")
-            fig.update_traces(customdata=agent_type[sales_col], hovertemplate="<b>%{y}</b><br>%{fullData.name}: %{x:,} وعد<extra></extra>")
+            fig.update_layout(
+                **PLOTLY_LAYOUT,
+                title="القائمة والمكسورة حسب المحصّل",
+                xaxis_title="عدد الوعود",
+                yaxis_title="",
+                height=500,
+                legend_title_text="",
+                margin=dict(t=78, b=62, l=170, r=70),
+                xaxis=dict(tickformat=",.0f", automargin=True),
+                uniformtext_minsize=12,
+                uniformtext_mode="hide",
+            )
+            fig.update_traces(
+                texttemplate="%{x:,.0f}",
+                textposition="outside",
+                textfont=dict(size=15, color=THEME["text"]),
+                cliponaxis=False,
+                customdata=agent_type[sales_col],
+                hovertemplate="<b>%{y}</b><br>%{fullData.name}: %{x:,.0f} وعد<extra></extra>",
+            )
             render_selectable_chart(fig, "promises_combined_by_agent", filter_key=PROMISES_AGENT_FILTER_KEY)
         with right:
             if net_col and net_col in df.columns:
@@ -723,8 +741,26 @@ def render_combined_promises_dashboard(df, meta, company_label):
                     color_discrete_map={"الوعود القائمة": COLOR_SUCCESS, "الوعود المكسورة": COLOR_FAIL},
                     template=PLOTLY_TEMPLATE,
                 )
-                fig.update_layout(**PLOTLY_LAYOUT, title="إجمالي المديونية حسب المحصّل", xaxis_title="إجمالي المديونية", yaxis_title="", height=470, legend_title_text="")
-                fig.update_traces(customdata=agent_amount[sales_col], hovertemplate="<b>%{y}</b><br>%{fullData.name}: %{x:,.0f}<extra></extra>")
+                fig.update_layout(
+                    **PLOTLY_LAYOUT,
+                    title="إجمالي المديونية حسب المحصّل",
+                    xaxis_title="إجمالي المديونية",
+                    yaxis_title="",
+                    height=500,
+                    legend_title_text="",
+                    margin=dict(t=78, b=62, l=170, r=105),
+                    xaxis=dict(tickformat=",.0f", separatethousands=True, automargin=True),
+                    uniformtext_minsize=11,
+                    uniformtext_mode="hide",
+                )
+                fig.update_traces(
+                    texttemplate="%{x:,.0f}",
+                    textposition="outside",
+                    textfont=dict(size=14, color=THEME["text"]),
+                    cliponaxis=False,
+                    customdata=agent_amount[sales_col],
+                    hovertemplate="<b>%{y}</b><br>%{fullData.name}: %{x:,.0f} جنيه<extra></extra>",
+                )
                 render_selectable_chart(fig, "promises_combined_amount_by_agent", filter_key=PROMISES_AGENT_FILTER_KEY)
             else:
                 st.info("لا يوجد عمود صافي المديونية لعرض الرسم المالي.")
@@ -739,8 +775,19 @@ def render_combined_promises_dashboard(df, meta, company_label):
             color_discrete_map={"الوعود القائمة": COLOR_SUCCESS, "الوعود المكسورة": COLOR_FAIL},
             template=PLOTLY_TEMPLATE,
         )
-        fig.update_layout(**PLOTLY_LAYOUT, title="توزيع الوعود القائمة والمكسورة", height=390, legend_title_text="")
-        fig.update_traces(textinfo="label+percent", hovertemplate="<b>%{label}</b><br>عدد الوعود: %{value:,}<br>النسبة: %{percent}<extra></extra>")
+        fig.update_layout(
+            **PLOTLY_LAYOUT,
+            title="توزيع الوعود القائمة والمكسورة",
+            height=420,
+            legend_title_text="",
+            margin=dict(t=78, b=45, l=35, r=35),
+        )
+        fig.update_traces(
+            texttemplate="%{label}<br>%{value:,.0f} (%{percent:.1%})",
+            textfont=dict(size=16, color=THEME["text"]),
+            textinfo="text",
+            hovertemplate="<b>%{label}</b><br>عدد الوعود: %{value:,.0f}<br>النسبة: %{percent:.1%}<extra></extra>",
+        )
         st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG, key="promises_combined_type_share")
 
     display_cols = [c for c in [sales_col, "نوع الوعد", meta.get("substate_col") if meta else None, meta.get("duedate_col") if meta else None, net_col] if c and c in df.columns]

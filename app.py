@@ -46,6 +46,8 @@ WASTED_TIME_COL = "الوقت_المهدر_دقيقة"
 ID_CANDIDATES = ["Account ID", "account id", "AccountID", "ID", "id", "رقم الحساب", "الرقم التعريفي", "Account No", "account no", "Account Number"]
 SALES_PERSON_CANDIDATES = ["Create By", "create by", "CreateBy", "Created By", "created by", "Sales Person", "sales person", "المحصّل", "Salesperson", "salesperson", "SalesPerson"]
 CREATED_ON_CANDIDATES = ["Created On", "created on", "CreatedOn", "تاريخ الافادة"]
+CLAIM_CANDIDATES = ["Claim", "claim", "CLAIM", "رقم المطالبة", "رقم المطالبه"]
+DUPLICATE_WINDOW_MINUTES = 20
 DURATION_CANDIDATES = ["Call Duration", "call duration", "CallDuration", "Duration", "duration", "مدة المكالمة", "Call Time", "call time", "Talk Time", "talk time", "Duration (min)", "مدة"]
 
 # ========================================================== 
@@ -616,6 +618,93 @@ def predict_batch(texts, tokenizer, model, device, batch_size=16):
 
     progress_bar.empty()
     return all_preds, all_confidences
+
+
+def remove_claim_duplicates(df, claim_col, time_col, classification_col=CLASSIFICATION_COL):
+    """حذف تكرارات Claim وفق اليوم والتصنيف والوقت، مع الاحتفاظ بالصف الأحدث."""
+    stats = {
+        "input_rows": len(df),
+        "output_rows": len(df),
+        "removed_rows": 0,
+        "duplicate_groups": 0,
+        "success_priority_groups": 0,
+        "non_success_window_groups": 0,
+        "skipped_rows": 0,
+    }
+    if not claim_col or claim_col not in df.columns or not time_col or time_col not in df.columns:
+        stats["skipped_rows"] = len(df)
+        return df.copy(), stats
+    if classification_col not in df.columns:
+        stats["skipped_rows"] = len(df)
+        return df.copy(), stats
+
+    work = df.copy()
+    work["_dedup_time"] = pd.to_datetime(work[time_col], errors="coerce")
+    work["_dedup_claim"] = work[claim_col].astype("string").str.strip()
+    work["_dedup_day"] = work["_dedup_time"].dt.date
+    work["_dedup_order"] = range(len(work))
+    valid = (
+        work["_dedup_time"].notna()
+        & work["_dedup_day"].notna()
+        & work["_dedup_claim"].notna()
+        & work["_dedup_claim"].ne("")
+    )
+    stats["skipped_rows"] = int((~valid).sum())
+    keep_indices = set(work.index[~valid])
+    valid_work = work.loc[valid]
+
+    for (_, _), group in valid_work.groupby(["_dedup_claim", "_dedup_day"], sort=False):
+        group = group.sort_values(["_dedup_time", "_dedup_order"])
+        if len(group) == 1:
+            keep_indices.add(group.index[0])
+            continue
+
+        stats["duplicate_groups"] += 1
+        successful = pd.to_numeric(group[classification_col], errors="coerce").eq(1)
+        if successful.any():
+            # وجود ناجحة يلغي غير الناجحة، ونحتفظ بآخر إفادة ناجحة.
+            keep_indices.add(group.loc[successful].index[-1])
+            stats["success_priority_groups"] += 1
+            continue
+
+        # عند كون كل التكرارات غير ناجحة: نكوّن مجموعات متجاورة بفارق أقل من 20 دقيقة.
+        cluster = [group.index[0]]
+        previous_time = group.iloc[0]["_dedup_time"]
+        for row_index, row in group.iloc[1:].iterrows():
+            current_time = row["_dedup_time"]
+            if current_time - previous_time < pd.Timedelta(minutes=DUPLICATE_WINDOW_MINUTES):
+                cluster.append(row_index)
+            else:
+                keep_indices.add(cluster[-1])
+                cluster = [row_index]
+            previous_time = current_time
+        keep_indices.add(cluster[-1])
+        stats["non_success_window_groups"] += 1
+
+    result = df.loc[sorted(keep_indices, key=lambda index: work.loc[index, "_dedup_order"])].copy()
+    stats["output_rows"] = len(result)
+    stats["removed_rows"] = stats["input_rows"] - stats["output_rows"]
+    return result.reset_index(drop=True), stats
+
+
+def render_duplicate_summary(stats):
+    """عرض نتيجة تنظيف التكرارات بعد التصنيف."""
+    if not stats:
+        return
+    if stats.get("removed_rows", 0) > 0:
+        st.success(
+            f"🧹 تم حذف {stats['removed_rows']:,} تكرار من أصل {stats['input_rows']:,} صف "
+            f"والاحتفاظ بـ {stats['output_rows']:,} صف."
+        )
+        st.caption(
+            f"مجموعات بأولوية ناجحة: {stats.get('success_priority_groups', 0)} · "
+            f"مجموعات غير ناجحة ضمن نافذة {DUPLICATE_WINDOW_MINUTES} دقيقة: "
+            f"{stats.get('non_success_window_groups', 0)}"
+        )
+    elif stats.get("skipped_rows", 0) == stats.get("input_rows", 0):
+        st.warning("لم تُطبَّق إزالة التكرارات: يلزم وجود عمود Claim وعمود التاريخ والوقت.")
+    else:
+        st.info("لم يتم العثور على تكرارات مطابقة وفق قواعد Claim واليوم والتصنيف.")
 
 
 # ==========================================================
@@ -1326,6 +1415,8 @@ def classify_period_file(uploaded_file, period_key):
 
         sales_col = find_column(result_df, SALES_PERSON_CANDIDATES)
         time_col = find_column(result_df, CREATED_ON_CANDIDATES)
+        claim_col = find_column(result_df, CLAIM_CANDIDATES)
+        result_df, duplicate_stats = remove_claim_duplicates(result_df, claim_col, time_col)
 
         break_start = (
             st.session_state[f"{period_key}_break_start"]
@@ -1360,6 +1451,8 @@ def classify_period_file(uploaded_file, period_key):
             "df": result_df,
             "sales_col": sales_col,
             "time_col": time_col,
+            "claim_col": claim_col,
+            "duplicate_stats": duplicate_stats,
             "company": st.session_state["selected_company"],
             "period_title": period_title,
             "uploaded_filename": uploaded_file.name,  # 💾 اسم الملف لـ نربط الكاش بالملف اللي اتشال
@@ -1382,6 +1475,7 @@ def _render_period_results(stored, period_key):
     sales_col = stored["sales_col"]
     time_col = stored["time_col"]
 
+    render_duplicate_summary(stored.get("duplicate_stats"))
     st.dataframe(result_df, use_container_width=True, hide_index=True)
 
     render_period_charts(result_df, sales_col, time_col, period_title)
@@ -1727,6 +1821,8 @@ def _classify_aggregate_file(uploaded_file, company, period_key, period_title):
         result_df["نسبة_الثقة"] = [round(c * 100, 1) for c in confidences]
         sales_col = find_column(result_df, SALES_PERSON_CANDIDATES)
         time_col = find_column(result_df, CREATED_ON_CANDIDATES)
+        claim_col = find_column(result_df, CLAIM_CANDIDATES)
+        result_df, duplicate_stats = remove_claim_duplicates(result_df, claim_col, time_col)
         has_break = st.session_state[f"{period_key}_has_break"]
         break_start = st.session_state[f"{period_key}_break_start"] if has_break else None
         break_end = st.session_state[f"{period_key}_break_end"] if has_break else None
@@ -1741,6 +1837,7 @@ def _classify_aggregate_file(uploaded_file, company, period_key, period_title):
             result_df["مدة الاستراحة_دقيقة"] = st.session_state[f"{period_key}_break_duration"]
         st.session_state[result_key] = {
             "df": result_df, "sales_col": sales_col, "time_col": time_col,
+            "claim_col": claim_col, "duplicate_stats": duplicate_stats,
             "company": company, "uploaded_filename": uploaded_file.name,
         }
         st.rerun()
@@ -1749,6 +1846,7 @@ def _render_aggregate_results(stored, period_title):
     result_df = stored["df"]
     sales_col = stored["sales_col"]
     time_col = stored["time_col"]
+    render_duplicate_summary(stored.get("duplicate_stats"))
     st.dataframe(result_df, use_container_width=True, hide_index=True)
     render_period_charts(result_df, sales_col, time_col, period_title)
     buffer = io.BytesIO()

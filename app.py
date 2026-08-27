@@ -493,7 +493,9 @@ def _show_broken_results(df, target_date, summary, filename=None):
     )
 
 
-PROMISES_MODE_KEY = "promises_unified_mode"
+PROMISES_COMPANY_KEY = "promises_selected_company"
+PROMISES_COMPANY_OPTIONS = ["الوطنية للتأمين", "تري للتأمين"]
+PROMISE_COMPANY_CANDIDATES = ["Company", "company", "Company Name", "اسم الشركة", "الشركة"]
 
 
 def _build_promises_agent_summary(df, sales_col, net_col):
@@ -593,32 +595,158 @@ def _show_unified_promises_results(cached, mode_label):
     render_promises_dashboard(df, cached, mode_label)
 
 
+def _filter_promises_by_company(df, company_label):
+    """يفلتر عمود الشركة إن وُجد؛ وإذا لم يوجد فكل الملف يُعامل كملف الشركة المختارة."""
+    company_col = find_column(df, PROMISE_COMPANY_CANDIDATES)
+    if not company_col or company_col not in df.columns:
+        return df.copy()
+    short_name = "الوطنية" if "الوطنية" in company_label else "تري"
+    values = df[company_col].astype(str).str.strip()
+    mask = values.str.contains(company_label, case=False, na=False) | values.str.contains(short_name, case=False, na=False)
+    return df.loc[mask].copy() if mask.any() else df.iloc[0:0].copy()
+
+
+def _combine_promises_cached_results(company_label):
+    parts = []
+    for key, promise_type in ((PROMISES_RESULT_KEY, "الوعود القائمة"), (BROKEN_RESULT_KEY, "الوعود المكسورة")):
+        cached = st.session_state.get(key)
+        if not cached or cached.get("df") is None:
+            continue
+        part = _filter_promises_by_company(cached["df"], company_label)
+        if part.empty:
+            continue
+        part = part.copy()
+        part["نوع الوعد"] = promise_type
+        parts.append(part)
+    if not parts:
+        return pd.DataFrame(), None
+    combined = pd.concat(parts, ignore_index=True, sort=False)
+    meta = st.session_state.get(PROMISES_RESULT_KEY) or st.session_state.get(BROKEN_RESULT_KEY)
+    return combined, meta
+
+
+def render_combined_promises_dashboard(df, meta, company_label):
+    sales_col = meta.get("sales_col") if meta else None
+    net_col = meta.get("net_col") if meta else None
+    render_promises_filter_notice()
+    df = get_promises_view(df, sales_col)
+    total = len(df)
+    standing_count = int((df["نوع الوعد"] == "الوعود القائمة").sum()) if "نوع الوعد" in df.columns else 0
+    broken_count = int((df["نوع الوعد"] == "الوعود المكسورة").sum()) if "نوع الوعد" in df.columns else 0
+    total_amount = pd.to_numeric(df[net_col], errors="coerce").fillna(0).sum() if net_col and net_col in df.columns else 0
+    agent_count = int(df[sales_col].nunique()) if sales_col and sales_col in df.columns else 0
+
+    st.subheader(f"📊 ملخص الوعود — {company_label}")
+    k1, k2, k3, k4, k5 = st.columns(5)
+    k1.metric("🤝 إجمالي الوعود", f"{total:,}")
+    k2.metric("📗 الوعود القائمة", f"{standing_count:,}")
+    k3.metric("📕 الوعود المكسورة", f"{broken_count:,}")
+    k4.metric("👥 عدد المحصّلين", f"{agent_count:,}")
+    k5.metric("💰 إجمالي المديونية", f"{total_amount:,.0f}" if net_col else "—")
+
+    if total and sales_col and sales_col in df.columns:
+        st.markdown("#### 📈 تحليلات الوعود القائمة والمكسورة")
+        agent_type = df.groupby([sales_col, "نوع الوعد"]).size().reset_index(name="عدد الوعود")
+        agent_order = agent_type.groupby(sales_col)["عدد الوعود"].sum().sort_values(ascending=False).head(15).index.tolist()
+        agent_type = agent_type[agent_type[sales_col].isin(agent_order)]
+        agent_type["_sort"] = agent_type[sales_col].map({name: i for i, name in enumerate(agent_order)})
+        agent_type = agent_type.sort_values(["_sort", "نوع الوعد"], ascending=[True, True])
+        left, right = st.columns(2)
+        with left:
+            fig = px.bar(
+                agent_type,
+                x="عدد الوعود",
+                y=sales_col,
+                color="نوع الوعد",
+                barmode="group",
+                orientation="h",
+                text="عدد الوعود",
+                color_discrete_map={"الوعود القائمة": COLOR_SUCCESS, "الوعود المكسورة": COLOR_FAIL},
+                template=PLOTLY_TEMPLATE,
+            )
+            fig.update_layout(**PLOTLY_LAYOUT, title="القائمة والمكسورة حسب المحصّل", xaxis_title="عدد الوعود", yaxis_title="", height=470, legend_title_text="")
+            fig.update_traces(customdata=agent_type[sales_col], hovertemplate="<b>%{y}</b><br>%{fullData.name}: %{x:,} وعد<extra></extra>")
+            render_selectable_chart(fig, "promises_combined_by_agent", filter_key=PROMISES_AGENT_FILTER_KEY)
+        with right:
+            if net_col and net_col in df.columns:
+                amount_work = df.assign(_amount=pd.to_numeric(df[net_col], errors="coerce").fillna(0))
+                agent_amount = amount_work.groupby([sales_col, "نوع الوعد"])["_amount"].sum().reset_index(name="إجمالي المديونية")
+                agent_amount = agent_amount[agent_amount[sales_col].isin(agent_order)]
+                fig = px.bar(
+                    agent_amount,
+                    x="إجمالي المديونية",
+                    y=sales_col,
+                    color="نوع الوعد",
+                    barmode="group",
+                    orientation="h",
+                    text="إجمالي المديونية",
+                    color_discrete_map={"الوعود القائمة": COLOR_SUCCESS, "الوعود المكسورة": COLOR_FAIL},
+                    template=PLOTLY_TEMPLATE,
+                )
+                fig.update_layout(**PLOTLY_LAYOUT, title="إجمالي المديونية حسب المحصّل", xaxis_title="إجمالي المديونية", yaxis_title="", height=470, legend_title_text="")
+                fig.update_traces(customdata=agent_amount[sales_col], hovertemplate="<b>%{y}</b><br>%{fullData.name}: %{x:,.0f}<extra></extra>")
+                render_selectable_chart(fig, "promises_combined_amount_by_agent", filter_key=PROMISES_AGENT_FILTER_KEY)
+            else:
+                st.info("لا يوجد عمود صافي المديونية لعرض الرسم المالي.")
+
+        type_counts = df["نوع الوعد"].value_counts().rename_axis("نوع الوعد").reset_index(name="عدد الوعود")
+        fig = px.pie(
+            type_counts,
+            values="عدد الوعود",
+            names="نوع الوعد",
+            hole=0.55,
+            color="نوع الوعد",
+            color_discrete_map={"الوعود القائمة": COLOR_SUCCESS, "الوعود المكسورة": COLOR_FAIL},
+            template=PLOTLY_TEMPLATE,
+        )
+        fig.update_layout(**PLOTLY_LAYOUT, title="توزيع الوعود القائمة والمكسورة", height=390, legend_title_text="")
+        fig.update_traces(textinfo="label+percent", hovertemplate="<b>%{label}</b><br>عدد الوعود: %{value:,}<br>النسبة: %{percent}<extra></extra>")
+        st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG, key="promises_combined_type_share")
+
+    display_cols = [c for c in [sales_col, "نوع الوعد", meta.get("substate_col") if meta else None, meta.get("duedate_col") if meta else None, net_col] if c and c in df.columns]
+    st.subheader("📋 تفاصيل الوعود القائمة والمكسورة")
+    if display_cols:
+        st.dataframe(df[display_cols], use_container_width=True, hide_index=True)
+    if not df.empty:
+        out_excel = io.BytesIO()
+        with pd.ExcelWriter(out_excel, engine="openpyxl") as writer:
+            df.to_excel(writer, index=False, sheet_name="الوعود المجمعة")
+        st.download_button(
+            "⬇️ تحميل الوعود القائمة والمكسورة",
+            data=out_excel.getvalue(),
+            file_name=f"وعود_{company_label}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            use_container_width=True,
+            key="promises_combined_download",
+            type="primary",
+        )
+
+
 def page_promises():
-    """صفحة موحدة للوعود القائمة والمكسورة مع Dashboard تفاعلية."""
+    """صفحة واحدة تجمع الوعود القائمة والمكسورة حسب الشركة المختارة."""
     _init_promises_today()
     page_header(
         "PROMISES",
         "📚 الوعود",
-        "اختر نوع الوعود، ثم ارفع ملف المحفظة لعرض الملخص والبيانات بشكل تفاعلي",
+        "اختر الشركة لعرض الوعود القائمة والمكسورة معًا في Dashboard واحدة تفاعلية",
     )
-    mode_labels = {"📗 الوعود القائمة": ("today", PROMISES_RESULT_KEY), "📕 الوعود المكسورة": ("before", BROKEN_RESULT_KEY)}
-    selected_mode = st.radio("نوع الوعود", list(mode_labels.keys()), horizontal=True, key=PROMISES_MODE_KEY)
-    due_mode, result_key = mode_labels[selected_mode]
+    company_label = st.radio("الشركة", PROMISES_COMPANY_OPTIONS, horizontal=True, key=PROMISES_COMPANY_KEY)
     uploaded = st.file_uploader(
-        "📂 ارفع ملف المحفظة (Excel أو CSV)",
+        "📂 ارفع ملف المحفظة للشركة المختارة (Excel أو CSV)",
         type=["xlsx", "xls", "csv"],
         key="promises_portfolio_upload",
         on_change=sync_file_cache,
         args=("promises_portfolio_upload", "promises", (PROMISES_RESULT_KEY, BROKEN_RESULT_KEY)),
     )
     if uploaded is not None:
-        st.caption(f"الملف المختار: {uploaded.name}")
-        _run_promises_pipeline(uploaded, result_key, due_mode=due_mode, count_label="عدد الوعود")
-    cached = st.session_state.get(result_key)
-    if cached:
-        _show_unified_promises_results(cached, selected_mode)
-    else:
-        st.info(f"📂 ارفع ملف المحفظة لعرض {selected_mode}.")
+        st.caption(f"الشركة: {company_label} · الملف المختار: {uploaded.name}")
+        _run_promises_pipeline(uploaded, PROMISES_RESULT_KEY, due_mode="today", count_label="عدد الوعود القائمة")
+        _run_promises_pipeline(uploaded, BROKEN_RESULT_KEY, due_mode="before", count_label="عدد الوعود المكسورة")
+    combined, meta = _combine_promises_cached_results(company_label)
+    if combined.empty or meta is None:
+        st.info(f"📂 ارفع ملف المحفظة لعرض الوعود القائمة والمكسورة لشركة {company_label}.")
+        return
+    render_combined_promises_dashboard(combined, meta, company_label)
 
 
 st.set_page_config(

@@ -1141,14 +1141,17 @@ def init_activity_state():
 
 def render_company_selector():
     st.subheader("🏢 اختر شركة التصنيف")
-    st.caption("اختر الشركة أولًا، ثم حدّد فترة النشاط ومواعيدها.")
     c1, c2 = st.columns(2)
     for col, company_name in zip((c1, c2), COMPANIES.keys()):
         with col:
             selected = st.session_state.get("selected_company") == company_name
-            st.subheader(company_name)
-            st.caption("تصنيف مكالمات الشركة")
-            if st.button("✓ الشركة المختارة" if selected else f"اختيار {company_name}", key=f"company_{company_name}", use_container_width=True, type="primary" if selected else "secondary"):
+            button_label = f"✓ {company_name}" if selected else company_name
+            if st.button(
+                button_label,
+                key=f"company_{company_name}",
+                use_container_width=True,
+                type="primary" if selected else "secondary",
+            ):
                 st.session_state["selected_company"] = company_name
                 st.session_state["selected_period"] = None
                 st.rerun()

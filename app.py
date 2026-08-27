@@ -493,6 +493,134 @@ def _show_broken_results(df, target_date, summary, filename=None):
     )
 
 
+PROMISES_MODE_KEY = "promises_unified_mode"
+
+
+def _build_promises_agent_summary(df, sales_col, net_col):
+    if not sales_col or sales_col not in df.columns:
+        return pd.DataFrame()
+    summary = df.groupby(sales_col).size().reset_index(name="عدد الوعود")
+    if net_col and net_col in df.columns:
+        amounts = pd.to_numeric(df[net_col], errors="coerce").fillna(0)
+        amount_summary = df.assign(_promise_amount=amounts).groupby(sales_col)["_promise_amount"].sum().reset_index(name="إجمالي المديونية")
+        summary = summary.merge(amount_summary, on=sales_col, how="left")
+    return summary.sort_values("عدد الوعود", ascending=False).reset_index(drop=True)
+
+
+def render_promises_dashboard(df, summary, mode_label):
+    sales_col = summary.get("sales_col")
+    net_col = summary.get("net_col")
+    render_promises_filter_notice()
+    df = get_promises_view(df, sales_col)
+    total = len(df)
+    total_amount = pd.to_numeric(df[net_col], errors="coerce").fillna(0).sum() if net_col and net_col in df.columns else 0
+    agent_summary = _build_promises_agent_summary(df, sales_col, net_col)
+    agent_count = len(agent_summary)
+    avg_amount = total_amount / total if total else 0
+
+    st.subheader(f"📊 ملخص الوعود — {mode_label}")
+    k1, k2, k3, k4 = st.columns(4)
+    k1.metric("🤝 إجمالي الوعود", f"{total:,}")
+    k2.metric("👥 عدد المحصّلين", f"{agent_count:,}")
+    k3.metric("💰 إجمالي المديونية", f"{total_amount:,.0f}" if net_col else "—")
+    k4.metric("📈 متوسط المديونية", f"{avg_amount:,.0f}" if net_col else "—")
+
+    if total and sales_col and not agent_summary.empty:
+        st.markdown("#### 📈 تحليلات الوعود التفاعلية")
+        left, right = st.columns(2)
+        with left:
+            count_fig = px.bar(
+                agent_summary.head(15).sort_values("عدد الوعود"),
+                x="عدد الوعود",
+                y=sales_col,
+                orientation="h",
+                text="عدد الوعود",
+                color="عدد الوعود",
+                color_continuous_scale=[THEME["surface_2"], COLOR_ACCENT],
+                template=PLOTLY_TEMPLATE,
+            )
+            count_fig.update_layout(**PLOTLY_LAYOUT, title="عدد الوعود حسب المحصّل", xaxis_title="عدد الوعود", yaxis_title="", coloraxis_showscale=False, height=430)
+            count_fig.update_traces(customdata=agent_summary.head(15).sort_values("عدد الوعود")[sales_col], hovertemplate="<b>%{y}</b><br>عدد الوعود: %{x:,}<extra></extra>")
+            render_selectable_chart(count_fig, f"promises_count_{mode_label}", filter_key=PROMISES_AGENT_FILTER_KEY)
+        with right:
+            if net_col and "إجمالي المديونية" in agent_summary.columns:
+                amount_fig = px.bar(
+                    agent_summary.head(15).sort_values("إجمالي المديونية"),
+                    x="إجمالي المديونية",
+                    y=sales_col,
+                    orientation="h",
+                    text="إجمالي المديونية",
+                    color="إجمالي المديونية",
+                    color_continuous_scale=[COLOR_ACCENT, COLOR_WARN],
+                    template=PLOTLY_TEMPLATE,
+                )
+                amount_fig.update_layout(**PLOTLY_LAYOUT, title="إجمالي المديونية حسب المحصّل", xaxis_title="إجمالي المديونية", yaxis_title="", coloraxis_showscale=False, height=430)
+                amount_fig.update_traces(customdata=agent_summary.head(15).sort_values("إجمالي المديونية")[sales_col], hovertemplate="<b>%{y}</b><br>إجمالي المديونية: %{x:,.0f}<extra></extra>")
+                render_selectable_chart(amount_fig, f"promises_amount_{mode_label}", filter_key=PROMISES_AGENT_FILTER_KEY)
+            else:
+                st.info("لا يوجد عمود صافي المديونية لعرض الرسم المالي.")
+
+    display_cols = [c for c in [summary.get("sales_col"), summary.get("substate_col"), summary.get("duedate_col"), summary.get("net_col")] if c and c in df.columns]
+    st.subheader(f"📋 بيانات الوعود — {mode_label}")
+    if display_cols:
+        st.dataframe(df[display_cols], use_container_width=True, hide_index=True)
+    if not df.empty:
+        out_excel = io.BytesIO()
+        with pd.ExcelWriter(out_excel, engine="openpyxl") as writer:
+            df.to_excel(writer, index=False, sheet_name="الوعود")
+        st.download_button(
+            f"⬇️ تحميل بيانات الوعود — {mode_label}",
+            data=out_excel.getvalue(),
+            file_name=f"الوعود_{mode_label}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            use_container_width=True,
+            key=f"promises_unified_download_{mode_label}",
+            type="primary",
+        )
+
+
+def _show_unified_promises_results(cached, mode_label):
+    df = cached["df"]
+    target_date = cached["target_date"]
+    total_in_file = cached.get("total_in_file", len(df))
+    st.info(
+        f"📌 {mode_label} — {len(get_promises_view(df, cached.get('sales_col'))):,} وعد من {max(total_in_file, 0):,} صف "
+        f"بعد تطبيق فلتر {cached.get('due_desc', '')}."
+    )
+    if df.empty:
+        st.warning(f"لا توجد {mode_label} بعد تطبيق الفلاتر.")
+        return
+    render_promises_dashboard(df, cached, mode_label)
+
+
+def page_promises():
+    """صفحة موحدة للوعود القائمة والمكسورة مع Dashboard تفاعلية."""
+    _init_promises_today()
+    page_header(
+        "PROMISES",
+        "📚 الوعود",
+        "اختر نوع الوعود، ثم ارفع ملف المحفظة لعرض الملخص والبيانات بشكل تفاعلي",
+    )
+    mode_labels = {"📗 الوعود القائمة": ("today", PROMISES_RESULT_KEY), "📕 الوعود المكسورة": ("before", BROKEN_RESULT_KEY)}
+    selected_mode = st.radio("نوع الوعود", list(mode_labels.keys()), horizontal=True, key=PROMISES_MODE_KEY)
+    due_mode, result_key = mode_labels[selected_mode]
+    uploaded = st.file_uploader(
+        "📂 ارفع ملف المحفظة (Excel أو CSV)",
+        type=["xlsx", "xls", "csv"],
+        key="promises_portfolio_upload",
+        on_change=sync_file_cache,
+        args=("promises_portfolio_upload", "promises", (PROMISES_RESULT_KEY, BROKEN_RESULT_KEY)),
+    )
+    if uploaded is not None:
+        st.caption(f"الملف المختار: {uploaded.name}")
+        _run_promises_pipeline(uploaded, result_key, due_mode=due_mode, count_label="عدد الوعود")
+    cached = st.session_state.get(result_key)
+    if cached:
+        _show_unified_promises_results(cached, selected_mode)
+    else:
+        st.info(f"📂 ارفع ملف المحفظة لعرض {selected_mode}.")
+
+
 st.set_page_config(
     page_title="لوحة تحليل المكالمات | 7oudaModel",
     page_icon="🎙️",
@@ -833,6 +961,7 @@ PLOTLY_CONFIG = {
 
 
 CLASSIFICATION_AGENT_FILTER_KEY = "classification_selected_agent"
+PROMISES_AGENT_FILTER_KEY = "promises_selected_agent"
 
 
 def _event_value(item, key, default=None):
@@ -863,7 +992,7 @@ def _extract_selected_agent(event, fig):
     return str(selected).strip() if selected is not None else None
 
 
-def render_selectable_chart(fig, key):
+def render_selectable_chart(fig, key, filter_key=CLASSIFICATION_AGENT_FILTER_KEY):
     """عرض رسم Plotly مع التقاط اختيار محصّل وإعادة تشغيل الصفحة لتطبيق الفلتر."""
     try:
         event = st.plotly_chart(
@@ -880,9 +1009,35 @@ def render_selectable_chart(fig, key):
         return
     selected = _extract_selected_agent(event, fig)
     if selected:
-        current = st.session_state.get(CLASSIFICATION_AGENT_FILTER_KEY)
+        current = st.session_state.get(filter_key)
         if selected != current:
-            st.session_state[CLASSIFICATION_AGENT_FILTER_KEY] = selected
+            st.session_state[filter_key] = selected
+            st.rerun()
+
+
+def get_promises_view(df, sales_col):
+    if not sales_col or sales_col not in df.columns:
+        return df
+    selected = st.session_state.get(PROMISES_AGENT_FILTER_KEY)
+    if not selected:
+        return df
+    mask = df[sales_col].astype(str).str.strip().eq(str(selected).strip())
+    if not mask.any():
+        st.session_state.pop(PROMISES_AGENT_FILTER_KEY, None)
+        return df
+    return df.loc[mask].copy()
+
+
+def render_promises_filter_notice():
+    selected = st.session_state.get(PROMISES_AGENT_FILTER_KEY)
+    if not selected:
+        return
+    c1, c2 = st.columns([4, 1])
+    with c1:
+        st.info(f"🎯 الفلتر النشط: عرض كل ملخصات الوعود للمحصّل «{selected}»")
+    with c2:
+        if st.button("إظهار الكل", key="clear_promises_agent_filter", use_container_width=True):
+            st.session_state.pop(PROMISES_AGENT_FILTER_KEY, None)
             st.rerun()
 
 
@@ -2443,8 +2598,7 @@ def _show_dashboard_from_cache():
 
 PAGES = {
     "🎯 تصنيف المكالمات": page_classification,
-    "📗 الوعود القائمة": page_standing_promises,
-    "📕 الوعود المكسورة": page_broken_promises,
+    "📚 الوعود": page_promises,
     "⚠️ الإهمال والمتابعة": page_neglect,
     "🧾 أخطاء الحالات": lambda: page_placeholder(
         "CASE ERRORS", "أخطاء الحالات", "الحالات اللي فيها أخطاء في التسجيل أو المتابعة", "🧾"

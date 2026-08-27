@@ -704,18 +704,18 @@ def render_combined_promises_dashboard(df, meta, company_label):
                 color_discrete_map={"الوعود القائمة": COLOR_SUCCESS, "الوعود المكسورة": COLOR_FAIL},
                 template=PLOTLY_TEMPLATE,
             )
-            fig.update_layout(
+            fig.update_layout(**{
                 **PLOTLY_LAYOUT,
-                title="القائمة والمكسورة حسب المحصّل",
-                xaxis_title="عدد الوعود",
-                yaxis_title="",
-                height=500,
-                legend_title_text="",
-                margin=dict(t=78, b=62, l=170, r=70),
-                xaxis=dict(tickformat=",.0f", automargin=True),
-                uniformtext_minsize=12,
-                uniformtext_mode="hide",
-            )
+                "title": "القائمة والمكسورة حسب المحصّل",
+                "xaxis_title": "عدد الوعود",
+                "yaxis_title": "",
+                "height": 500,
+                "legend_title_text": "",
+                "margin": dict(t=78, b=62, l=170, r=70),
+                "xaxis": dict(tickformat=",.0f", automargin=True),
+                "uniformtext_minsize": 12,
+                "uniformtext_mode": "hide",
+            })
             fig.update_traces(
                 texttemplate="%{x:,.0f}",
                 textposition="outside",
@@ -741,18 +741,18 @@ def render_combined_promises_dashboard(df, meta, company_label):
                     color_discrete_map={"الوعود القائمة": COLOR_SUCCESS, "الوعود المكسورة": COLOR_FAIL},
                     template=PLOTLY_TEMPLATE,
                 )
-                fig.update_layout(
+                fig.update_layout(**{
                     **PLOTLY_LAYOUT,
-                    title="إجمالي المديونية حسب المحصّل",
-                    xaxis_title="إجمالي المديونية",
-                    yaxis_title="",
-                    height=500,
-                    legend_title_text="",
-                    margin=dict(t=78, b=62, l=170, r=105),
-                    xaxis=dict(tickformat=",.0f", separatethousands=True, automargin=True),
-                    uniformtext_minsize=11,
-                    uniformtext_mode="hide",
-                )
+                    "title": "إجمالي المديونية حسب المحصّل",
+                    "xaxis_title": "إجمالي المديونية",
+                    "yaxis_title": "",
+                    "height": 500,
+                    "legend_title_text": "",
+                    "margin": dict(t=78, b=62, l=170, r=105),
+                    "xaxis": dict(tickformat=",.0f", separatethousands=True, automargin=True),
+                    "uniformtext_minsize": 11,
+                    "uniformtext_mode": "hide",
+                })
                 fig.update_traces(
                     texttemplate="%{x:,.0f}",
                     textposition="outside",
@@ -775,13 +775,13 @@ def render_combined_promises_dashboard(df, meta, company_label):
             color_discrete_map={"الوعود القائمة": COLOR_SUCCESS, "الوعود المكسورة": COLOR_FAIL},
             template=PLOTLY_TEMPLATE,
         )
-        fig.update_layout(
+        fig.update_layout(**{
             **PLOTLY_LAYOUT,
-            title="توزيع الوعود القائمة والمكسورة",
-            height=420,
-            legend_title_text="",
-            margin=dict(t=78, b=45, l=35, r=35),
-        )
+            "title": "توزيع الوعود القائمة والمكسورة",
+            "height": 420,
+            "legend_title_text": "",
+            "margin": dict(t=78, b=45, l=35, r=35),
+        })
         fig.update_traces(
             texttemplate="%{label}<br>%{value:,.0f} (%{percent:.1%})",
             textfont=dict(size=16, color=THEME["text"]),

@@ -606,9 +606,10 @@ def _filter_promises_by_company(df, company_label):
     return df.loc[mask].copy() if mask.any() else df.iloc[0:0].copy()
 
 
-def _combine_promises_cached_results(company_label):
+def _combine_promises_cached_results(company_label, result_keys=None):
     parts = []
-    for key, promise_type in ((PROMISES_RESULT_KEY, "الوعود القائمة"), (BROKEN_RESULT_KEY, "الوعود المكسورة")):
+    result_keys = result_keys or (PROMISES_RESULT_KEY, BROKEN_RESULT_KEY)
+    for key, promise_type in zip(result_keys, ("الوعود القائمة", "الوعود المكسورة")):
         cached = st.session_state.get(key)
         if not cached or cached.get("df") is None:
             continue
@@ -621,7 +622,7 @@ def _combine_promises_cached_results(company_label):
     if not parts:
         return pd.DataFrame(), None
     combined = pd.concat(parts, ignore_index=True, sort=False)
-    meta = st.session_state.get(PROMISES_RESULT_KEY) or st.session_state.get(BROKEN_RESULT_KEY)
+    meta = st.session_state.get(result_keys[0]) or st.session_state.get(result_keys[1])
     return combined, meta
 
 
@@ -723,28 +724,36 @@ def render_combined_promises_dashboard(df, meta, company_label):
 
 
 def page_promises():
-    """صفحة واحدة تجمع الوعود القائمة والمكسورة حسب الشركة المختارة."""
+    """صفحة واحدة تجمع الوعود القائمة والمكسورة داخل محفظة الشركة المختارة فقط."""
     _init_promises_today()
     page_header(
         "PROMISES",
         "📚 الوعود",
-        "اختر الشركة لعرض الوعود القائمة والمكسورة معًا في Dashboard واحدة تفاعلية",
+        "لكل شركة محفظة مستقلة؛ اختر الشركة وارفع ملفها لعرض الوعود القائمة والمكسورة معًا",
     )
-    company_label = st.radio("الشركة", PROMISES_COMPANY_OPTIONS, horizontal=True, key=PROMISES_COMPANY_KEY)
+    company_label = st.radio("اختر الشركة", PROMISES_COMPANY_OPTIONS, horizontal=True, key=PROMISES_COMPANY_KEY)
+    company_slug = "wataniya" if company_label == "الوطنية للتأمين" else "tary"
+    standing_key = f"promises_{company_slug}_standing"
+    broken_key = f"promises_{company_slug}_broken"
+    upload_key = f"promises_upload_{company_slug}"
+    cache_scope = f"promises_upload:{company_slug}"
+    result_keys = (standing_key, broken_key)
+
     uploaded = st.file_uploader(
-        "📂 ارفع ملف المحفظة للشركة المختارة (Excel أو CSV)",
+        f"📂 ارفع محفظة {company_label} (Excel أو CSV)",
         type=["xlsx", "xls", "csv"],
-        key="promises_portfolio_upload",
+        key=upload_key,
         on_change=sync_file_cache,
-        args=("promises_portfolio_upload", "promises", (PROMISES_RESULT_KEY, BROKEN_RESULT_KEY)),
+        args=(upload_key, cache_scope, result_keys),
     )
     if uploaded is not None:
-        st.caption(f"الشركة: {company_label} · الملف المختار: {uploaded.name}")
-        _run_promises_pipeline(uploaded, PROMISES_RESULT_KEY, due_mode="today", count_label="عدد الوعود القائمة")
-        _run_promises_pipeline(uploaded, BROKEN_RESULT_KEY, due_mode="before", count_label="عدد الوعود المكسورة")
-    combined, meta = _combine_promises_cached_results(company_label)
+        st.caption(f"المحفظة المختارة: {company_label} · الملف: {uploaded.name}")
+        _run_promises_pipeline(uploaded, standing_key, due_mode="today", count_label="عدد الوعود القائمة")
+        _run_promises_pipeline(uploaded, broken_key, due_mode="before", count_label="عدد الوعود المكسورة")
+
+    combined, meta = _combine_promises_cached_results(company_label, result_keys=result_keys)
     if combined.empty or meta is None:
-        st.info(f"📂 ارفع ملف المحفظة لعرض الوعود القائمة والمكسورة لشركة {company_label}.")
+        st.info(f"📂 ارفع محفظة {company_label} لعرض الوعود القائمة والمكسورة معًا.")
         return
     render_combined_promises_dashboard(combined, meta, company_label)
 

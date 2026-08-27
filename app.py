@@ -706,33 +706,22 @@ def _compute_agent_perf(df, class_col, sales_col):
 def render_metric_cards(df, class_col, sales_col, time_col):
     has_class = bool(class_col and class_col in df.columns)
     has_wasted = WASTED_TIME_COL in df.columns
-    has_sales = bool(sales_col and sales_col in df.columns)
-    total = len(df)
-    success_count = int((df[class_col] == 1).sum()) if has_class else None
-    fail_count = int((df[class_col] == 0).sum()) if has_class else None
-    success_rate = round(success_count / total * 100, 1) if has_class and total else 0
-    fail_rate = round(fail_count / total * 100, 1) if has_class and total else 0
-
-    with st.container(border=True):
-        st.subheader("📌 ملخص الأداء")
-        metrics = st.columns(5 if has_wasted else 4)
-        metrics[0].metric("📞 إجمالي المكالمات", f"{total:,}")
-        metrics[1].metric(
-            "✅ المكالمات الناجحة",
-            f"{success_count:,}" if success_count is not None else "—",
-            f"{success_rate}% من الإجمالي" if has_class else None,
-        )
-        metrics[2].metric(
-            "⛔ المكالمات غير الناجحة",
-            f"{fail_count:,}" if fail_count is not None else "—",
-            f"{fail_rate}% من الإجمالي" if has_class else None,
-        )
-        agent_count = int(df[sales_col].nunique()) if has_sales else "—"
-        metrics[3].metric("👥 عدد المحصّلين", f"{agent_count:,}" if isinstance(agent_count, int) else agent_count)
-        if has_wasted:
-            total_wasted = pd.to_numeric(df[WASTED_TIME_COL], errors="coerce").sum()
-            avg_wasted = pd.to_numeric(df[WASTED_TIME_COL], errors="coerce").mean()
-            metrics[4].metric("⏱️ الوقت المهدر", f"{total_wasted:,.1f} دقيقة", f"متوسط {avg_wasted:.1f} دقيقة")
+    st.subheader("📌 نظرة عامة")
+    metrics = st.columns(4)
+    metrics[0].metric("📞 إجمالي المكالمات", len(df))
+    if has_class:
+        success_count = int((df[class_col] == 1).sum())
+        fail_count = int((df[class_col] == 0).sum())
+        rate = round(success_count / len(df) * 100, 1) if len(df) else 0
+        metrics[1].metric("✅ ناجحة", success_count, f"{rate}%")
+        metrics[2].metric("⛔ غير ناجحة", fail_count)
+    else:
+        metrics[1].metric("✅ ناجحة", "—")
+        metrics[2].metric("⛔ غير ناجحة", "—")
+    if has_wasted:
+        metrics[3].metric("⏱️ إجمالي الوقت المهدر (دقيقة)", round(df[WASTED_TIME_COL].sum(), 1), f"متوسط {df[WASTED_TIME_COL].mean():.1f}")
+    else:
+        metrics[3].metric("⏱️ الوقت المهدر", "—")
 
 
 
@@ -1486,18 +1475,15 @@ def render_period_charts(df, sales_col, time_col, period_title):
     success = int((df[CLASSIFICATION_COL] == 1).sum()) if CLASSIFICATION_COL in df.columns else 0
     success_rate = round(success / total * 100, 1) if total else 0
     avg_duration = round(pd.to_numeric(df[WASTED_TIME_COL], errors="coerce").mean(), 1) if WASTED_TIME_COL in df.columns else 0
-    with st.container(border=True):
-        st.subheader("📌 ملخص نتائج التصنيف")
-        metrics = st.columns(5 if WASTED_TIME_COL in df.columns else 4)
-        metrics[0].metric("📞 إجمالي المكالمات", f"{total:,}")
-        metrics[1].metric("✅ المكالمات الناجحة", f"{success:,}", f"{success_rate}% من الإجمالي")
-        metrics[2].metric("👥 عدد المحصّلين", f"{len(agent):,}")
-        metrics[3].metric("📈 نسبة النجاح", f"{success_rate:.1f}%")
-        if WASTED_TIME_COL in df.columns:
-            metrics[4].metric("⏱️ متوسط الوقت المهدر", f"{avg_duration:.1f} دقيقة")
-    st.divider()
+    metrics = st.columns(5 if WASTED_TIME_COL in df.columns else 4)
+    metrics[0].metric("📞 إجمالي المكالمات", total)
+    metrics[1].metric("✅ المكالمات الناجحة", success)
+    metrics[2].metric("👥 عدد المحصّلين", len(agent))
+    metrics[3].metric("📈 نسبة النجاح", f"{success_rate}%")
+    if WASTED_TIME_COL in df.columns:
+        metrics[4].metric("⏱️ متوسط الوقت المهدر", f"{avg_duration:.1f}")
     render_agent_activity_charts(agent, df, sales_col, period_title)
-    with st.expander("📋 عرض جدول تفاصيل كل محصّل"):
+    with st.expander("📋 جدول تفاصيل كل محصّل"):
         st.dataframe(agent, use_container_width=True, hide_index=True)
 
 
@@ -1505,73 +1491,19 @@ def render_period_charts(df, sales_col, time_col, period_title):
 def render_agent_activity_charts(agent, df, sales_col, period_title):
     agent_sorted = agent.sort_values("ناجحة", ascending=False).reset_index(drop=True)
     names = [str(n) for n in agent_sorted["المحصّل"]]
-
-    def total_vs_success_chart():
-        fig = go.Figure([
-            go.Bar(name="إجمالي المكالمات", x=names, y=agent_sorted["إجمالي المكالمات"], marker_color=THEME["text_dim"]),
-            go.Bar(name="المكالمات الناجحة", x=names, y=agent_sorted["ناجحة"], marker_color=COLOR_SUCCESS),
-        ])
-        fig.update_layout(
-            **PLOTLY_LAYOUT,
-            title=f"📞 إجمالي المكالمات والناجحة — {period_title}",
-            barmode="group",
-            xaxis_title="",
-            yaxis_title="عدد المكالمات",
-            height=430,
-            legend=dict(orientation="h", yanchor="bottom", y=-0.28, x=0.5, xanchor="center"),
-        )
-        fig.update_traces(marker_line_width=0)
-        st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG)
-
-    rates = [
-        (int(row["ناجحة"]) / int(row["إجمالي المكالمات"]) * 100)
-        if int(row["إجمالي المكالمات"]) else 0
-        for _, row in agent_sorted.iterrows()
-    ]
-
-    def success_rate_chart():
-        rate_df = agent_sorted.assign(**{"نسبة النجاح": rates}).sort_values("نسبة النجاح")
-        fig = px.bar(
-            rate_df,
-            x="نسبة النجاح",
-            y="المحصّل",
-            orientation="h",
-            text="نسبة النجاح",
-            color="نسبة النجاح",
-            color_continuous_scale=[COLOR_FAIL, COLOR_WARN, COLOR_SUCCESS],
-            template=PLOTLY_TEMPLATE,
-        )
-        fig.update_layout(
-            **PLOTLY_LAYOUT,
-            title="📈 نسبة نجاح كل محصّل",
-            xaxis_range=[0, 100],
-            xaxis_title="نسبة النجاح (%)",
-            yaxis_title="",
-            height=430,
-            coloraxis_showscale=False,
-        )
-        fig.update_traces(texttemplate="%{text:.1f}%", textposition="outside", cliponaxis=False, marker_line_width=0)
-        st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG)
-
-    st.subheader(f"📈 تحليلات الأداء — {period_title}")
-    first, second = st.columns(2)
-    with first:
-        with st.container(border=True):
-            total_vs_success_chart()
-    with second:
-        with st.container(border=True):
-            success_rate_chart()
-
-    with st.container(border=True):
-        render_success_fail_chart(agent, period_title)
-
-    duration_col, no_answer_col = st.columns(2)
-    with duration_col:
-        with st.container(border=True):
-            render_avg_duration_chart(agent, period_title)
-    with no_answer_col:
-        with st.container(border=True):
-            render_no_answer_chart(df, sales_col, period_title)
+    fig = go.Figure([
+        go.Bar(name="إجمالي المكالمات", x=names, y=agent_sorted["إجمالي المكالمات"], marker_color=THEME["text_dim"]),
+        go.Bar(name="المكالمات الناجحة", x=names, y=agent_sorted["ناجحة"], marker_color=COLOR_SUCCESS),
+    ])
+    fig.update_layout(**PLOTLY_LAYOUT, title=f"📞 إجمالي المكالمات والمكالمات الناجحة لكل محصّل ({period_title})", barmode="group", xaxis_title="", yaxis_title="عدد المكالمات")
+    st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG)
+    rates = [(int(r["ناجحة"]) / int(r["إجمالي المكالمات"]) * 100) if int(r["إجمالي المكالمات"]) else 0 for _, r in agent_sorted.iterrows()]
+    fig = px.bar(agent_sorted.assign(**{"نسبة النجاح": rates}), x="نسبة النجاح", y="المحصّل", orientation="h", text="نسبة النجاح", color="نسبة النجاح", color_continuous_scale=[COLOR_FAIL, COLOR_WARN, COLOR_SUCCESS], template=PLOTLY_TEMPLATE)
+    fig.update_layout(**PLOTLY_LAYOUT, title="📈 نسبة نجاح كل محصّل", xaxis_range=[0, 100], xaxis_title="النسبة %", yaxis_title="")
+    st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG)
+    render_success_fail_chart(agent, period_title)
+    render_avg_duration_chart(agent, period_title)
+    render_no_answer_chart(df, sales_col, period_title)
 
 
 

@@ -770,8 +770,108 @@ PLOTLY_LAYOUT = dict(
     margin=dict(t=60, b=50, l=50, r=20),
     title_font_size=18,
     legend_font_size=12,
+    hovermode="closest",
+    hoverlabel=dict(
+        bgcolor=THEME["surface"],
+        bordercolor=THEME["border"],
+        font=dict(family="Tajawal, sans-serif", size=13, color=THEME["text"]),
+    ),
 )
-PLOTLY_CONFIG = {"displayModeBar": False}
+PLOTLY_CONFIG = {
+    "displayModeBar": True,
+    "displaylogo": False,
+    "responsive": True,
+    "scrollZoom": True,
+    "doubleClick": "reset+autosize",
+    "toImageButtonOptions": {
+        "format": "png",
+        "filename": "classification_chart",
+        "height": 900,
+        "width": 1500,
+        "scale": 2,
+    },
+}
+
+
+CLASSIFICATION_AGENT_FILTER_KEY = "classification_selected_agent"
+
+
+def _event_value(item, key, default=None):
+    if isinstance(item, dict):
+        return item.get(key, default)
+    return getattr(item, key, default)
+
+
+def _extract_selected_agent(event, fig):
+    selection = _event_value(event, "selection")
+    points = _event_value(selection, "points", []) if selection is not None else []
+    if not points:
+        return None
+    point = points[0]
+    selected = _event_value(point, "customdata")
+    if isinstance(selected, (list, tuple)):
+        selected = selected[0] if selected else None
+    if selected is None:
+        curve_number = _event_value(point, "curve_number", _event_value(point, "curveNumber", 0))
+        point_index = _event_value(point, "point_index", _event_value(point, "pointNumber"))
+        if point_index is None or curve_number >= len(fig.data):
+            return None
+        trace = fig.data[curve_number]
+        orientation = getattr(trace, "orientation", None)
+        values = trace.y if orientation == "h" else trace.x
+        if values is not None and point_index < len(values):
+            selected = values[point_index]
+    return str(selected).strip() if selected is not None else None
+
+
+def render_selectable_chart(fig, key):
+    """عرض رسم Plotly مع التقاط اختيار محصّل وإعادة تشغيل الصفحة لتطبيق الفلتر."""
+    try:
+        event = st.plotly_chart(
+            fig,
+            use_container_width=True,
+            config=PLOTLY_CONFIG,
+            key=key,
+            on_select="rerun",
+            selection_mode=("points",),
+        )
+    except TypeError:
+        # توافق مع إصدارات Streamlit القديمة التي لا تدعم on_select.
+        st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG, key=key)
+        return
+    selected = _extract_selected_agent(event, fig)
+    if selected:
+        current = st.session_state.get(CLASSIFICATION_AGENT_FILTER_KEY)
+        if selected != current:
+            st.session_state[CLASSIFICATION_AGENT_FILTER_KEY] = selected
+            st.rerun()
+
+
+def get_classification_view(df, sales_col):
+    """تطبيق المحصّل المختار على بيانات التصنيف مع إبقاء العرض كاملًا افتراضيًا."""
+    if not sales_col or sales_col not in df.columns:
+        return df
+    selected = st.session_state.get(CLASSIFICATION_AGENT_FILTER_KEY)
+    if not selected:
+        return df
+    mask = df[sales_col].astype(str).str.strip().eq(str(selected).strip())
+    if not mask.any():
+        st.session_state.pop(CLASSIFICATION_AGENT_FILTER_KEY, None)
+        return df
+    return df.loc[mask].copy()
+
+
+def render_classification_filter_notice(df, sales_col):
+    selected = st.session_state.get(CLASSIFICATION_AGENT_FILTER_KEY)
+    if not selected:
+        return
+    c1, c2 = st.columns([4, 1])
+    with c1:
+        st.info(f"🎯 الفلتر النشط: عرض كل مؤشرات ورسوم المحصّل «{selected}»")
+    with c2:
+        if st.button("إظهار الكل", key="clear_classification_agent_filter", use_container_width=True):
+            st.session_state.pop(CLASSIFICATION_AGENT_FILTER_KEY, None)
+            st.rerun()
 
 
 def chart_card(title: str, render_fn):
@@ -840,7 +940,12 @@ def render_pie_chart(df, class_col):
             pie_df, names="التصنيف", values="العدد", hole=0.62,
             color="التصنيف", color_discrete_map=CHART_COLORS,
         )
-        fig.update_traces(textinfo="percent", textfont_size=13, marker=dict(line=dict(color="#0E1420", width=3)))
+        fig.update_traces(
+            textinfo="percent",
+            textfont_size=13,
+            marker=dict(line=dict(color="#0E1420", width=3)),
+            hovertemplate="<b>%{label}</b><br>العدد: %{value:,}<br>النسبة: %{percent}<extra></extra>",
+        )
         fig.update_layout(
             **PLOTLY_LAYOUT, showlegend=True,
             legend=dict(orientation="h", yanchor="bottom", y=-0.15, x=0.5, xanchor="center"),
@@ -873,7 +978,10 @@ def render_wasted_bar(df, sales_col, top_n=10):
             **PLOTLY_LAYOUT, yaxis={"categoryorder": "total ascending", "title": ""},
             xaxis_title="الوقت المهدر (دقيقة)", coloraxis_showscale=False, height=chart_height,
         )
-        fig2.update_traces(marker_line_width=0)
+        fig2.update_traces(
+            marker_line_width=0,
+            hovertemplate="<b>%{y}</b><br>الوقت المهدر: %{x:,.1f} دقيقة<extra></extra>",
+        )
         st.plotly_chart(fig2, use_container_width=True, config=PLOTLY_CONFIG)
 
     title = f"🏆 أعلى {top_n} محصّلين في الوقت المهدر" if top_n else "🏆 كل المحصّلين حسب الوقت المهدر"
@@ -895,7 +1003,10 @@ def render_agent_perf_chart(df, class_col, sales_col, with_table=True):
         fig3.update_layout(**PLOTLY_LAYOUT, legend_title_text="", xaxis_title="", yaxis_title="عدد المكالمات",
                            legend=dict(orientation="h", yanchor="bottom", y=-0.28, x=0.5, xanchor="center"),
                            height=430)
-        fig3.update_traces(marker_line_width=0)
+        fig3.update_traces(
+            marker_line_width=0,
+            hovertemplate="<b>%{x}</b><br>%{fullData.name}: %{y:,} مكالمة<extra></extra>",
+        )
         st.plotly_chart(fig3, use_container_width=True, config=PLOTLY_CONFIG)
         if with_table:
             with st.expander("📋 جدول ترتيب المحصّلين حسب نسبة النجاح"):
@@ -913,6 +1024,7 @@ def render_wasted_hist(df):
             return
         fig4 = px.histogram(df, x=WASTED_TIME_COL, nbins=20, color_discrete_sequence=[COLOR_ACCENT])
         fig4.update_layout(**PLOTLY_LAYOUT, bargap=0.08, xaxis_title="الوقت المهدر (دقيقة)", yaxis_title="عدد المرات")
+        fig4.update_traces(hovertemplate="الوقت المهدر: %{x:.1f} دقيقة<br>عدد المرات: %{y}<extra></extra>")
         st.plotly_chart(fig4, use_container_width=True, config=PLOTLY_CONFIG)
 
     chart_card("⏱️ توزيع الوقت المهدر بين المكالمات", _hist)
@@ -936,7 +1048,7 @@ def render_trend_chart(df, class_col, time_col):
         else:
             daily = trend_df.groupby("اليوم").size().reset_index(name="عدد المكالمات")
             fig5 = px.area(daily, x="اليوم", y="عدد المكالمات", color_discrete_sequence=[COLOR_ACCENT])
-        fig5.update_traces(line_width=2)
+        fig5.update_traces(line_width=2, hovertemplate="اليوم: %{x|%Y-%m-%d}<br>عدد المكالمات: %{y}<extra></extra>")
         fig5.update_layout(**PLOTLY_LAYOUT, legend_title_text="", xaxis_title="", yaxis_title="عدد المكالمات",
                            xaxis=dict(tickformat="%Y-%m-%d", nticks=8))
         st.plotly_chart(fig5, use_container_width=True, config=PLOTLY_CONFIG)
@@ -1632,6 +1744,8 @@ def render_period_charts(df, sales_col, time_col, period_title):
     if not sales_col or sales_col not in df.columns:
         st.info("لا يوجد عمود واضح للمحصّل لعرض نشاط المحصّلين.")
         return
+    render_classification_filter_notice(df, sales_col)
+    df = get_classification_view(df, sales_col)
     agent = build_agent_activity(df, sales_col)
     if agent.empty:
         return
@@ -1658,8 +1772,8 @@ def render_agent_activity_charts(agent, df, sales_col, period_title):
 
     def total_vs_success_chart():
         fig = go.Figure([
-            go.Bar(name="إجمالي المكالمات", x=names, y=agent_sorted["إجمالي المكالمات"], marker_color=THEME["text_dim"]),
-            go.Bar(name="المكالمات الناجحة", x=names, y=agent_sorted["ناجحة"], marker_color=COLOR_SUCCESS),
+            go.Bar(name="إجمالي المكالمات", x=names, y=agent_sorted["إجمالي المكالمات"], marker_color=THEME["text_dim"], customdata=names),
+            go.Bar(name="المكالمات الناجحة", x=names, y=agent_sorted["ناجحة"], marker_color=COLOR_SUCCESS, customdata=names),
         ])
         fig.update_layout(
             **PLOTLY_LAYOUT,
@@ -1670,8 +1784,11 @@ def render_agent_activity_charts(agent, df, sales_col, period_title):
             height=430,
             legend=dict(orientation="h", yanchor="bottom", y=-0.28, x=0.5, xanchor="center"),
         )
-        fig.update_traces(marker_line_width=0)
-        st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG)
+        fig.update_traces(
+            marker_line_width=0,
+            hovertemplate="<b>%{x}</b><br>%{fullData.name}: %{y:,} مكالمة<extra></extra>",
+        )
+        render_selectable_chart(fig, "classification_total_success_chart")
 
     rates = [
         (int(row["ناجحة"]) / int(row["إجمالي المكالمات"]) * 100)
@@ -1700,8 +1817,15 @@ def render_agent_activity_charts(agent, df, sales_col, period_title):
             height=430,
             coloraxis_showscale=False,
         )
-        fig.update_traces(texttemplate="%{text:.1f}%", textposition="outside", cliponaxis=False, marker_line_width=0)
-        st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG)
+        fig.update_traces(
+            texttemplate="%{text:.1f}%",
+            textposition="outside",
+            cliponaxis=False,
+            marker_line_width=0,
+            customdata=rate_df["المحصّل"],
+            hovertemplate="<b>%{y}</b><br>نسبة النجاح: %{x:.1f}%<extra></extra>",
+        )
+        render_selectable_chart(fig, "classification_success_rate_chart")
 
     st.subheader(f"📈 تحليلات الأداء — {period_title}")
     first, second = st.columns(2)
@@ -1730,11 +1854,12 @@ def render_success_fail_chart(agent, period_title):
     names = [str(n) for n in ordered["المحصّل"]]
     failed = ordered["إجمالي المكالمات"] - ordered["ناجحة"]
     fig = go.Figure([
-        go.Bar(name="المكالمات الناجحة", x=names, y=ordered["ناجحة"], marker_color=COLOR_SUCCESS),
-        go.Bar(name="المكالمات غير الناجحة", x=names, y=failed, marker_color=COLOR_FAIL),
+        go.Bar(name="المكالمات الناجحة", x=names, y=ordered["ناجحة"], marker_color=COLOR_SUCCESS, customdata=names),
+        go.Bar(name="المكالمات غير الناجحة", x=names, y=failed, marker_color=COLOR_FAIL, customdata=names),
     ])
     fig.update_layout(**PLOTLY_LAYOUT, title=f"✅ الناجحة مقابل غير الناجحة ({period_title})", barmode="group", xaxis_title="", yaxis_title="عدد المكالمات")
-    st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG)
+    fig.update_traces(hovertemplate="<b>%{x}</b><br>%{fullData.name}: %{y:,} مكالمة<extra></extra>")
+    render_selectable_chart(fig, f"classification_success_fail_{period_title}")
 
 
 
@@ -1745,7 +1870,8 @@ def render_avg_duration_chart(agent, period_title):
     ordered = agent.sort_values(key, ascending=True)
     fig = px.bar(ordered, x=key, y="المحصّل", orientation="h", text=key, color=key, color_continuous_scale=[COLOR_ACCENT, COLOR_WARN], template=PLOTLY_TEMPLATE)
     fig.update_layout(**PLOTLY_LAYOUT, title=f"⏱️ متوسط مدة المكالمات ({period_title})", xaxis_title="دقيقة", yaxis_title="")
-    st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG)
+    fig.update_traces(customdata=ordered["المحصّل"], hovertemplate="<b>%{y}</b><br>متوسط المدة: %{x:.1f} دقيقة<extra></extra>")
+    render_selectable_chart(fig, f"classification_avg_duration_{period_title}")
 
 
 
@@ -1760,7 +1886,8 @@ def render_no_answer_chart(df, sales_col, period_title):
         return
     fig = px.bar(counts, x=sales_col, y="عدد إفادات لا يرد", color_discrete_sequence=[COLOR_FAIL], template=PLOTLY_TEMPLATE)
     fig.update_layout(**PLOTLY_LAYOUT, title=f"📝 إفادات لا يرد لكل محصّل ({period_title})", xaxis_title="", yaxis_title="العدد")
-    st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG)
+    fig.update_traces(customdata=counts[sales_col], hovertemplate="<b>%{x}</b><br>عدد إفادات لا يرد: %{y}<extra></extra>")
+    render_selectable_chart(fig, f"classification_no_answer_{period_title}")
 
 
 

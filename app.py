@@ -1139,22 +1139,15 @@ def init_activity_state():
         st.session_state.setdefault(key, value)
 
 
-def render_company_logo(company_name: str, size: int = 62):
-    cfg = COMPANIES[company_name]
-    st.image(cfg["logo"], width=size, caption=company_name)
-
-
 def render_company_selector():
     st.subheader("🏢 اختر شركة التصنيف")
     st.caption("اختر الشركة أولًا، ثم حدّد فترة النشاط ومواعيدها.")
     c1, c2 = st.columns(2)
     for col, company_name in zip((c1, c2), COMPANIES.keys()):
-        cfg = COMPANIES[company_name]
         with col:
-            st.image(cfg["logo"], width=72)
-            st.write(company_name)
-            st.caption("تصنيف مكالمات الشركة")
             selected = st.session_state.get("selected_company") == company_name
+            st.subheader(company_name)
+            st.caption("تصنيف مكالمات الشركة")
             if st.button("✓ الشركة المختارة" if selected else f"اختيار {company_name}", key=f"company_{company_name}", use_container_width=True, type="primary" if selected else "secondary"):
                 st.session_state["selected_company"] = company_name
                 st.session_state["selected_period"] = None

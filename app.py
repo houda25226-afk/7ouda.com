@@ -1475,6 +1475,18 @@ def build_agent_activity(df, sales_col):
     return grouped.fillna(0).reset_index().rename(columns={sales_col: "المحصّل"})
 
 
+def _rounded_rect_path(x0, x1, y0, y1, radius=0.018):
+    """إنشاء مسار SVG مستدير الزوايا داخل إحداثيات Plotly الورقية."""
+    radius = min(radius, (x1 - x0) / 3, (y1 - y0) / 3)
+    return (
+        f"M {x0 + radius},{y0} "
+        f"L {x1 - radius},{y0} Q {x1},{y0} {x1},{y0 + radius} "
+        f"L {x1},{y1 - radius} Q {x1},{y1} {x1 - radius},{y1} "
+        f"L {x0 + radius},{y1} Q {x0},{y1} {x0},{y1 - radius} "
+        f"L {x0},{y0 + radius} Q {x0},{y0} {x0 + radius},{y0} Z"
+    )
+
+
 def render_kpi_dashboard(total, success, agent_count, success_rate, avg_wasted=None):
     """لوحة KPI مركزية مبنية بـ Plotly لضمان محاذاة موحدة داخل كل كارت."""
     cards = [
@@ -1494,13 +1506,10 @@ def render_kpi_dashboard(total, success, agent_count, success_rate, avg_wasted=N
         x0 = gap + index * (width + gap)
         x1 = x0 + width
         figure.add_shape(
-            type="rect",
+            type="path",
             xref="paper",
             yref="paper",
-            x0=x0,
-            x1=x1,
-            y0=0.08,
-            y1=0.92,
+            path=_rounded_rect_path(x0, x1, 0.06, 0.94, radius=0.022),
             line={"color": THEME["border"], "width": 1},
             fillcolor=THEME["surface"],
             layer="below",
@@ -1509,13 +1518,13 @@ def render_kpi_dashboard(total, success, agent_count, success_rate, avg_wasted=N
             go.Indicator(
                 mode="number",
                 value=value,
-                domain={"x": [x0 + 0.012, x1 - 0.012], "y": [0.14, 0.86]},
-                title={"text": label, "font": {"size": 13, "color": THEME["text_dim"]}},
-                number={"font": {"size": 28, "color": number_color}, **number_format},
+                domain={"x": [x0 + 0.012, x1 - 0.012], "y": [0.12, 0.88]},
+                title={"text": label, "font": {"size": 15, "color": THEME["text_dim"]}, "align": "center"},
+                number={"font": {"size": 32, "color": number_color}, **number_format},
             )
         )
     figure.update_layout(
-        height=175,
+        height=190,
         template=PLOTLY_TEMPLATE,
         paper_bgcolor="rgba(0,0,0,0)",
         plot_bgcolor="rgba(0,0,0,0)",

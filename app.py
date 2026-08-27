@@ -770,27 +770,8 @@ PLOTLY_LAYOUT = dict(
     margin=dict(t=60, b=50, l=50, r=20),
     title_font_size=18,
     legend_font_size=12,
-    hovermode="closest",
-    hoverlabel=dict(
-        bgcolor=THEME["surface"],
-        bordercolor=THEME["border"],
-        font=dict(family="Tajawal, sans-serif", size=13, color=THEME["text"]),
-    ),
 )
-PLOTLY_CONFIG = {
-    "displayModeBar": True,
-    "displaylogo": False,
-    "responsive": True,
-    "scrollZoom": True,
-    "doubleClick": "reset+autosize",
-    "toImageButtonOptions": {
-        "format": "png",
-        "filename": "classification_chart",
-        "height": 900,
-        "width": 1500,
-        "scale": 2,
-    },
-}
+PLOTLY_CONFIG = {"displayModeBar": False}
 
 
 def chart_card(title: str, render_fn):
@@ -859,12 +840,7 @@ def render_pie_chart(df, class_col):
             pie_df, names="التصنيف", values="العدد", hole=0.62,
             color="التصنيف", color_discrete_map=CHART_COLORS,
         )
-        fig.update_traces(
-            textinfo="percent",
-            textfont_size=13,
-            marker=dict(line=dict(color="#0E1420", width=3)),
-            hovertemplate="<b>%{label}</b><br>العدد: %{value:,}<br>النسبة: %{percent}<extra></extra>",
-        )
+        fig.update_traces(textinfo="percent", textfont_size=13, marker=dict(line=dict(color="#0E1420", width=3)))
         fig.update_layout(
             **PLOTLY_LAYOUT, showlegend=True,
             legend=dict(orientation="h", yanchor="bottom", y=-0.15, x=0.5, xanchor="center"),
@@ -897,10 +873,7 @@ def render_wasted_bar(df, sales_col, top_n=10):
             **PLOTLY_LAYOUT, yaxis={"categoryorder": "total ascending", "title": ""},
             xaxis_title="الوقت المهدر (دقيقة)", coloraxis_showscale=False, height=chart_height,
         )
-        fig2.update_traces(
-            marker_line_width=0,
-            hovertemplate="<b>%{y}</b><br>الوقت المهدر: %{x:,.1f} دقيقة<extra></extra>",
-        )
+        fig2.update_traces(marker_line_width=0)
         st.plotly_chart(fig2, use_container_width=True, config=PLOTLY_CONFIG)
 
     title = f"🏆 أعلى {top_n} محصّلين في الوقت المهدر" if top_n else "🏆 كل المحصّلين حسب الوقت المهدر"
@@ -922,10 +895,7 @@ def render_agent_perf_chart(df, class_col, sales_col, with_table=True):
         fig3.update_layout(**PLOTLY_LAYOUT, legend_title_text="", xaxis_title="", yaxis_title="عدد المكالمات",
                            legend=dict(orientation="h", yanchor="bottom", y=-0.28, x=0.5, xanchor="center"),
                            height=430)
-        fig3.update_traces(
-            marker_line_width=0,
-            hovertemplate="<b>%{x}</b><br>%{fullData.name}: %{y:,} مكالمة<extra></extra>",
-        )
+        fig3.update_traces(marker_line_width=0)
         st.plotly_chart(fig3, use_container_width=True, config=PLOTLY_CONFIG)
         if with_table:
             with st.expander("📋 جدول ترتيب المحصّلين حسب نسبة النجاح"):
@@ -943,7 +913,6 @@ def render_wasted_hist(df):
             return
         fig4 = px.histogram(df, x=WASTED_TIME_COL, nbins=20, color_discrete_sequence=[COLOR_ACCENT])
         fig4.update_layout(**PLOTLY_LAYOUT, bargap=0.08, xaxis_title="الوقت المهدر (دقيقة)", yaxis_title="عدد المرات")
-        fig4.update_traces(hovertemplate="الوقت المهدر: %{x:.1f} دقيقة<br>عدد المرات: %{y}<extra></extra>")
         st.plotly_chart(fig4, use_container_width=True, config=PLOTLY_CONFIG)
 
     chart_card("⏱️ توزيع الوقت المهدر بين المكالمات", _hist)
@@ -967,7 +936,7 @@ def render_trend_chart(df, class_col, time_col):
         else:
             daily = trend_df.groupby("اليوم").size().reset_index(name="عدد المكالمات")
             fig5 = px.area(daily, x="اليوم", y="عدد المكالمات", color_discrete_sequence=[COLOR_ACCENT])
-        fig5.update_traces(line_width=2, hovertemplate="اليوم: %{x|%Y-%m-%d}<br>عدد المكالمات: %{y}<extra></extra>")
+        fig5.update_traces(line_width=2)
         fig5.update_layout(**PLOTLY_LAYOUT, legend_title_text="", xaxis_title="", yaxis_title="عدد المكالمات",
                            xaxis=dict(tickformat="%Y-%m-%d", nticks=8))
         st.plotly_chart(fig5, use_container_width=True, config=PLOTLY_CONFIG)
@@ -1701,10 +1670,7 @@ def render_agent_activity_charts(agent, df, sales_col, period_title):
             height=430,
             legend=dict(orientation="h", yanchor="bottom", y=-0.28, x=0.5, xanchor="center"),
         )
-        fig.update_traces(
-            marker_line_width=0,
-            hovertemplate="<b>%{x}</b><br>%{fullData.name}: %{y:,} مكالمة<extra></extra>",
-        )
+        fig.update_traces(marker_line_width=0)
         st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG)
 
     rates = [
@@ -1734,13 +1700,7 @@ def render_agent_activity_charts(agent, df, sales_col, period_title):
             height=430,
             coloraxis_showscale=False,
         )
-        fig.update_traces(
-            texttemplate="%{text:.1f}%",
-            textposition="outside",
-            cliponaxis=False,
-            marker_line_width=0,
-            hovertemplate="<b>%{y}</b><br>نسبة النجاح: %{x:.1f}%<extra></extra>",
-        )
+        fig.update_traces(texttemplate="%{text:.1f}%", textposition="outside", cliponaxis=False, marker_line_width=0)
         st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG)
 
     st.subheader(f"📈 تحليلات الأداء — {period_title}")
@@ -1774,7 +1734,6 @@ def render_success_fail_chart(agent, period_title):
         go.Bar(name="المكالمات غير الناجحة", x=names, y=failed, marker_color=COLOR_FAIL),
     ])
     fig.update_layout(**PLOTLY_LAYOUT, title=f"✅ الناجحة مقابل غير الناجحة ({period_title})", barmode="group", xaxis_title="", yaxis_title="عدد المكالمات")
-    fig.update_traces(hovertemplate="<b>%{x}</b><br>%{fullData.name}: %{y:,} مكالمة<extra></extra>")
     st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG)
 
 
@@ -1786,7 +1745,6 @@ def render_avg_duration_chart(agent, period_title):
     ordered = agent.sort_values(key, ascending=True)
     fig = px.bar(ordered, x=key, y="المحصّل", orientation="h", text=key, color=key, color_continuous_scale=[COLOR_ACCENT, COLOR_WARN], template=PLOTLY_TEMPLATE)
     fig.update_layout(**PLOTLY_LAYOUT, title=f"⏱️ متوسط مدة المكالمات ({period_title})", xaxis_title="دقيقة", yaxis_title="")
-    fig.update_traces(hovertemplate="<b>%{y}</b><br>متوسط المدة: %{x:.1f} دقيقة<extra></extra>")
     st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG)
 
 
@@ -1802,7 +1760,6 @@ def render_no_answer_chart(df, sales_col, period_title):
         return
     fig = px.bar(counts, x=sales_col, y="عدد إفادات لا يرد", color_discrete_sequence=[COLOR_FAIL], template=PLOTLY_TEMPLATE)
     fig.update_layout(**PLOTLY_LAYOUT, title=f"📝 إفادات لا يرد لكل محصّل ({period_title})", xaxis_title="", yaxis_title="العدد")
-    fig.update_traces(hovertemplate="<b>%{x}</b><br>عدد إفادات لا يرد: %{y}<extra></extra>")
     st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG)
 
 

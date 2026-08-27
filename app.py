@@ -918,12 +918,12 @@ THEMES = {
         "surface_hover": "#1D304C",
         "sidebar_bg": "#0B111C",
         "accent_surface": "#122B2A",
-        "accent": "#0F9D8A",
-        "accent_strong": "#0B806F",
+        "accent": "#4F8C8D",
+        "accent_strong": "#3D7375",
         "on_accent": "#FFFFFF",
-        "success": "#059669",
-        "danger": "#E11D48",
-        "warn": "#D97706",
+        "success": "#4F927D",
+        "danger": "#B96578",
+        "warn": "#B39A5A",
         "text": "#F3F6FA",
         "text_dim": "#B9C6D6",
         "text_muted": "#9FB0C6",
@@ -945,12 +945,12 @@ THEMES = {
         "surface_hover": "#E2ECF3",
         "sidebar_bg": "#FFFFFF",
         "accent_surface": "#E6F7F4",
-        "accent": "#087F70",
-        "accent_strong": "#0B9F8B",
+        "accent": "#397B7D",
+        "accent_strong": "#2F6668",
         "on_accent": "#FFFFFF",
-        "success": "#047857",
-        "danger": "#BE123C",
-        "warn": "#B45309",
+        "success": "#397D69",
+        "danger": "#A65367",
+        "warn": "#977D42",
         "text": "#172033",
         "text_dim": "#526174",
         "text_muted": "#6B7A8C",
@@ -1195,6 +1195,18 @@ COLOR_FAIL = THEMES[THEME_NAME]["danger"]
 COLOR_ACCENT = THEMES[THEME_NAME]["accent"]
 COLOR_WARN = THEMES[THEME_NAME]["warn"]
 CHART_COLORS = {"ناجحة": COLOR_SUCCESS, "غير ناجحة": COLOR_FAIL}
+ACTIVITY_AGENT_PALETTE = [
+    "#6F9FB5", "#B07A87", "#B7A866", "#6E927A", "#8D7CAB", "#9C8067",
+    "#638A91", "#A86F7D", "#8A9A72", "#7F8EAB", "#A18E64", "#6B8F82",
+]
+ACTIVITY_STATE_PALETTE = [COLOR_FAIL, COLOR_WARN, "#708090", "#866F96"]
+
+
+def _activity_agent_color_map(values):
+    names = sorted({str(value) for value in values if pd.notna(value)})
+    return {name: ACTIVITY_AGENT_PALETTE[index % len(ACTIVITY_AGENT_PALETTE)] for index, name in enumerate(names)}
+
+
 PLOTLY_TEMPLATE = "plotly_dark" if THEME_NAME == "dark" else "plotly_white"
 PLOTLY_LAYOUT = dict(
     paper_bgcolor="rgba(0,0,0,0)",
@@ -1948,7 +1960,7 @@ def _render_activity_daily_chart(work, time_col, class_col=None):
     fig = px.bar(
         daily, x="اليوم", y="عدد المكالمات", color="_agent_display", barmode="group",
         text_auto=True, custom_data=["_agent_display"], template=PLOTLY_TEMPLATE,
-        labels={"_agent_display": "المحصّل"}, color_discrete_sequence=px.colors.qualitative.Safe,
+        labels={"_agent_display": "المحصّل"}, color_discrete_sequence=ACTIVITY_AGENT_PALETTE,
     )
     fig.add_trace(go.Scatter(
         x=daily_totals["اليوم"].astype(str), y=daily_totals["نسبة النجاح (%)"],
@@ -1987,7 +1999,7 @@ def _render_activity_hourly_chart(work, time_col):
     fig = px.bar(
         hourly, x="الساعة", y="عدد المكالمات", color="_agent_display", barmode="stack",
         text_auto=True, custom_data=["_agent_display"], template=PLOTLY_TEMPLATE,
-        labels={"_agent_display": "المحصّل"}, color_discrete_sequence=px.colors.qualitative.Safe,
+        labels={"_agent_display": "المحصّل"}, color_discrete_sequence=ACTIVITY_AGENT_PALETTE,
     )
     fig.update_layout(**_activity_layout(
         title="🕒 Histogram ساعي لنشاط المحصلين", title_x=0.5, xaxis_title="ساعة اليوم", yaxis_title="عدد المكالمات",
@@ -2041,7 +2053,7 @@ def _render_activity_no_answer_chart(agent):
     fig = px.bar(
         long, x="العدد", y="المحصّل", orientation="h", color="الحالة", barmode="stack", text_auto=True,
         template=PLOTLY_TEMPLATE, category_orders={"الحالة": ACTIVITY_NO_ANSWER_STATES},
-        color_discrete_sequence=[COLOR_FAIL, COLOR_WARN, "#7C8DA6", "#B35CFF"],
+        color_discrete_sequence=ACTIVITY_STATE_PALETTE,
     )
     fig.update_layout(**_activity_layout(
         title="📵 حالات لا يرد لكل محصل (تشمل مغلق والتكرار)", title_x=0.5, xaxis_title="عدد الحالات", yaxis_title="",
@@ -2209,7 +2221,7 @@ def build_dashboard_html(df, class_col, sales_col, time_col, source_name="", fil
             daily = daily.sort_values(["اليوم", "_agent_display"])
             daily_totals["اليوم"] = pd.Categorical(daily_totals["اليوم"], categories=ordered_days, ordered=True)
             daily_totals = daily_totals.sort_values("اليوم")
-            day_fig = px.bar(daily, x="اليوم", y="عدد المكالمات", color="_agent_display", barmode="group", text_auto=True, custom_data=["_agent_display"], template=PLOTLY_TEMPLATE, labels={"_agent_display":"المحصل"}, color_discrete_sequence=px.colors.qualitative.Safe)
+            day_fig = px.bar(daily, x="اليوم", y="عدد المكالمات", color="_agent_display", barmode="group", text_auto=True, custom_data=["_agent_display"], template=PLOTLY_TEMPLATE, labels={"_agent_display":"المحصل"}, color_discrete_sequence=ACTIVITY_AGENT_PALETTE)
             day_fig.add_trace(go.Scatter(x=daily_totals["اليوم"].astype(str), y=daily_totals["نسبة النجاح (%)"], name="نسبة النجاح", mode="lines+markers+text", text=daily_totals["نسبة النجاح (%)"].map(lambda value: f"{value:.1f}%"), textposition="top center", line={"color": COLOR_ACCENT, "width": 3}, marker={"color": COLOR_ACCENT, "size": 9}, yaxis="y2", hovertemplate="<b>%{x}</b><br>نسبة النجاح: %{y:.1f}%<extra></extra>"))
             day_fig.update_layout(**_activity_layout(title="📊 Combo Chart يومي: المكالمات ونسبة النجاح", title_x=0.5, xaxis_title="اليوم", yaxis_title="عدد المكالمات", height=430, bargap=0.18, margin={"t":68,"b":95,"l":55,"r":65}, xaxis={"type":"category","categoryorder":"array","categoryarray":ordered_days,"tickangle":-25}, yaxis={"rangemode":"tozero"}, yaxis2={"title":"نسبة النجاح (%)","overlaying":"y","side":"right","range":[0,100],"ticksuffix":"%","showgrid":False}, legend={"orientation":"h","y":-0.2,"x":0.5,"xanchor":"center"}))
             day_fig.update_traces(selector={"type":"bar"}, marker_line_width=0, hovertemplate="<b>%{x}</b><br>%{fullData.name}: %{y:,} مكالمة<extra></extra>")
@@ -2217,7 +2229,7 @@ def build_dashboard_html(df, class_col, sales_col, time_col, source_name="", fil
 
             timed["الساعة"] = timed["_activity_time"].dt.hour
             hourly = timed.groupby(["الساعة", "_agent_display"], as_index=False).size().rename(columns={"size":"عدد المكالمات"})
-            hour_fig = px.bar(hourly, x="الساعة", y="عدد المكالمات", color="_agent_display", barmode="stack", text_auto=True, custom_data=["_agent_display"], template=PLOTLY_TEMPLATE, labels={"_agent_display":"المحصل"}, color_discrete_sequence=px.colors.qualitative.Safe)
+            hour_fig = px.bar(hourly, x="الساعة", y="عدد المكالمات", color="_agent_display", barmode="stack", text_auto=True, custom_data=["_agent_display"], template=PLOTLY_TEMPLATE, labels={"_agent_display":"المحصل"}, color_discrete_sequence=ACTIVITY_AGENT_PALETTE)
             hour_fig.update_layout(**_activity_layout(title="🕒 Histogram ساعي لنشاط المحصلين", title_x=0.5, xaxis_title="ساعة اليوم", yaxis_title="عدد المكالمات", height=430, bargap=0.08, margin={"t":68,"b":95,"l":55,"r":20}, xaxis={"dtick":1,"range":[-0.5,23.5]}, legend={"orientation":"h","y":-0.2,"x":0.5,"xanchor":"center"}))
             hour_fig.update_traces(marker_line_width=0, hovertemplate="<b>الساعة %{x}:00</b><br>%{fullData.name}: %{y:,} مكالمة<extra></extra>")
             figs.append(("🕒 Histogram النشاط الساعي", hour_fig))
@@ -2231,7 +2243,7 @@ def build_dashboard_html(df, class_col, sales_col, time_col, source_name="", fil
                 state_counts[state_name] = 0
         state_counts = state_counts.reindex(columns=ACTIVITY_NO_ANSWER_STATES, fill_value=0).reset_index().rename(columns={"_agent_display":"المحصّل"})
         state_long = state_counts.melt(id_vars=["المحصّل"], var_name="الحالة", value_name="العدد")
-        no_fig = px.bar(state_long, x="العدد", y="المحصّل", orientation="h", color="الحالة", barmode="stack", text_auto=True, template=PLOTLY_TEMPLATE, category_orders={"الحالة":ACTIVITY_NO_ANSWER_STATES}, color_discrete_sequence=[COLOR_FAIL,COLOR_WARN,"#7C8DA6","#B35CFF"])
+        no_fig = px.bar(state_long, x="العدد", y="المحصّل", orientation="h", color="الحالة", barmode="stack", text_auto=True, template=PLOTLY_TEMPLATE, category_orders={"الحالة":ACTIVITY_NO_ANSWER_STATES}, color_discrete_sequence=ACTIVITY_STATE_PALETTE)
         no_fig.update_layout(**_activity_layout(title="📵 حالات لا يرد لكل محصل", title_x=0.5, xaxis_title="عدد الحالات", yaxis_title="", height=430, margin={"t":68,"b":80,"l":105,"r":20}, legend={"orientation":"h","y":-0.18,"x":0.5,"xanchor":"center"}, yaxis={"categoryorder":"total ascending"}))
         no_fig.update_traces(hovertemplate="<b>%{y}</b><br>%{fullData.name}: %{x:,}<extra></extra>")
         figs.append(("📵 تحليل حالات Sub State", no_fig))
@@ -3396,7 +3408,7 @@ def _render_slicers(df, sales_col, time_col):
         with action_col:
             st.write("")
             if st.button("↺ إعادة ضبط", key="clear_dashboard_slicers_v3", use_container_width=True):
-                for key in ("dash_agent_slicer_v3", "dash_state_slicer_v3", "dash_date_slicer_v3", "dash_class_slicer_v3"):
+                for key in ("dash_agent_slicer_v3", "dash_state_slicer_v3", "dash_date_slicer_v3", "dash_class_slicer_v4"):
                     st.session_state.pop(key, None)
                 _clear_dashboard_chart_filter()
                 st.rerun()
@@ -3424,12 +3436,13 @@ def _render_slicers(df, sales_col, time_col):
                 key="dash_date_slicer_v3",
             ) if date_min is not None else None
         with f4:
-            selected_class = st.radio(
+            class_labels = ["الكل", "ناجحة", "غير ناجحة"]
+            class_values = {"الكل": None, "ناجحة": 1, "غير ناجحة": 0}
+            selected_class = st.selectbox(
                 "🏷️ التصنيف",
-                list(class_options.keys()),
-                index=2,
-                key="dash_class_slicer_v3",
-                horizontal=True,
+                class_labels,
+                index=0,
+                key="dash_class_slicer_v4",
             )
 
     selected_agents = [] if agent_choice == all_agent_label else [agent_choice]
@@ -3445,8 +3458,8 @@ def _render_slicers(df, sales_col, time_col):
             ts = pd.to_datetime(filtered[time_col], errors="coerce")
             filtered = filtered[ts.notna() & (ts.dt.date >= d0) & (ts.dt.date <= d1)]
             hint_parts.append(f"التاريخ: {d0} إلى {d1}")
-    if class_col and class_options[selected_class] is not None:
-        filtered = filtered[filtered[class_col] == class_options[selected_class]]
+    if class_col and class_values[selected_class] is not None:
+        filtered = filtered[filtered[class_col] == class_values[selected_class]]
         hint_parts.append(f"التصنيف: {selected_class}")
     if sub_col and selected_substates:
         filtered = filtered[filtered[sub_col].astype(str).isin(selected_substates)]

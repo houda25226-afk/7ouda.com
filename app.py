@@ -1901,7 +1901,7 @@ def _dashboard_activity_view(df, sales_col):
     return df.loc[mask].copy()
 
 
-def _render_activity_daily_chart(work, time_col):
+def _render_activity_daily_chart(work, time_col, class_col=None):
     if not time_col or time_col not in work.columns:
         st.info("يلزم وجود عمود Created On لعرض النشاط على مدار الأيام.")
         return
@@ -1912,24 +1912,63 @@ def _render_activity_daily_chart(work, time_col):
         st.info("لا توجد تواريخ صالحة لعرض النشاط اليومي.")
         return
     trend["اليوم"] = trend["_activity_time"].dt.strftime("%Y-%m-%d")
-    daily = trend.groupby(["اليوم", "_agent_display"], as_index=False).size().rename(columns={"size": "عدد المكالمات"})
+    trend["_success_for_day"] = _activity_success_mask(trend, class_col)
+    daily = trend.groupby(["اليوم", "_agent_display"], as_index=False).agg(
+        **{"عدد المكالمات": ("_agent_display", "size"), "المكالمات الناجحة": ("_success_for_day", "sum")}
+    )
+    daily_totals = daily.groupby("اليوم", as_index=False).agg(
+        **{"إجمالي المكالمات": ("عدد المكالمات", "sum"), "إجمالي الناجحة": ("المكالمات الناجحة", "sum")}
+    )
+    daily_totals["نسبة النجاح (%)"] = (
+        daily_totals["إجمالي الناجحة"] / daily_totals["إجمالي المكالمات"].replace(0, pd.NA) * 100
+    ).fillna(0).round(1)
+    sort_options = {
+        "التاريخ تصاعديًا": "date",
+        "إجمالي المكالمات تنازليًا": "calls",
+        "نسبة النجاح تنازليًا": "success_rate",
+    }
+    sort_label = st.selectbox(
+        "ترتيب الـ Histogram اليومي",
+        list(sort_options.keys()),
+        key="activity_daily_sort_v1",
+        help="الترتيب يغيّر ترتيب الأيام على المحور الأفقي فقط.",
+    )
+    sort_mode = sort_options[sort_label]
+    if sort_mode == "calls":
+        ordered_days = daily_totals.sort_values(["إجمالي المكالمات", "اليوم"], ascending=[False, True])["اليوم"].tolist()
+    elif sort_mode == "success_rate":
+        ordered_days = daily_totals.sort_values(["نسبة النجاح (%)", "إجمالي المكالمات", "اليوم"], ascending=[False, False, True])["اليوم"].tolist()
+    else:
+        ordered_days = sorted(daily_totals["اليوم"].tolist())
+    daily["اليوم"] = pd.Categorical(daily["اليوم"], categories=ordered_days, ordered=True)
+    daily = daily.sort_values(["اليوم", "_agent_display"])
+    daily_totals["اليوم"] = pd.Categorical(daily_totals["اليوم"], categories=ordered_days, ordered=True)
+    daily_totals = daily_totals.sort_values("اليوم")
+
     fig = px.bar(
         daily, x="اليوم", y="عدد المكالمات", color="_agent_display", barmode="group",
         text_auto=True, custom_data=["_agent_display"], template=PLOTLY_TEMPLATE,
         labels={"_agent_display": "المحصّل"}, color_discrete_sequence=px.colors.qualitative.Safe,
     )
-    fig.update_layout(**_activity_layout(
-        title="📊 Histogram يومي لنشاط المحصلين", title_x=0.5, xaxis_title="اليوم", yaxis_title="عدد المكالمات",
-        height=470, bargap=0.18, legend_title_text="",
-        legend={"orientation": "h", "yanchor": "top", "y": -0.22, "x": 0.5, "xanchor": "center"},
-        margin={"t": 72, "b": 105, "l": 55, "r": 20},
-        xaxis={"type": "category", "categoryorder": "category ascending", "tickangle": -25},
+    fig.add_trace(go.Scatter(
+        x=daily_totals["اليوم"].astype(str), y=daily_totals["نسبة النجاح (%)"],
+        name="نسبة النجاح", mode="lines+markers+text", text=daily_totals["نسبة النجاح (%)"].map(lambda value: f"{value:.1f}%"),
+        textposition="top center", line={"color": COLOR_ACCENT, "width": 3},
+        marker={"color": COLOR_ACCENT, "size": 9, "line": {"color": THEME["surface"], "width": 2}},
+        yaxis="y2", customdata=[[""] for _ in range(len(daily_totals))],
+        hovertemplate="<b>%{x}</b><br>نسبة النجاح: %{y:.1f}%<extra></extra>",
     ))
-    fig.update_traces(
-        marker_line_width=0,
-        customdata=trend["_agent_display"],
-        hovertemplate="<b>%{x}</b><br>%{fullData.name}: %{y:,} مكالمة<extra></extra>",
-    )
+    fig.update_layout(**_activity_layout(
+        title="📊 Combo Chart يومي: المكالمات ونسبة النجاح", title_x=0.5,
+        xaxis_title="اليوم", yaxis_title="عدد المكالمات", height=500, bargap=0.18,
+        legend_title_text="", hovermode="x unified",
+        legend={"orientation": "h", "yanchor": "top", "y": -0.20, "x": 0.5, "xanchor": "center"},
+        margin={"t": 82, "b": 110, "l": 55, "r": 65},
+        xaxis={"type": "category", "categoryorder": "array", "categoryarray": ordered_days, "tickangle": -25},
+        yaxis={"title": "عدد المكالمات", "rangemode": "tozero"},
+        yaxis2={"title": "نسبة النجاح (%)", "overlaying": "y", "side": "right", "range": [0, 100], "ticksuffix": "%", "showgrid": False},
+    ))
+    fig.update_traces(selector={"type": "bar"}, marker_line_width=0, hovertemplate="<b>%{x}</b><br>%{fullData.name}: %{y:,} مكالمة<extra></extra>")
     render_selectable_chart(fig, "dashboard_activity_daily", filter_key=DASHBOARD_AGENT_FILTER_KEY)
 
 
@@ -2053,7 +2092,7 @@ def render_activity_dashboard(df, class_col=None, sales_col=None, time_col=None,
     daily_col, hourly_col = st.columns(2)
     with daily_col:
         with st.container(border=True):
-            _render_activity_daily_chart(work, time_col)
+            _render_activity_daily_chart(work, time_col, class_col)
     with hourly_col:
         with st.container(border=True):
             _render_activity_hourly_chart(work, time_col)
@@ -2161,11 +2200,20 @@ def build_dashboard_html(df, class_col, sales_col, time_col, source_name="", fil
         timed = work.dropna(subset=["_activity_time"]).copy()
         if not timed.empty:
             timed["اليوم"] = timed["_activity_time"].dt.strftime("%Y-%m-%d")
-            daily = timed.groupby(["اليوم", "_agent_display"], as_index=False).size().rename(columns={"size":"عدد المكالمات"})
+            timed["_success_for_day"] = _activity_success_mask(timed, class_col)
+            daily = timed.groupby(["اليوم", "_agent_display"], as_index=False).agg(**{"عدد المكالمات": ("_agent_display", "size"), "المكالمات الناجحة": ("_success_for_day", "sum")})
+            daily_totals = daily.groupby("اليوم", as_index=False).agg(**{"إجمالي المكالمات": ("عدد المكالمات", "sum"), "إجمالي الناجحة": ("المكالمات الناجحة", "sum")})
+            daily_totals["نسبة النجاح (%)"] = (daily_totals["إجمالي الناجحة"] / daily_totals["إجمالي المكالمات"].replace(0, pd.NA) * 100).fillna(0).round(1)
+            ordered_days = sorted(daily_totals["اليوم"].tolist())
+            daily["اليوم"] = pd.Categorical(daily["اليوم"], categories=ordered_days, ordered=True)
+            daily = daily.sort_values(["اليوم", "_agent_display"])
+            daily_totals["اليوم"] = pd.Categorical(daily_totals["اليوم"], categories=ordered_days, ordered=True)
+            daily_totals = daily_totals.sort_values("اليوم")
             day_fig = px.bar(daily, x="اليوم", y="عدد المكالمات", color="_agent_display", barmode="group", text_auto=True, custom_data=["_agent_display"], template=PLOTLY_TEMPLATE, labels={"_agent_display":"المحصل"}, color_discrete_sequence=px.colors.qualitative.Safe)
-            day_fig.update_layout(**_activity_layout(title="📊 Histogram يومي لنشاط المحصلين", title_x=0.5, xaxis_title="اليوم", yaxis_title="عدد المكالمات", height=430, bargap=0.18, margin={"t":68,"b":95,"l":55,"r":20}, xaxis={"type":"category","categoryorder":"category ascending","tickangle":-25}, legend={"orientation":"h","y":-0.2,"x":0.5,"xanchor":"center"}))
-            day_fig.update_traces(marker_line_width=0, hovertemplate="<b>%{x}</b><br>%{fullData.name}: %{y:,} مكالمة<extra></extra>")
-            figs.append(("📊 Histogram النشاط اليومي", day_fig))
+            day_fig.add_trace(go.Scatter(x=daily_totals["اليوم"].astype(str), y=daily_totals["نسبة النجاح (%)"], name="نسبة النجاح", mode="lines+markers+text", text=daily_totals["نسبة النجاح (%)"].map(lambda value: f"{value:.1f}%"), textposition="top center", line={"color": COLOR_ACCENT, "width": 3}, marker={"color": COLOR_ACCENT, "size": 9}, yaxis="y2", hovertemplate="<b>%{x}</b><br>نسبة النجاح: %{y:.1f}%<extra></extra>"))
+            day_fig.update_layout(**_activity_layout(title="📊 Combo Chart يومي: المكالمات ونسبة النجاح", title_x=0.5, xaxis_title="اليوم", yaxis_title="عدد المكالمات", height=430, bargap=0.18, margin={"t":68,"b":95,"l":55,"r":65}, xaxis={"type":"category","categoryorder":"array","categoryarray":ordered_days,"tickangle":-25}, yaxis={"rangemode":"tozero"}, yaxis2={"title":"نسبة النجاح (%)","overlaying":"y","side":"right","range":[0,100],"ticksuffix":"%","showgrid":False}, legend={"orientation":"h","y":-0.2,"x":0.5,"xanchor":"center"}))
+            day_fig.update_traces(selector={"type":"bar"}, marker_line_width=0, hovertemplate="<b>%{x}</b><br>%{fullData.name}: %{y:,} مكالمة<extra></extra>")
+            figs.append(("📊 Combo Chart النشاط اليومي", day_fig))
 
             timed["الساعة"] = timed["_activity_time"].dt.hour
             hourly = timed.groupby(["الساعة", "_agent_display"], as_index=False).size().rename(columns={"size":"عدد المكالمات"})

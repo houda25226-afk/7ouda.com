@@ -1519,12 +1519,12 @@ def render_kpi_dashboard(total, success, agent_count, success_rate, avg_wasted=N
                 mode="number",
                 value=value,
                 domain={"x": [x0 + 0.012, x1 - 0.012], "y": [0.12, 0.88]},
-                title={"text": label, "font": {"size": 15, "color": THEME["text_dim"]}, "align": "center"},
+                title={"text": label, "font": {"size": 18, "color": THEME["text_dim"]}, "align": "center"},
                 number={"font": {"size": 32, "color": number_color}, **number_format},
             )
         )
     figure.update_layout(
-        height=190,
+        height=200,
         template=PLOTLY_TEMPLATE,
         paper_bgcolor="rgba(0,0,0,0)",
         plot_bgcolor="rgba(0,0,0,0)",

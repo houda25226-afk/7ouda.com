@@ -1911,8 +1911,16 @@ def _render_activity_daily_chart(work, time_col):
     if trend.empty:
         st.info("لا توجد تواريخ صالحة لعرض النشاط اليومي.")
         return
-    trend["اليوم"] = trend["_activity_time"].dt.date
+    trend["اليوم"] = trend["_activity_time"].dt.normalize()
     daily = trend.groupby(["اليوم", "_agent_display"], as_index=False).size().rename(columns={"size": "عدد المكالمات"})
+    day_values = pd.to_datetime(daily["اليوم"], errors="coerce").dropna()
+    daily_axis = {"type": "date", "tickformat": "%d/%m", "nticks": 8}
+    if day_values.nunique() == 1:
+        center_day = day_values.iloc[0]
+        daily_axis.update({
+            "range": [center_day - pd.Timedelta(hours=12), center_day + pd.Timedelta(hours=12)],
+            "dtick": 86400000,
+        })
     fig = px.area(
         daily, x="اليوم", y="عدد المكالمات", color="_agent_display", markers=True,
         template=PLOTLY_TEMPLATE, labels={"_agent_display": "المحصّل"},
@@ -1923,7 +1931,7 @@ def _render_activity_daily_chart(work, time_col):
         height=470, legend_title_text="", hovermode="x unified",
         legend={"orientation": "h", "yanchor": "top", "y": -0.22, "x": 0.5, "xanchor": "center"},
         margin={"t": 72, "b": 105, "l": 55, "r": 20},
-        xaxis={"type": "date", "tickformat": "%d/%m", "nticks": 8},
+        xaxis=daily_axis,
     ))
     fig.update_traces(hovertemplate="<b>%{fullData.name}</b><br>اليوم: %{x}<br>المكالمات: %{y:,}<extra></extra>")
     _set_chart_agent_customdata(fig)
@@ -2090,38 +2098,131 @@ def _fig_to_div(fig, div_id, height=420):
 
 
 def build_dashboard_html(df, class_col, sales_col, time_col, source_name="", filter_hint="") -> str:
-    """تصدير بسيط يعتمد على HTML الدلالي ورسوم Plotly؛ بلا CSS مخصص."""
+    """إنشاء نسخة HTML مستقلة من Dashboard النشاط بنفس التسلسل والألوان والرسوم الأساسية."""
     from html import escape
-    figs = []
-    if class_col and class_col in df.columns:
-        labels = df[class_col].map({1: "ناجحة", 0: "غير ناجحة"}).value_counts().reset_index()
-        labels.columns = ["التصنيف", "العدد"]
-        fig = px.pie(labels, names="التصنيف", values="العدد", hole=0.55, color="التصنيف", color_discrete_map=CHART_COLORS, template=PLOTLY_TEMPLATE)
-        fig.update_layout(**PLOTLY_LAYOUT, title="🎯 توزيع نتائج التصنيف")
-        figs.append(fig)
-    if time_col and time_col in df.columns:
-        trend = df.copy()
-        trend[time_col] = pd.to_datetime(trend[time_col], errors="coerce")
-        trend["اليوم"] = trend[time_col].dt.date
-        daily = trend.groupby("اليوم").size().reset_index(name="عدد المكالمات")
-        fig = px.area(daily, x="اليوم", y="عدد المكالمات", color_discrete_sequence=[COLOR_ACCENT], template=PLOTLY_TEMPLATE)
-        fig.update_layout(**PLOTLY_LAYOUT, title="📅 اتجاه عدد المكالمات يوميًا")
-        figs.append(fig)
-    if sales_col and sales_col in df.columns and WASTED_TIME_COL in df.columns:
-        totals = df.groupby(sales_col)[WASTED_TIME_COL].sum().sort_values(ascending=False).reset_index()
-        fig = px.bar(totals, x=WASTED_TIME_COL, y=sales_col, orientation="h", color=WASTED_TIME_COL, color_continuous_scale=[COLOR_ACCENT, COLOR_WARN, COLOR_FAIL], template=PLOTLY_TEMPLATE)
-        fig.update_layout(**PLOTLY_LAYOUT, title="🏆 الوقت المهدر حسب المحصّل", yaxis_title="")
-        figs.append(fig)
-    parts = ['<!doctype html><html lang="ar" dir="rtl"><head><meta charset="utf-8"><title>داشبورد النشاط</title></head><body>']
-    parts.append(f"<h1>📊 تحليل نشاط المحصّلين</h1><p>{escape(source_name)}</p>")
+
+    background = THEME.get("background", "#0B1020")
+    surface = THEME.get("surface", "#151F30")
+    border = THEME.get("border", "rgba(15,157,138,.28)")
+    text = THEME.get("text", "#F8FAFC")
+    text_dim = THEME.get("text_dim", "#B9C6D6")
+    work = df.copy()
+    if sales_col and sales_col in work.columns:
+        work["_agent_display"] = work[sales_col].fillna("غير محدد").astype(str).str.strip()
+    else:
+        work["_agent_display"] = "غير محدد"
+    work["_success_bool"] = _activity_success_mask(work, class_col)
+    total = len(work)
+    success = int(work["_success_bool"].sum())
+    rate = success / total * 100 if total else 0
+    wasted = pd.to_numeric(work.get(WASTED_TIME_COL, pd.Series(dtype=float)), errors="coerce").fillna(0).sum()
+    agent_count = int(work["_agent_display"].nunique()) if total else 0
+
+    def metric_card(label, value, color):
+        return (
+            f'<div style="background:{surface};border:1px solid {border};border-radius:14px;'
+            f'padding:22px 14px;text-align:center;min-height:112px;box-sizing:border-box">'
+            f'<div style="color:{text_dim};font-size:15px;margin-bottom:12px">{label}</div>'
+            f'<div style="color:{color};font-size:28px;font-weight:700;line-height:1.2">{value}</div></div>'
+        )
+
+    parts = [
+        '<!doctype html><html lang="ar" dir="rtl"><head><meta charset="utf-8">'
+        '<meta name="viewport" content="width=device-width, initial-scale=1">'
+        '<title>داشبورد تحليل نشاط المحصلين</title></head>',
+        f'<body style="margin:0;background:{background};color:{text};font-family:Tahoma,Arial,sans-serif;line-height:1.6">',
+        '<main style="max-width:1500px;margin:0 auto;padding:28px 30px">',
+        f'<header style="background:{surface};border:1px solid {border};border-radius:16px;padding:24px 28px;margin-bottom:22px">'
+        '<div style="font-size:13px;color:' + COLOR_ACCENT + ';letter-spacing:1px">ACTIVITY DASHBOARD</div>'
+        '<h1 style="margin:4px 0 2px;font-size:30px">📊 تحليل نشاط المحصلين</h1>'
+        f'<div style="color:{text_dim};font-size:14px">مصدر البيانات: {escape(source_name or "ملف النشاط")}</div>',
+    ]
     if filter_hint:
-        parts.append(f"<p>الفلاتر: {escape(filter_hint)}</p>")
-    parts.append(f"<p>إجمالي المكالمات: {len(df):,}</p>")
+        parts.append(f'<div style="margin-top:12px;color:{text_dim};font-size:13px">الفلاتر النشطة: {escape(filter_hint)}</div>')
+    parts.extend([
+        '</header>',
+        '<section style="display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:14px;margin-bottom:24px">',
+        metric_card("👥 عدد المحصلين", f"{agent_count:,}", text),
+        metric_card("📞 إجمالي المكالمات", f"{total:,}", text),
+        metric_card("✅ المكالمات الناجحة", f"{success:,}", COLOR_SUCCESS),
+        metric_card("📈 نسبة النجاح", f"{rate:.1f}%", COLOR_ACCENT),
+        metric_card("⏱️ إجمالي الوقت المهدر", f"{wasted:,.1f} دقيقة", COLOR_WARN),
+        '</section>',
+    ])
+
+    figs = []
+    if class_col and class_col in work.columns:
+        donut_df = pd.DataFrame({"النتيجة": ["ناجحة", "غير ناجحة"], "العدد": [success, total - success]})
+        fig = px.pie(donut_df, names="النتيجة", values="العدد", hole=0.62, color="النتيجة", color_discrete_map=CHART_COLORS, template=PLOTLY_TEMPLATE)
+        fig.update_traces(textinfo="percent", textfont_size=15, marker={"line": {"color": surface, "width": 3}}, hovertemplate="<b>%{label}</b><br>العدد: %{value:,}<br>النسبة: %{percent}<extra></extra>")
+        fig.update_layout(**_activity_layout(title="🎯 الناجحة مقابل غير الناجحة", title_x=0.5, height=410, margin={"t":68,"b":65,"l":20,"r":20}, legend={"orientation":"h","y":-0.1,"x":0.5,"xanchor":"center"}, annotations=[{"text":f"{rate:.1f}%<br>نجاح","x":0.5,"y":0.5,"font":{"size":22,"color":COLOR_SUCCESS},"showarrow":False}]))
+        figs.append(("🎯 توزيع نتائج المكالمات", fig))
+
+    if time_col and time_col in work.columns:
+        work["_activity_time"] = pd.to_datetime(work[time_col], errors="coerce")
+        timed = work.dropna(subset=["_activity_time"]).copy()
+        if not timed.empty:
+            timed["اليوم"] = timed["_activity_time"].dt.normalize()
+            daily = timed.groupby(["اليوم", "_agent_display"], as_index=False).size().rename(columns={"size":"عدد المكالمات"})
+            day_fig = px.area(daily, x="اليوم", y="عدد المكالمات", color="_agent_display", markers=True, template=PLOTLY_TEMPLATE, labels={"_agent_display":"المحصل"}, color_discrete_sequence=px.colors.qualitative.Safe)
+            day_values = pd.to_datetime(daily["اليوم"], errors="coerce").dropna()
+            axis = {"type":"date","tickformat":"%d/%m","nticks":8}
+            if day_values.nunique() == 1:
+                center = day_values.iloc[0]
+                axis.update({"range":[center-pd.Timedelta(hours=12),center+pd.Timedelta(hours=12)],"dtick":86400000})
+            day_fig.update_layout(**_activity_layout(title="📅 نشاط المحصلين على مدار الأيام", title_x=0.5, xaxis_title="اليوم", yaxis_title="عدد المكالمات", height=430, margin={"t":68,"b":95,"l":55,"r":20}, hovermode="x unified", xaxis=axis, legend={"orientation":"h","y":-0.2,"x":0.5,"xanchor":"center"}))
+            day_fig.update_traces(hovertemplate="<b>%{fullData.name}</b><br>اليوم: %{x}<br>المكالمات: %{y:,}<extra></extra>")
+            figs.append(("📅 النشاط اليومي", day_fig))
+
+            timed["الساعة"] = timed["_activity_time"].dt.hour
+            hourly = timed.groupby(["الساعة", "_agent_display"], as_index=False).size().rename(columns={"size":"عدد المكالمات"})
+            hour_fig = px.line(hourly, x="الساعة", y="عدد المكالمات", color="_agent_display", markers=True, template=PLOTLY_TEMPLATE, labels={"_agent_display":"المحصل"}, color_discrete_sequence=px.colors.qualitative.Safe)
+            hour_fig.update_layout(**_activity_layout(title="🕒 نشاط المحصلين على مدار الساعة", title_x=0.5, xaxis_title="ساعة اليوم", yaxis_title="عدد المكالمات", height=430, margin={"t":68,"b":95,"l":55,"r":20}, xaxis={"dtick":1,"range":[-0.5,23.5]}, legend={"orientation":"h","y":-0.2,"x":0.5,"xanchor":"center"}))
+            hour_fig.update_traces(hovertemplate="<b>%{fullData.name}</b><br>الساعة: %{x}:00<br>المكالمات: %{y:,}<extra></extra>")
+            figs.append(("🕒 النشاط الساعي", hour_fig))
+
+    sub_col = find_column(work, PROMISE_SUB_STATE_CANDIDATES)
+    if sub_col:
+        work["_activity_state"] = work[sub_col].map(_classify_activity_sub_state)
+        state_counts = work.pivot_table(index="_agent_display", columns="_activity_state", aggfunc="size", fill_value=0)
+        for state_name in ACTIVITY_NO_ANSWER_STATES:
+            if state_name not in state_counts.columns:
+                state_counts[state_name] = 0
+        state_counts = state_counts.reindex(columns=ACTIVITY_NO_ANSWER_STATES, fill_value=0).reset_index().rename(columns={"_agent_display":"المحصّل"})
+        state_long = state_counts.melt(id_vars=["المحصّل"], var_name="الحالة", value_name="العدد")
+        no_fig = px.bar(state_long, x="العدد", y="المحصّل", orientation="h", color="الحالة", barmode="stack", text_auto=True, template=PLOTLY_TEMPLATE, category_orders={"الحالة":ACTIVITY_NO_ANSWER_STATES}, color_discrete_sequence=[COLOR_FAIL,COLOR_WARN,"#7C8DA6","#B35CFF"])
+        no_fig.update_layout(**_activity_layout(title="📵 حالات لا يرد لكل محصل", title_x=0.5, xaxis_title="عدد الحالات", yaxis_title="", height=430, margin={"t":68,"b":80,"l":105,"r":20}, legend={"orientation":"h","y":-0.18,"x":0.5,"xanchor":"center"}, yaxis={"categoryorder":"total ascending"}))
+        no_fig.update_traces(hovertemplate="<b>%{y}</b><br>%{fullData.name}: %{x:,}<extra></extra>")
+        figs.append(("📵 تحليل حالات Sub State", no_fig))
+
+    parts.append('<section style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:18px">')
     include_js = True
-    for index, fig in enumerate(figs):
-        parts.append(pio.to_html(fig, full_html=False, include_plotlyjs=include_js, config=PLOTLY_CONFIG, div_id=f"plot_{index}"))
+    for index, (heading, fig) in enumerate(figs):
+        parts.append(f'<article style="background:{surface};border:1px solid {border};border-radius:16px;padding:10px 14px 4px;min-width:0"><h2 style="font-size:17px;margin:8px 10px;color:{text}">{heading}</h2>')
+        parts.append(pio.to_html(fig, full_html=False, include_plotlyjs=include_js, config=PLOTLY_CONFIG, div_id=f"activity_plot_{index}", default_width="100%", default_height=f"{fig.layout.height or 430}px"))
+        parts.append('</article>')
         include_js = False
-    parts.append("</body></html>")
+    parts.append('</section>')
+
+    if sales_col and sales_col in df.columns:
+        agent_table, _, _ = _build_activity_summary(df, class_col, sales_col, time_col)
+        columns = ["المحصّل", "إجمالي المكالمات", "المكالمات الناجحة", "نسبة النجاح (%)", "نسبة من إجمالي المكالمات (%)", "واعد بالسداد", "إجمالي لا يرد", "أيام النشاط", "متوسط ساعات العمل/اليوم", "إجمالي ساعات العمل", "إجمالي الوقت المهدر (دقيقة)"]
+        columns = [column for column in columns if column in agent_table.columns]
+        parts.append(f'<section style="background:{surface};border:1px solid {border};border-radius:16px;padding:18px;margin-top:18px"><h2 style="font-size:19px;margin:0 0 12px">📋 ملخص أداء كل محصل</h2><div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:13px"><thead><tr>')
+        for column in columns:
+            parts.append(f'<th style="padding:10px;border-bottom:1px solid {border};color:{text_dim};white-space:nowrap;text-align:right">{escape(column)}</th>')
+        parts.append('</tr></thead><tbody>')
+        for _, row in agent_table.sort_values("إجمالي المكالمات", ascending=False).iterrows():
+            parts.append('<tr>')
+            for column in columns:
+                value = row[column]
+                if isinstance(value, float):
+                    value = f"{value:,.2f}"
+                parts.append(f'<td style="padding:9px;border-bottom:1px solid rgba(128,145,170,.18);white-space:nowrap">{escape(str(value))}</td>')
+            parts.append('</tr>')
+        parts.append('</tbody></table></div></section>')
+
+    parts.extend(['<footer style="color:' + text_dim + ';font-size:12px;text-align:center;margin-top:24px">تم إنشاء التقرير من لوحة تحليل نشاط المحصلين</footer></main></body></html>'])
     return "".join(parts)
 
 

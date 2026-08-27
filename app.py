@@ -20,6 +20,7 @@
 import io
 import base64
 import hashlib
+import re
 from datetime import time as dt_time
 from datetime import datetime
 
@@ -1653,21 +1654,414 @@ def render_kpi_cards(df, class_col, sales_col, time_col):
 
 
 
-def render_full_dashboard(df, class_col=None, sales_col=None, time_col=None):
-    render_kpi_cards(df, class_col, sales_col, time_col)
-    render_highlights(df, class_col, sales_col, time_col)
-    a, b = st.columns(2)
-    with a:
-        render_pie_chart(df, class_col)
-    with b:
-        render_trend_chart(df, class_col, time_col)
-    render_agent_perf_chart(df, class_col, sales_col, with_table=True)
-    c, d = st.columns(2)
-    with c:
-        render_wasted_bar(df, sales_col, top_n=None)
-    with d:
-        render_wasted_hist(df)
-    render_comparison_matrix(df, class_col, sales_col)
+DASHBOARD_AGENT_FILTER_KEY = "dashboard_selected_agent"
+
+ACTIVITY_NO_ANSWER_STATES = [
+    "لا يرد",
+    "لا يرد مع التكرار",
+    "مغلق",
+    "مغلق مع التكرار",
+]
+ACTIVITY_PROMISE_STATES = ["واعد بالسداد"]
+ACTIVITY_PAYMENT_STATES = [
+    "سدد كامل المديونية",
+    "جدولة",
+    "جدولة مقفلة",
+    "سدد كامل المديونية بخصم",
+]
+
+
+def _state_key(value):
+    """توحيد Sub State للتعامل مع اختلاف المسافات والهمزات والصياغة."""
+    text = "" if pd.isna(value) else str(value).strip().casefold()
+    text = (
+        text.replace("أ", "ا")
+        .replace("إ", "ا")
+        .replace("آ", "ا")
+        .replace("ى", "ي")
+        .replace("ة", "ه")
+    )
+    return re.sub(r"[\s_-]+", "", text)
+
+
+def _classify_activity_sub_state(value):
+    """إرجاع مجموعة موحدة للحالة الفرعية المطلوبة في Dashboard النشاط."""
+    key = _state_key(value)
+    if not key:
+        return "غير محدد"
+    if "لايرد" in key and "تكرار" in key:
+        return "لا يرد مع التكرار"
+    if "مغلق" in key and "تكرار" in key:
+        return "مغلق مع التكرار"
+    if "لايرد" in key:
+        return "لا يرد"
+    if key == "مغلق" or ("مغلق" in key and "جدوله" not in key):
+        return "مغلق"
+    if "واعد" in key and "سداد" in key:
+        return "واعد بالسداد"
+    if "خصم" in key and "كامل" in key and "مديون" in key:
+        return "سدد كامل المديونية بخصم"
+    if ("سدد" in key or "سداد" in key) and "كامل" in key and "مديون" in key:
+        return "سدد كامل المديونية"
+    if "جدوله" in key and ("مغلق" in key or "مقفل" in key):
+        return "جدولة مقفلة"
+    if "جدوله" in key:
+        return "جدولة"
+    return "أخرى"
+
+
+def _activity_success_mask(df, class_col):
+    if not class_col or class_col not in df.columns:
+        return pd.Series(False, index=df.index)
+    numeric = pd.to_numeric(df[class_col], errors="coerce")
+    text = df[class_col].astype(str).str.strip().str.casefold()
+    text_mask = text.isin({"1", "true", "yes", "ناجحة", "ناجحه", "successful"})
+    return numeric.eq(1) | text_mask
+
+
+def _calculate_wasted_time_by_day(df, sales_col, time_col, break_start=None, break_end=None):
+    """حساب الفجوات بين مكالمات المحصل داخل كل يوم فقط، مع خصم البريك."""
+    if not sales_col or sales_col not in df.columns or not time_col or time_col not in df.columns:
+        return pd.Series(0.0, index=df.index)
+    work = df[[sales_col, time_col]].copy()
+    work["_calc_time"] = pd.to_datetime(work[time_col], errors="coerce")
+    work["_calc_day"] = work["_calc_time"].dt.date
+    work["_orig_idx"] = work.index
+    work = work.sort_values([sales_col, "_calc_day", "_calc_time"])
+    work["_prev_time"] = work.groupby([sales_col, "_calc_day"])["_calc_time"].shift(1)
+
+    def gap_for_row(row):
+        if pd.isna(row["_prev_time"]) or pd.isna(row["_calc_time"]):
+            return 0.0
+        gap = max((row["_calc_time"] - row["_prev_time"]).total_seconds() / 60, 0.0)
+        return round(subtract_break_overlap(row["_prev_time"], row["_calc_time"], break_start, break_end, gap), 1)
+
+    work[WASTED_TIME_COL] = work.apply(gap_for_row, axis=1)
+    return work.set_index("_orig_idx")[WASTED_TIME_COL].reindex(df.index).fillna(0.0)
+
+
+def _calculate_daily_work_hours(df, sales_col, time_col, break_start=None, break_end=None):
+    """حساب فترة نشاط كل محصل في كل يوم ثم خصم الجزء المتداخل مع البريك."""
+    empty = pd.DataFrame(columns=["المحصّل", "أيام النشاط", "متوسط ساعات العمل/اليوم", "إجمالي ساعات العمل"])
+    if not sales_col or sales_col not in df.columns or not time_col or time_col not in df.columns:
+        return empty
+    work = pd.DataFrame({
+        "المحصّل": df[sales_col].fillna("غير محدد").astype(str).str.strip(),
+        "_activity_time": pd.to_datetime(df[time_col], errors="coerce"),
+    }).dropna(subset=["_activity_time"])
+    if work.empty:
+        return empty
+    work["_activity_day"] = work["_activity_time"].dt.date
+    daily = work.groupby(["المحصّل", "_activity_day"], as_index=False)["_activity_time"].agg(
+        بداية="min", نهاية="max"
+    )
+
+    def net_minutes(row):
+        minutes = max((row["نهاية"] - row["بداية"]).total_seconds() / 60, 0.0)
+        if break_start is not None and break_end is not None:
+            minutes = subtract_break_overlap(row["بداية"], row["نهاية"], break_start, break_end, minutes)
+        return max(minutes, 0.0)
+
+    daily["دقائق العمل"] = daily.apply(net_minutes, axis=1)
+    summary = daily.groupby("المحصّل")["دقائق العمل"].agg(["count", "mean", "sum"]).reset_index()
+    summary = summary.rename(columns={"count": "أيام النشاط"})
+    summary["متوسط ساعات العمل/اليوم"] = (summary["mean"] / 60).round(2)
+    summary["إجمالي ساعات العمل"] = (summary["sum"] / 60).round(2)
+    return summary[["المحصّل", "أيام النشاط", "متوسط ساعات العمل/اليوم", "إجمالي ساعات العمل"]]
+
+
+def _build_activity_summary(df, class_col, sales_col, time_col, break_start=None, break_end=None):
+    """بناء جدول مؤشرات المحصلين ومجموعة بيانات الرسوم من ملف النشاط."""
+    if not sales_col or sales_col not in df.columns:
+        return pd.DataFrame(), df.copy(), None
+    work = df.copy()
+    work["_agent_display"] = work[sales_col].fillna("غير محدد").astype(str).str.strip()
+    work.loc[work["_agent_display"] == "", "_agent_display"] = "غير محدد"
+    work["_success_bool"] = _activity_success_mask(work, class_col)
+    sub_col = find_column(work, PROMISE_SUB_STATE_CANDIDATES)
+    if sub_col:
+        work["_activity_state"] = work[sub_col].map(_classify_activity_sub_state)
+    else:
+        work["_activity_state"] = "غير محدد"
+
+    if time_col and time_col in work.columns and WASTED_TIME_COL not in work.columns:
+        work[WASTED_TIME_COL] = _calculate_wasted_time_by_day(
+            work, "_agent_display", time_col, break_start, break_end
+        )
+    if WASTED_TIME_COL in work.columns:
+        work[WASTED_TIME_COL] = pd.to_numeric(work[WASTED_TIME_COL], errors="coerce").fillna(0)
+
+    agent = work.groupby("_agent_display", dropna=False).size().rename("إجمالي المكالمات").to_frame()
+    agent["المكالمات الناجحة"] = work[work["_success_bool"]].groupby("_agent_display").size()
+    agent["المكالمات الناجحة"] = agent["المكالمات الناجحة"].fillna(0).astype(int)
+    agent["المكالمات غير الناجحة"] = agent["إجمالي المكالمات"] - agent["المكالمات الناجحة"]
+    agent["نسبة النجاح (%)"] = (
+        agent["المكالمات الناجحة"] / agent["إجمالي المكالمات"].replace(0, pd.NA) * 100
+    ).fillna(0).round(1)
+
+    state_columns = ACTIVITY_NO_ANSWER_STATES + ACTIVITY_PROMISE_STATES + ACTIVITY_PAYMENT_STATES
+    state_table = pd.crosstab(work["_agent_display"], work["_activity_state"])
+    for state in state_columns:
+        if state not in state_table.columns:
+            state_table[state] = 0
+    state_table = state_table.reindex(columns=state_columns, fill_value=0)
+    agent = agent.join(state_table, how="left").fillna(0)
+    agent["إجمالي لا يرد"] = agent[ACTIVITY_NO_ANSWER_STATES].sum(axis=1).astype(int)
+    agent["نسبة من إجمالي المكالمات (%)"] = (
+        agent["إجمالي المكالمات"] / max(len(work), 1) * 100
+    ).round(1)
+
+    if WASTED_TIME_COL in work.columns:
+        agent["إجمالي الوقت المهدر (دقيقة)"] = work.groupby("_agent_display")[WASTED_TIME_COL].sum().round(1)
+    else:
+        agent["إجمالي الوقت المهدر (دقيقة)"] = 0.0
+
+    hours = _calculate_daily_work_hours(work, "_agent_display", time_col, break_start, break_end)
+    if not hours.empty:
+        agent = agent.reset_index().rename(columns={"_agent_display": "المحصّل"}).merge(hours, on="المحصّل", how="left").set_index("المحصّل")
+    else:
+        agent["أيام النشاط"] = 0
+        agent["متوسط ساعات العمل/اليوم"] = 0.0
+        agent["إجمالي ساعات العمل"] = 0.0
+
+    agent = agent.reset_index().rename(columns={"_agent_display": "المحصّل"})
+    return agent.fillna(0), work, sub_col
+
+
+def _set_chart_agent_customdata(fig):
+    for trace in fig.data:
+        trace_name = getattr(trace, "name", None)
+        values = getattr(trace, "x", None)
+        if values is None:
+            values = getattr(trace, "y", None)
+        if trace_name and values is not None:
+            trace.customdata = [trace_name] * len(values)
+    return fig
+
+
+def _activity_layout(**overrides):
+    return {**PLOTLY_LAYOUT, **overrides}
+
+
+def render_activity_kpi_cards(total, success, agent_count, success_rate, wasted_minutes):
+    cards = [
+        ("👥<br>عدد المحصّلين", agent_count, {"valueformat": ",d"}, THEME["text"]),
+        ("📞<br>إجمالي المكالمات", total, {"valueformat": ",d"}, THEME["text"]),
+        ("✅<br>المكالمات الناجحة", success, {"valueformat": ",d"}, COLOR_SUCCESS),
+        ("📈<br>نسبة النجاح", success_rate, {"valueformat": ".1f", "suffix": "%"}, COLOR_ACCENT),
+        ("⏱️<br>إجمالي الوقت المهدر", wasted_minutes, {"valueformat": ".1f", "suffix": " دقيقة"}, COLOR_WARN),
+    ]
+    figure = go.Figure()
+    gap = 0.014
+    width = (1 - gap * (len(cards) + 1)) / len(cards)
+    for index, (label, value, number_format, color) in enumerate(cards):
+        x0 = gap + index * (width + gap)
+        x1 = x0 + width
+        figure.add_shape(
+            type="path",
+            path=_rounded_rect_path(x0, x1, 0.04, 0.96, radius=0.022),
+            xref="paper", yref="paper",
+            fillcolor=THEME["surface"], line={"color": THEME["border"], "width": 1},
+        )
+        figure.add_trace(go.Indicator(
+            mode="number", value=float(value or 0),
+            domain={"x": [x0 + 0.008, x1 - 0.008], "y": [0.13, 0.87]},
+            title={"text": label, "font": {"size": 16, "color": THEME["text_dim"]}, "align": "center"},
+            number={"font": {"size": 28, "color": color}, **number_format},
+        ))
+    figure.update_layout(
+        height=205, template=PLOTLY_TEMPLATE, paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)", font={"family": "Tajawal, sans-serif", "color": THEME["text"]},
+        margin={"t": 8, "b": 8, "l": 8, "r": 8},
+    )
+    st.plotly_chart(figure, use_container_width=True, config=PLOTLY_CONFIG, key="activity_kpi_cards")
+
+
+def _render_dashboard_agent_filter_notice():
+    selected = st.session_state.get(DASHBOARD_AGENT_FILTER_KEY)
+    if not selected:
+        return
+    c1, c2 = st.columns([4, 1])
+    with c1:
+        st.info(f"🎯 الفلتر التفاعلي النشط: كل المؤشرات للمحصّل «{selected}»")
+    with c2:
+        if st.button("إظهار الكل", key="clear_dashboard_agent_filter", use_container_width=True):
+            st.session_state.pop(DASHBOARD_AGENT_FILTER_KEY, None)
+            st.rerun()
+
+
+def _dashboard_activity_view(df, sales_col):
+    selected = st.session_state.get(DASHBOARD_AGENT_FILTER_KEY)
+    if not selected or not sales_col or sales_col not in df.columns:
+        return df
+    mask = df[sales_col].fillna("غير محدد").astype(str).str.strip().eq(str(selected).strip())
+    if not mask.any():
+        st.session_state.pop(DASHBOARD_AGENT_FILTER_KEY, None)
+        return df
+    return df.loc[mask].copy()
+
+
+def _render_activity_daily_chart(work, time_col):
+    if not time_col or time_col not in work.columns:
+        st.info("يلزم وجود عمود Created On لعرض النشاط على مدار الأيام.")
+        return
+    trend = work.copy()
+    trend["_activity_time"] = pd.to_datetime(trend[time_col], errors="coerce")
+    trend = trend.dropna(subset=["_activity_time"])
+    if trend.empty:
+        st.info("لا توجد تواريخ صالحة لعرض النشاط اليومي.")
+        return
+    trend["اليوم"] = trend["_activity_time"].dt.date
+    daily = trend.groupby(["اليوم", "_agent_display"], as_index=False).size().rename(columns={"size": "عدد المكالمات"})
+    fig = px.area(
+        daily, x="اليوم", y="عدد المكالمات", color="_agent_display", markers=True,
+        template=PLOTLY_TEMPLATE, labels={"_agent_display": "المحصّل"},
+        color_discrete_sequence=px.colors.qualitative.Safe,
+    )
+    fig.update_layout(**_activity_layout(
+        title="📅 نشاط المحصلين على مدار الأيام", xaxis_title="اليوم", yaxis_title="عدد المكالمات",
+        height=450, legend_title_text="", hovermode="x unified",
+    ))
+    fig.update_traces(hovertemplate="<b>%{fullData.name}</b><br>اليوم: %{x}<br>المكالمات: %{y:,}<extra></extra>")
+    _set_chart_agent_customdata(fig)
+    render_selectable_chart(fig, "dashboard_activity_daily", filter_key=DASHBOARD_AGENT_FILTER_KEY)
+
+
+def _render_activity_hourly_chart(work, time_col):
+    if not time_col or time_col not in work.columns:
+        st.info("يلزم وجود عمود Created On لعرض النشاط حسب الساعة.")
+        return
+    trend = work.copy()
+    trend["_activity_time"] = pd.to_datetime(trend[time_col], errors="coerce")
+    trend = trend.dropna(subset=["_activity_time"])
+    if trend.empty:
+        st.info("لا توجد أوقات صالحة لعرض النشاط الساعي.")
+        return
+    trend["الساعة"] = trend["_activity_time"].dt.hour
+    hourly = trend.groupby(["الساعة", "_agent_display"], as_index=False).size().rename(columns={"size": "عدد المكالمات"})
+    fig = px.line(
+        hourly, x="الساعة", y="عدد المكالمات", color="_agent_display", markers=True,
+        template=PLOTLY_TEMPLATE, labels={"_agent_display": "المحصّل"},
+        color_discrete_sequence=px.colors.qualitative.Safe,
+    )
+    fig.update_layout(**_activity_layout(
+        title="🕒 نشاط المحصلين على مدار الساعة", xaxis_title="ساعة اليوم", yaxis_title="عدد المكالمات",
+        xaxis={"dtick": 1, "range": [-0.5, 23.5]}, height=450, legend_title_text="",
+    ))
+    fig.update_traces(hovertemplate="<b>%{fullData.name}</b><br>الساعة: %{x}:00<br>المكالمات: %{y:,}<extra></extra>")
+    _set_chart_agent_customdata(fig)
+    render_selectable_chart(fig, "dashboard_activity_hourly", filter_key=DASHBOARD_AGENT_FILTER_KEY)
+
+
+def _render_activity_outcome_donut(work, class_col):
+    if not class_col or class_col not in work.columns:
+        st.info("يلزم وجود عمود التصنيف لعرض الناجحة مقابل غير الناجحة.")
+        return
+    success = int(work["_success_bool"].sum())
+    failed = int(len(work) - success)
+    donut_df = pd.DataFrame({"النتيجة": ["ناجحة", "غير ناجحة"], "العدد": [success, failed]})
+    rate = success / len(work) * 100 if len(work) else 0
+    fig = px.pie(
+        donut_df, names="النتيجة", values="العدد", hole=0.62,
+        color="النتيجة", color_discrete_map=CHART_COLORS, template=PLOTLY_TEMPLATE,
+    )
+    fig.update_traces(
+        textinfo="percent", textfont_size=15,
+        marker={"line": {"color": THEME["surface"], "width": 3}},
+        hovertemplate="<b>%{label}</b><br>العدد: %{value:,}<br>النسبة: %{percent}<extra></extra>",
+    )
+    fig.update_layout(**_activity_layout(
+        title="🎯 الناجحة مقابل غير الناجحة", height=450,
+        legend={"orientation": "h", "yanchor": "bottom", "y": -0.15, "x": 0.5, "xanchor": "center"},
+        annotations=[{"text": f"{rate:.1f}%<br>نجاح", "x": 0.5, "y": 0.5, "font": {"size": 22, "color": COLOR_SUCCESS}, "showarrow": False}],
+    ))
+    st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG, key="dashboard_outcome_donut")
+
+
+def _render_activity_no_answer_chart(agent):
+    available = [state for state in ACTIVITY_NO_ANSWER_STATES if state in agent.columns]
+    if not available:
+        st.info("يلزم وجود عمود Sub State لعرض حالات لا يرد ومغلق.")
+        return
+    plot = agent[["المحصّل"] + available].copy()
+    plot["إجمالي لا يرد"] = plot[available].sum(axis=1)
+    plot = plot.sort_values("إجمالي لا يرد", ascending=True)
+    long = plot.melt(id_vars=["المحصّل"], value_vars=available, var_name="الحالة", value_name="العدد")
+    fig = px.bar(
+        long, x="المحصّل", y="العدد", color="الحالة", barmode="stack", text_auto=True,
+        template=PLOTLY_TEMPLATE, category_orders={"الحالة": ACTIVITY_NO_ANSWER_STATES},
+        color_discrete_sequence=[COLOR_FAIL, COLOR_WARN, "#7C8DA6", "#B35CFF"],
+    )
+    fig.update_layout(**_activity_layout(
+        title="📵 حالات لا يرد لكل محصل (تشمل مغلق والتكرار)", xaxis_title="", yaxis_title="عدد الحالات",
+        height=450, legend_title_text="", legend={"orientation": "h", "yanchor": "bottom", "y": -0.28, "x": 0.5, "xanchor": "center"},
+    ))
+    fig.update_traces(
+        marker_line_width=0,
+        customdata=long["المحصّل"],
+        hovertemplate="<b>%{x}</b><br>%{fullData.name}: %{y:,}<extra></extra>",
+    )
+    render_selectable_chart(fig, "dashboard_no_answer_states", filter_key=DASHBOARD_AGENT_FILTER_KEY)
+
+
+def _render_activity_table(agent):
+    table_columns = [
+        "المحصّل", "إجمالي المكالمات", "المكالمات الناجحة", "نسبة النجاح (%)", "نسبة من إجمالي المكالمات (%)",
+        "واعد بالسداد", "سدد كامل المديونية", "جدولة", "جدولة مقفلة", "سدد كامل المديونية بخصم",
+        "لا يرد", "لا يرد مع التكرار", "مغلق", "مغلق مع التكرار", "إجمالي لا يرد",
+        "أيام النشاط", "متوسط ساعات العمل/اليوم", "إجمالي ساعات العمل", "إجمالي الوقت المهدر (دقيقة)",
+    ]
+    table = agent[[c for c in table_columns if c in agent.columns]].copy()
+    for col in ["نسبة النجاح (%)", "نسبة من إجمالي المكالمات (%)", "متوسط ساعات العمل/اليوم", "إجمالي ساعات العمل", "إجمالي الوقت المهدر (دقيقة)"]:
+        if col in table.columns:
+            table[col] = pd.to_numeric(table[col], errors="coerce").fillna(0).round(2)
+    st.dataframe(table.sort_values("إجمالي المكالمات", ascending=False), use_container_width=True, hide_index=True)
+
+
+def render_activity_dashboard(df, class_col=None, sales_col=None, time_col=None, break_start=None, break_end=None):
+    """Dashboard تحليل نشاط المحصلين: KPI، اتجاهات زمنية، حالات Sub State، ساعات العمل، وجدول تفصيلي."""
+    if not sales_col or sales_col not in df.columns:
+        st.error("لا يوجد عمود واضح للمحصّل (Create By / Sales Person) في الملف.")
+        return
+    _render_dashboard_agent_filter_notice()
+    view = _dashboard_activity_view(df, sales_col)
+    agent, work, sub_col = _build_activity_summary(view, class_col, sales_col, time_col, break_start, break_end)
+    if agent.empty:
+        st.info("لا توجد مكالمات قابلة للعرض بعد تطبيق الفلاتر.")
+        return
+    total = len(work)
+    success = int(work["_success_bool"].sum())
+    success_rate = success / total * 100 if total else 0
+    wasted = float(pd.to_numeric(work.get(WASTED_TIME_COL, pd.Series(dtype=float)), errors="coerce").fillna(0).sum())
+    st.subheader("📌 مؤشرات الأداء الرئيسية")
+    render_activity_kpi_cards(total, success, int(agent["المحصّل"].nunique()), success_rate, wasted)
+    st.caption("اضغط على اسم أي محصل داخل الرسوم التفاعلية لتطبيق فلتر موحد على الكروت والرسوم والجدول.")
+
+    daily_col, hourly_col = st.columns(2)
+    with daily_col:
+        with st.container(border=True):
+            _render_activity_daily_chart(work, time_col)
+    with hourly_col:
+        with st.container(border=True):
+            _render_activity_hourly_chart(work, time_col)
+
+    outcome_col, no_answer_col = st.columns(2)
+    with outcome_col:
+        with st.container(border=True):
+            _render_activity_outcome_donut(work, class_col)
+    with no_answer_col:
+        with st.container(border=True):
+            _render_activity_no_answer_chart(agent)
+
+    with st.container(border=True):
+        st.subheader("📋 جدول أداء كل محصل وحالات Sub State وساعات العمل")
+        if not sub_col:
+            st.warning("لم يتم العثور على عمود Sub State؛ ستظهر أعمدة الحالات بصفر حتى يتم رفع ملف يحتوي على العمود.")
+        _render_activity_table(agent)
+
+
+def render_full_dashboard(df, class_col=None, sales_col=None, time_col=None, break_start=None, break_end=None):
+    render_activity_dashboard(df, class_col, sales_col, time_col, break_start, break_end)
 
 
 
@@ -2718,6 +3112,28 @@ def _show_neglect_results(df, meta):
 
 
 
+def _render_dashboard_work_settings():
+    """إعداد استراحة Dashboard النشاط؛ تُستخدم لخصم البريك من ساعات العمل اليومية."""
+    st.subheader("⏱️ إعدادات حساب ساعات العمل")
+    st.caption("سيتم حساب زمن النشاط من أول مكالمة لآخر مكالمة لكل محصل في كل يوم، مع خصم وقت الاستراحة المحدد.")
+    st.session_state.setdefault("dashboard_has_break", False)
+    st.session_state.setdefault("dashboard_break_start", dt_time(13, 0))
+    st.session_state.setdefault("dashboard_break_end", dt_time(13, 15))
+    has_break = st.checkbox("☕ يوجد وقت استراحة يتم خصمه", key="dashboard_has_break")
+    if not has_break:
+        return None, None
+    c1, c2 = st.columns(2)
+    with c1:
+        break_start = st.time_input("بداية الاستراحة", key="dashboard_break_start")
+    with c2:
+        break_end = st.time_input("نهاية الاستراحة", key="dashboard_break_end")
+    if break_start >= break_end:
+        st.warning("يجب أن تسبق بداية الاستراحة نهايتها؛ لذلك لن يتم الخصم حتى يتم تصحيح الوقت.")
+        return None, None
+    st.info(f"سيتم خصم الاستراحة من {break_start:%H:%M} إلى {break_end:%H:%M} من ساعات العمل اليومية.")
+    return break_start, break_end
+
+
 def page_dashboard():
     """تويب داشبورد مستقلة تمامًا عن التصنيف — ترفع فيها ملف النشاط بعد التصنيف
     (فيه عمود التصنيف جاهز) وتعرض لك داشبورد كاملة بالكروت والشارتات،
@@ -2730,6 +3146,7 @@ def page_dashboard():
     )
 
     init_activity_state()
+    break_start, break_end = _render_dashboard_work_settings()
 
     # 💾 الكاش الشفاف: لو فيه داشبورد محفوظة لآخر ملف مرفوع — نعرضها من غير إعادة معالجة
     cached = st.session_state.get("dashboard_result")
@@ -2749,7 +3166,7 @@ def page_dashboard():
 
     # لو اتشال الملف والنتيجة لسه في الذاكرة — نعرضها من الكاش
     if dash_file is None:
-        _show_dashboard_from_cache()
+        _show_dashboard_from_cache(break_start, break_end)
         return
 
     # 💾 لو الملف ده اتعرج قبل كده — نعرض الكاش من غير إعادة معالجة
@@ -2757,7 +3174,8 @@ def page_dashboard():
     if current_source_hash == current_file_hash and cached is not None:
         df_show, hint = _render_slicers(cached["df"], cached["sales_col"], cached["time_col"])
         _render_dashboard(df_show, cached["class_col"], cached["sales_col"],
-                          cached["time_col"], dash_file.name, filter_hint=hint)
+                          cached["time_col"], dash_file.name, filter_hint=hint,
+                          break_start=break_start, break_end=break_end)
         return
 
     try:
@@ -2787,13 +3205,15 @@ def page_dashboard():
 
     # 🎚️ السلايسرز: فلتر المحصّلين + فلتر التواريخ (للعرض فقط — الكاش محفوظ)
     df_show, hint = _render_slicers(df, sales_col, time_col)
-    _render_dashboard(df_show, class_col, sales_col, time_col, dash_file.name, filter_hint=hint)
+    _render_dashboard(df_show, class_col, sales_col, time_col, dash_file.name, filter_hint=hint,
+                      break_start=break_start, break_end=break_end)
 
 
-def _render_dashboard(df, class_col, sales_col, time_col, source_name, filter_hint=""):
+def _render_dashboard(df, class_col, sales_col, time_col, source_name, filter_hint="", break_start=None, break_end=None):
     if filter_hint:
         st.info(f"الفلاتر المطبقة: {filter_hint}")
-    render_full_dashboard(df, class_col=class_col, sales_col=sales_col, time_col=time_col)
+    render_full_dashboard(df, class_col=class_col, sales_col=sales_col, time_col=time_col,
+                          break_start=break_start, break_end=break_end)
     dashboard_html = build_dashboard_html(df, class_col=class_col, sales_col=sales_col, time_col=time_col, source_name=source_name, filter_hint=filter_hint)
     st.download_button("🌐 تحميل لوحة التحكم كصفحة ويب HTML", data=dashboard_html.encode("utf-8"), file_name="داشبورد_النشاط.html", mime="text/html", use_container_width=True, key="dash_html_download_v3", type="primary")
     st.download_button("⬇️ تحميل البيانات كـ CSV", data=df.to_csv(index=False).encode("utf-8-sig"), file_name="بيانات_النشاط.csv", mime="text/csv", use_container_width=True, key="dash_csv_download_v3")
@@ -2848,7 +3268,7 @@ def _render_slicers(df, sales_col, time_col):
 
 
 
-def _show_dashboard_from_cache():
+def _show_dashboard_from_cache(break_start=None, break_end=None):
     """عرض الداشبورد المحفوظة بعد شيل الملف — من الكاش بدون إعادة معالجة."""
     cached = st.session_state.get("dashboard_result")
     if cached is None:
@@ -2856,7 +3276,8 @@ def _show_dashboard_from_cache():
     st.info(f"📌 لوحة التحكم محفوظة في الذاكرة — آخر ملف مرفوع: {cached['source_name']}")
     df, hint = _render_slicers(cached["df"], cached["sales_col"], cached["time_col"])
     _render_dashboard(df, cached["class_col"], cached["sales_col"],
-                      cached["time_col"], cached["source_name"], filter_hint=hint)
+                      cached["time_col"], cached["source_name"], filter_hint=hint,
+                      break_start=break_start, break_end=break_end)
 
 
 # ==========================================================

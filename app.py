@@ -626,6 +626,50 @@ def _combine_promises_cached_results(company_label, result_keys=None):
     return combined, meta
 
 
+def render_promises_kpi_dashboard(total, standing_count, broken_count, agent_count, total_amount):
+    cards = [
+        ("🤝<br>إجمالي الوعود", total, {"valueformat": ",d"}, THEME["text"]),
+        ("📗<br>الوعود القائمة", standing_count, {"valueformat": ",d"}, COLOR_SUCCESS),
+        ("📕<br>الوعود المكسورة", broken_count, {"valueformat": ",d"}, COLOR_FAIL),
+        ("👥<br>عدد المحصّلين", agent_count, {"valueformat": ",d"}, THEME["text"]),
+        ("💰<br>إجمالي المديونية", total_amount, {"valueformat": ",.0f"}, COLOR_WARN),
+    ]
+    figure = go.Figure()
+    count = len(cards)
+    gap = 0.018
+    width = (1 - gap * (count + 1)) / count
+    for index, (label, value, number_format, number_color) in enumerate(cards):
+        x0 = gap + index * (width + gap)
+        x1 = x0 + width
+        figure.add_shape(
+            type="path",
+            xref="paper",
+            yref="paper",
+            path=_rounded_rect_path(x0, x1, 0.06, 0.94, radius=0.022),
+            line={"color": THEME["border"], "width": 1},
+            fillcolor=THEME["surface"],
+            layer="below",
+        )
+        figure.add_trace(
+            go.Indicator(
+                mode="number",
+                value=float(value or 0),
+                domain={"x": [x0 + 0.012, x1 - 0.012], "y": [0.12, 0.88]},
+                title={"text": label, "font": {"size": 18, "color": THEME["text_dim"]}, "align": "center"},
+                number={"font": {"size": 32, "color": number_color}, **number_format},
+            )
+        )
+    figure.update_layout(
+        height=200,
+        template=PLOTLY_TEMPLATE,
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)",
+        font={"family": "Tajawal, sans-serif", "color": THEME["text"]},
+        margin={"t": 8, "b": 8, "l": 8, "r": 8},
+    )
+    st.plotly_chart(figure, use_container_width=True, config=PLOTLY_CONFIG, key="promises_kpi_dashboard")
+
+
 def render_combined_promises_dashboard(df, meta, company_label):
     sales_col = meta.get("sales_col") if meta else None
     net_col = meta.get("net_col") if meta else None
@@ -638,12 +682,7 @@ def render_combined_promises_dashboard(df, meta, company_label):
     agent_count = int(df[sales_col].nunique()) if sales_col and sales_col in df.columns else 0
 
     st.subheader(f"📊 ملخص الوعود — {company_label}")
-    k1, k2, k3, k4, k5 = st.columns(5)
-    k1.metric("🤝 إجمالي الوعود", f"{total:,}")
-    k2.metric("📗 الوعود القائمة", f"{standing_count:,}")
-    k3.metric("📕 الوعود المكسورة", f"{broken_count:,}")
-    k4.metric("👥 عدد المحصّلين", f"{agent_count:,}")
-    k5.metric("💰 إجمالي المديونية", f"{total_amount:,.0f}" if net_col else "—")
+    render_promises_kpi_dashboard(total, standing_count, broken_count, agent_count, total_amount if net_col else 0)
 
     if total and sales_col and sales_col in df.columns:
         st.markdown("#### 📈 تحليلات الوعود القائمة والمكسورة")
@@ -708,18 +747,40 @@ def render_combined_promises_dashboard(df, meta, company_label):
     st.subheader("📋 تفاصيل الوعود القائمة والمكسورة")
     if display_cols:
         st.dataframe(df[display_cols], use_container_width=True, hide_index=True)
-    if not df.empty:
-        out_excel = io.BytesIO()
-        with pd.ExcelWriter(out_excel, engine="openpyxl") as writer:
-            df.to_excel(writer, index=False, sheet_name="الوعود المجمعة")
+
+    report_date = datetime.now().strftime("%Y-%m-%d")
+    company_file_name = company_label.replace(" ", "_")
+    standing_df = df[df["نوع الوعد"] == "الوعود القائمة"].copy() if "نوع الوعد" in df.columns else pd.DataFrame()
+    broken_df = df[df["نوع الوعد"] == "الوعود المكسورة"].copy() if "نوع الوعد" in df.columns else pd.DataFrame()
+
+    def _excel_bytes(report_df, sheet_name):
+        buffer = io.BytesIO()
+        with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
+            report_df.to_excel(writer, index=False, sheet_name=sheet_name)
+        return buffer.getvalue()
+
+    download_left, download_right = st.columns(2)
+    with download_left:
         st.download_button(
-            "⬇️ تحميل الوعود القائمة والمكسورة",
-            data=out_excel.getvalue(),
-            file_name=f"وعود_{company_label}.xlsx",
+            "⬇️ تحميل تقرير الوعود القائمة",
+            data=_excel_bytes(standing_df, "الوعود القائمة"),
+            file_name=f"تقرير_الوعود_القائمة_{company_file_name}_{report_date}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             use_container_width=True,
-            key="promises_combined_download",
+            key="promises_standing_download",
             type="primary",
+            disabled=standing_df.empty,
+        )
+    with download_right:
+        st.download_button(
+            "⬇️ تحميل تقرير الوعود المكسورة",
+            data=_excel_bytes(broken_df, "الوعود المكسورة"),
+            file_name=f"تقرير_الوعود_المكسورة_{company_file_name}_{report_date}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            use_container_width=True,
+            key="promises_broken_download",
+            type="primary",
+            disabled=broken_df.empty,
         )
 
 
@@ -750,6 +811,12 @@ def page_promises():
         st.caption(f"المحفظة المختارة: {company_label} · الملف: {uploaded.name}")
         _run_promises_pipeline(uploaded, standing_key, due_mode="today", count_label="عدد الوعود القائمة")
         _run_promises_pipeline(uploaded, broken_key, due_mode="before", count_label="عدد الوعود المكسورة")
+    else:
+        cached_file = st.session_state.get(APP_DATA_CACHE_KEY, {}).get(cache_scope, {})
+        cached_result = st.session_state.get(standing_key) or st.session_state.get(broken_key)
+        if cached_result or cached_file:
+            saved_name = (cached_result or cached_file).get("filename", "المحفظة المحفوظة")
+            st.success(f"✅ محفظة {company_label} محفوظة: {saved_name}. لن تُحذف عند التنقل بين التبويبات.")
 
     combined, meta = _combine_promises_cached_results(company_label, result_keys=result_keys)
     if combined.empty or meta is None:

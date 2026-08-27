@@ -1919,8 +1919,11 @@ def _render_activity_daily_chart(work, time_col):
         color_discrete_sequence=px.colors.qualitative.Safe,
     )
     fig.update_layout(**_activity_layout(
-        title="📅 نشاط المحصلين على مدار الأيام", xaxis_title="اليوم", yaxis_title="عدد المكالمات",
-        height=450, legend_title_text="", hovermode="x unified",
+        title="📅 نشاط المحصلين على مدار الأيام", title_x=0.5, xaxis_title="اليوم", yaxis_title="عدد المكالمات",
+        height=470, legend_title_text="", hovermode="x unified",
+        legend={"orientation": "h", "yanchor": "top", "y": -0.22, "x": 0.5, "xanchor": "center"},
+        margin={"t": 72, "b": 105, "l": 55, "r": 20},
+        xaxis={"type": "date", "tickformat": "%d/%m", "nticks": 8},
     ))
     fig.update_traces(hovertemplate="<b>%{fullData.name}</b><br>اليوم: %{x}<br>المكالمات: %{y:,}<extra></extra>")
     _set_chart_agent_customdata(fig)
@@ -1945,8 +1948,10 @@ def _render_activity_hourly_chart(work, time_col):
         color_discrete_sequence=px.colors.qualitative.Safe,
     )
     fig.update_layout(**_activity_layout(
-        title="🕒 نشاط المحصلين على مدار الساعة", xaxis_title="ساعة اليوم", yaxis_title="عدد المكالمات",
-        xaxis={"dtick": 1, "range": [-0.5, 23.5]}, height=450, legend_title_text="",
+        title="🕒 نشاط المحصلين على مدار الساعة", title_x=0.5, xaxis_title="ساعة اليوم", yaxis_title="عدد المكالمات",
+        xaxis={"dtick": 1, "range": [-0.5, 23.5]}, height=470, legend_title_text="",
+        legend={"orientation": "h", "yanchor": "top", "y": -0.22, "x": 0.5, "xanchor": "center"},
+        margin={"t": 72, "b": 105, "l": 55, "r": 20},
     ))
     fig.update_traces(hovertemplate="<b>%{fullData.name}</b><br>الساعة: %{x}:00<br>المكالمات: %{y:,}<extra></extra>")
     _set_chart_agent_customdata(fig)
@@ -1971,8 +1976,9 @@ def _render_activity_outcome_donut(work, class_col):
         hovertemplate="<b>%{label}</b><br>العدد: %{value:,}<br>النسبة: %{percent}<extra></extra>",
     )
     fig.update_layout(**_activity_layout(
-        title="🎯 الناجحة مقابل غير الناجحة", height=450,
-        legend={"orientation": "h", "yanchor": "bottom", "y": -0.15, "x": 0.5, "xanchor": "center"},
+        title="🎯 الناجحة مقابل غير الناجحة", title_x=0.5, height=450,
+        legend={"orientation": "h", "yanchor": "top", "y": -0.12, "x": 0.5, "xanchor": "center"},
+        margin={"t": 72, "b": 82, "l": 20, "r": 20},
         annotations=[{"text": f"{rate:.1f}%<br>نجاح", "x": 0.5, "y": 0.5, "font": {"size": 22, "color": COLOR_SUCCESS}, "showarrow": False}],
     ))
     st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG, key="dashboard_outcome_donut")
@@ -1988,18 +1994,19 @@ def _render_activity_no_answer_chart(agent):
     plot = plot.sort_values("إجمالي لا يرد", ascending=True)
     long = plot.melt(id_vars=["المحصّل"], value_vars=available, var_name="الحالة", value_name="العدد")
     fig = px.bar(
-        long, x="المحصّل", y="العدد", color="الحالة", barmode="stack", text_auto=True,
+        long, x="العدد", y="المحصّل", orientation="h", color="الحالة", barmode="stack", text_auto=True,
         template=PLOTLY_TEMPLATE, category_orders={"الحالة": ACTIVITY_NO_ANSWER_STATES},
         color_discrete_sequence=[COLOR_FAIL, COLOR_WARN, "#7C8DA6", "#B35CFF"],
     )
     fig.update_layout(**_activity_layout(
-        title="📵 حالات لا يرد لكل محصل (تشمل مغلق والتكرار)", xaxis_title="", yaxis_title="عدد الحالات",
-        height=450, legend_title_text="", legend={"orientation": "h", "yanchor": "bottom", "y": -0.28, "x": 0.5, "xanchor": "center"},
+        title="📵 حالات لا يرد لكل محصل (تشمل مغلق والتكرار)", title_x=0.5, xaxis_title="عدد الحالات", yaxis_title="",
+        height=470, legend_title_text="", legend={"orientation": "h", "yanchor": "top", "y": -0.22, "x": 0.5, "xanchor": "center"},
+        margin={"t": 72, "b": 105, "l": 105, "r": 20}, yaxis={"categoryorder": "total ascending"},
     ))
     fig.update_traces(
         marker_line_width=0,
         customdata=long["المحصّل"],
-        hovertemplate="<b>%{x}</b><br>%{fullData.name}: %{y:,}<extra></extra>",
+        hovertemplate="<b>%{y}</b><br>%{fullData.name}: %{x:,}<extra></extra>",
     )
     render_selectable_chart(fig, "dashboard_no_answer_states", filter_key=DASHBOARD_AGENT_FILTER_KEY)
 
@@ -3231,7 +3238,14 @@ def _render_slicers(df, sales_col, time_col):
     substates = sorted([str(s) for s in df[sub_col].dropna().unique()]) if sub_col and sub_col in df.columns else []
     class_col = CLASSIFICATION_COL if CLASSIFICATION_COL in df.columns else None
     with st.expander("🎚️ فلاتر عرض لوحة التحكم", expanded=False):
-        st.caption("الفلاتر اختيارية؛ عند تركها كما هي سيتم عرض كل البيانات.")
+        head_left, head_right = st.columns([5, 1])
+        with head_left:
+            st.caption("اختار أي قيمة من القوائم لتصفية اللوحة؛ ترك القائمة فارغًا يعرض كل القيم.")
+        with head_right:
+            if st.button("↺ مسح الفلاتر", key="clear_dashboard_slicers_v2", use_container_width=True):
+                for key in ("dash_agent_filter_v2", "dash_substate_filter_v2", "dash_date_filter_v2", "dash_class_filter_v2"):
+                    st.session_state.pop(key, None)
+                st.rerun()
         c1, c2 = st.columns(2)
         with c1:
             selected_agents = st.multiselect("👤 المحصّلون", agents, default=[], key="dash_agent_filter_v2", placeholder="اتركه فارغًا لعرض كل المحصلين")

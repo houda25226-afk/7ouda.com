@@ -1860,7 +1860,7 @@ def render_activity_kpi_cards(total, success, agent_count, success_rate, wasted_
         figure.add_shape(
             type="path",
             path=_rounded_rect_path(x0, x1, 0.04, 0.96, radius=0.022),
-            xref="paper", yref="paper",
+            xref="paper", yref="paper", layer="below",
             fillcolor=THEME["surface"], line={"color": THEME["border"], "width": 1},
         )
         figure.add_trace(go.Indicator(
@@ -3221,7 +3221,6 @@ def _render_dashboard(df, class_col, sales_col, time_col, source_name, filter_hi
 
 
 def _render_slicers(df, sales_col, time_col):
-    st.subheader("🎚️ فلاتر عرض لوحة التحكم")
     agents = sorted([str(a) for a in df[sales_col].dropna().unique()]) if sales_col and sales_col in df.columns else []
     date_min = date_max = None
     if time_col and time_col in df.columns:
@@ -3231,25 +3230,23 @@ def _render_slicers(df, sales_col, time_col):
     sub_col = find_column(df, PROMISE_SUB_STATE_CANDIDATES)
     substates = sorted([str(s) for s in df[sub_col].dropna().unique()]) if sub_col and sub_col in df.columns else []
     class_col = CLASSIFICATION_COL if CLASSIFICATION_COL in df.columns else None
-    c1, c2, c3, c4 = st.columns(4)
-    with c1:
-        selected_agents = st.multiselect("👤 المحصّلون", agents, default=agents, key="dash_agent_filter")
-    with c2:
-        date_range = st.date_input("📅 التواريخ", value=(date_min, date_max) if date_min is not None else None, min_value=date_min, max_value=date_max, key="dash_date_filter") if date_min is not None else None
-    with c3:
-        class_options = {"ناجحة (1)": 1, "غير ناجحة (0)": 0, "الكل": None}
-        selected_class = st.radio("🏷️ التصنيف", list(class_options.keys()), index=2, key="dash_class_filter", horizontal=True)
-    with c4:
-        selected_substates = st.multiselect("📊 الحالة", substates, default=substates, key="dash_substate_filter") if substates else []
-    if sales_col and not selected_agents:
-        st.warning("لا توجد نتائج: اختر محصّلًا واحدًا على الأقل.")
-        return pd.DataFrame(columns=df.columns), ""
-    if sub_col and substates and not selected_substates:
-        st.warning("لا توجد نتائج: اختر حالة واحدة على الأقل.")
-        return pd.DataFrame(columns=df.columns), ""
+    with st.expander("🎚️ فلاتر عرض لوحة التحكم", expanded=False):
+        st.caption("الفلاتر اختيارية؛ عند تركها كما هي سيتم عرض كل البيانات.")
+        c1, c2 = st.columns(2)
+        with c1:
+            selected_agents = st.multiselect("👤 المحصّلون", agents, default=[], key="dash_agent_filter_v2", placeholder="اتركه فارغًا لعرض كل المحصلين")
+        with c2:
+            selected_substates = st.multiselect("📊 الحالات الفرعية", substates, default=[], key="dash_substate_filter_v2", placeholder="اتركه فارغًا لعرض كل الحالات") if substates else []
+        c3, c4 = st.columns(2)
+        with c3:
+            date_range = st.date_input("📅 نطاق التواريخ", value=(date_min, date_max) if date_min is not None else None, min_value=date_min, max_value=date_max, key="dash_date_filter_v2") if date_min is not None else None
+        with c4:
+            class_options = {"ناجحة (1)": 1, "غير ناجحة (0)": 0, "الكل": None}
+            selected_class = st.radio("🏷️ التصنيف", list(class_options.keys()), index=2, key="dash_class_filter_v2", horizontal=True)
+    # القائمة الفارغة تعني عرض الكل، وده يمنع ازدحام الواجهة بوسوم كل المحصلين والحالات.
     filtered = df.copy()
     hint_parts = []
-    if sales_col and selected_agents != agents:
+    if sales_col and selected_agents:
         filtered = filtered[filtered[sales_col].astype(str).isin(selected_agents)]
         hint_parts.append(f"المحصّلون: {len(selected_agents)} من {len(agents)}")
     if time_col and isinstance(date_range, tuple) and len(date_range) == 2:
@@ -3261,9 +3258,9 @@ def _render_slicers(df, sales_col, time_col):
     if class_col and class_options[selected_class] is not None:
         filtered = filtered[filtered[class_col] == class_options[selected_class]]
         hint_parts.append(f"التصنيف: {selected_class}")
-    if sub_col and selected_substates != substates:
+    if sub_col and substates and selected_substates:
         filtered = filtered[filtered[sub_col].astype(str).isin(selected_substates)]
-        hint_parts.append(f"الحالة: {len(selected_substates)} من {len(substates)}")
+        hint_parts.append(f"الحالات: {len(selected_substates)} من {len(substates)}")
     return filtered, " · ".join(hint_parts)
 
 

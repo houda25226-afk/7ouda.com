@@ -88,6 +88,41 @@ NEGLECT_SUB_STATES_DEFAULT = [
 
 NEGLECT_LAST_DATE_CANDIDATES = ["Follow up Last Date", "follow up last date", "Last Follow Up", "تاريخ آخر متابعة"]
 NEGLECT_RESULT_KEY = "neglect_result"
+APP_DATA_CACHE_KEY = "app_uploaded_data_cache"
+DASHBOARD_SOURCE_HASH_KEY = "dashboard_source_hash"
+
+
+def uploaded_file_hash(uploaded_file):
+    if uploaded_file is None:
+        return None
+    return hashlib.sha256(uploaded_file.getvalue()).hexdigest()
+
+
+def _clear_cached_results(result_keys):
+    for key in result_keys:
+        if key.startswith("period_results:"):
+            period_key = key.split(":", 1)[1]
+            st.session_state.setdefault("period_results", {}).pop(period_key, None)
+        elif key == "dashboard_source":
+            st.session_state.pop(DASHBOARD_SOURCE_KEY, None)
+            st.session_state.pop(DASHBOARD_SOURCE_HASH_KEY, None)
+        else:
+            st.session_state.pop(key, None)
+
+
+def sync_file_cache(widget_key, cache_scope, result_keys):
+    """يحافظ على النتائج عبر rerun ويمسحها فقط عند إزالة الملف أو تغييره."""
+    uploaded = st.session_state.get(widget_key)
+    cache = st.session_state.setdefault(APP_DATA_CACHE_KEY, {})
+    previous = cache.get(cache_scope)
+    if uploaded is None:
+        _clear_cached_results(result_keys)
+        cache.pop(cache_scope, None)
+        return
+    current_hash = uploaded_file_hash(uploaded)
+    if previous and previous.get("file_hash") != current_hash:
+        _clear_cached_results(result_keys)
+    cache[cache_scope] = {"file_hash": current_hash, "filename": uploaded.name}
 
 def init_neglect_state():
     if "neglect_sub_states" not in st.session_state:
@@ -365,6 +400,8 @@ def page_standing_promises():
         "📂 ارفع ملف المحفظة (Excel أو CSV)",
         type=["xlsx", "xls", "csv"],
         key="promises_portfolio_upload",
+        on_change=sync_file_cache,
+        args=("promises_portfolio_upload", "promises", (PROMISES_RESULT_KEY,)),
     )
 
     if uploaded is not None:
@@ -400,6 +437,8 @@ def page_broken_promises():
         "📂 ارفع ملف المحفظة (Excel أو CSV)",
         type=["xlsx", "xls", "csv"],
         key="broken_portfolio_upload",
+        on_change=sync_file_cache,
+        args=("broken_portfolio_upload", "broken_promises", (BROKEN_RESULT_KEY,)),
     )
 
     if uploaded is not None:
@@ -1418,7 +1457,13 @@ def render_period_selector():
 
 
 def render_period_upload_and_classify(period_key: str, period_title: str):
-    uploaded_file = st.file_uploader(f"📂 ارفع ملف {period_title} (CSV أو Excel)", type=["csv", "xlsx", "xls"], key=f"upload_{period_key}")
+    uploaded_file = st.file_uploader(
+        f"📂 ارفع ملف {period_title} (CSV أو Excel)",
+        type=["csv", "xlsx", "xls"],
+        key=f"upload_{period_key}",
+        on_change=sync_file_cache,
+        args=(f"upload_{period_key}", f"period_upload:{period_key}", (f"period_results:{period_key}",)),
+    )
     if uploaded_file is not None:
         st.caption(f"الملف المختار: {uploaded_file.name}")
         classify_period_file(uploaded_file, period_key)
@@ -1485,7 +1530,8 @@ def classify_period_file(uploaded_file, period_key):
 
     # 💾 لو الفترة دي اتصنّفت قبل كده والنتيجة لسه في الذاكرة — نعرضها من الكاش من غير إعادة قراءة أو تصنيف
     stored = st.session_state["period_results"].get(period_key)
-    if stored and stored.get("uploaded_filename") == uploaded_file.name:
+    current_file_hash = uploaded_file_hash(uploaded_file)
+    if stored and stored.get("uploaded_hash") == current_file_hash:
         st.success(f"تم تصنيف {period_title} بنجاح ✅ — {len(stored['df']):,} مكالمة")
         _render_period_results(stored, period_key)
         return
@@ -1567,7 +1613,8 @@ def classify_period_file(uploaded_file, period_key):
             "duplicate_stats": duplicate_stats,
             "company": st.session_state["selected_company"],
             "period_title": period_title,
-            "uploaded_filename": uploaded_file.name,  # 💾 اسم الملف لـ نربط الكاش بالملف اللي اتشال
+            "uploaded_filename": uploaded_file.name,
+            "uploaded_hash": current_file_hash,
         }
         st.session_state["last_result_df"] = result_df
         st.session_state["last_sales_col"] = sales_col
@@ -1912,7 +1959,13 @@ def _render_aggregate_break_settings(period_key, period_title):
 def render_aggregate_tab(period_key, period_title):
     company = st.session_state["selected_company"]
     _render_aggregate_break_settings(period_key, period_title)
-    uploaded_file = st.file_uploader(f"📂 ارفع ملف {period_title} (CSV أو Excel)", type=["csv", "xlsx", "xls"], key=f"upload_{period_key}")
+    uploaded_file = st.file_uploader(
+        f"📂 ارفع ملف {period_title} (CSV أو Excel)",
+        type=["csv", "xlsx", "xls"],
+        key=f"upload_{period_key}",
+        on_change=sync_file_cache,
+        args=(f"upload_{period_key}", f"period_upload:{period_key}", (f"{period_key}_result",)),
+    )
     if uploaded_file is not None:
         st.caption(f"الملف المختار: {uploaded_file.name}")
         _classify_aggregate_file(uploaded_file, company, period_key, period_title)
@@ -1923,7 +1976,8 @@ def render_aggregate_tab(period_key, period_title):
 def _classify_aggregate_file(uploaded_file, company, period_key, period_title):
     result_key = f"{period_key}_result"
     stored = st.session_state.get(result_key)
-    if stored and stored.get("uploaded_filename") == uploaded_file.name:
+    current_file_hash = uploaded_file_hash(uploaded_file)
+    if stored and stored.get("uploaded_hash") == current_file_hash:
         _render_aggregate_results(stored, period_title)
         return
     try:
@@ -1966,6 +2020,7 @@ def _classify_aggregate_file(uploaded_file, company, period_key, period_title):
             "df": result_df, "sales_col": sales_col, "time_col": time_col,
             "claim_col": claim_col, "duplicate_stats": duplicate_stats,
             "company": company, "uploaded_filename": uploaded_file.name,
+            "uploaded_hash": current_file_hash,
         }
         st.rerun()
 
@@ -2135,6 +2190,8 @@ def page_neglect():
             "📂 ارفع ملف المحفظة (Excel أو CSV) لفلترة الإهمال",
             type=["xlsx", "xls", "csv"],
             key="neglect_upload",
+            on_change=sync_file_cache,
+            args=("neglect_upload", "neglect", (NEGLECT_RESULT_KEY,)),
         )
         if uploaded is not None:
             _run_neglect_pipeline(uploaded)
@@ -2147,9 +2204,21 @@ def page_neglect():
         st.info("💡 يطابق هذا الوضع تقرير إهمال قديمًا مع محفظة اليوم الحديثة لتحديد الحالات التي تمت متابعتها.")
         c1, c2 = st.columns(2)
         with c1:
-            new_portfolio = st.file_uploader("📂 ارفع محفظة اليوم الحديثة", type=["xlsx", "xls", "csv"], key="new_portfolio_up")
+            new_portfolio = st.file_uploader(
+                "📂 ارفع محفظة اليوم الحديثة",
+                type=["xlsx", "xls", "csv"],
+                key="new_portfolio_up",
+                on_change=sync_file_cache,
+                args=("new_portfolio_up", "neglect_followup_new", ("neglect_followup_result",)),
+            )
         with c2:
-            old_neglect = st.file_uploader("📂 ارفع تقرير الإهمال القديم", type=["xlsx", "xls", "csv"], key="old_neglect_up")
+            old_neglect = st.file_uploader(
+                "📂 ارفع تقرير الإهمال القديم",
+                type=["xlsx", "xls", "csv"],
+                key="old_neglect_up",
+                on_change=sync_file_cache,
+                args=("old_neglect_up", "neglect_followup_old", ("neglect_followup_result",)),
+            )
         
         if new_portfolio and old_neglect:
             if st.button("🚀 بدء المطابقة ومتابعة الإهمال", use_container_width=True, type="primary"):
@@ -2242,12 +2311,14 @@ def page_dashboard():
 
     # 💾 الكاش الشفاف: لو فيه داشبورد محفوظة لآخر ملف مرفوع — نعرضها من غير إعادة معالجة
     cached = st.session_state.get("dashboard_result")
-    current_source = st.session_state.get(DASHBOARD_SOURCE_KEY)
+    current_source_hash = st.session_state.get(DASHBOARD_SOURCE_HASH_KEY)
 
     dash_file = st.file_uploader(
         "📂 ارفع ملف النشاط المصنّف (بعد التصنيف) — CSV أو Excel",
         type=["csv", "xlsx", "xls"],
         key="dash_upload_v3",
+        on_change=sync_file_cache,
+        args=("dash_upload_v3", "dashboard", ("dashboard_result", "dashboard_source")),
     )
 
     if dash_file is None and cached is None:
@@ -2260,7 +2331,8 @@ def page_dashboard():
         return
 
     # 💾 لو الملف ده اتعرج قبل كده — نعرض الكاش من غير إعادة معالجة
-    if current_source == dash_file.name and cached is not None:
+    current_file_hash = uploaded_file_hash(dash_file)
+    if current_source_hash == current_file_hash and cached is not None:
         df_show, hint = _render_slicers(cached["df"], cached["sales_col"], cached["time_col"])
         _render_dashboard(df_show, cached["class_col"], cached["sales_col"],
                           cached["time_col"], dash_file.name, filter_hint=hint)
@@ -2284,9 +2356,11 @@ def page_dashboard():
 
     # 💾 نحفظ النتيجة في الكاش (شفاف — من غير أي كروت أو أزرار إضافية)
     st.session_state[DASHBOARD_SOURCE_KEY] = dash_file.name
+    st.session_state[DASHBOARD_SOURCE_HASH_KEY] = current_file_hash
     st.session_state["dashboard_result"] = {
         "df": df, "class_col": class_col, "sales_col": sales_col,
         "time_col": time_col, "source_name": dash_file.name,
+        "source_hash": current_file_hash,
     }
 
     # 🎚️ السلايسرز: فلتر المحصّلين + فلتر التواريخ (للعرض فقط — الكاش محفوظ)

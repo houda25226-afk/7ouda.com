@@ -1195,11 +1195,13 @@ COLOR_FAIL = THEMES[THEME_NAME]["danger"]
 COLOR_ACCENT = THEMES[THEME_NAME]["accent"]
 COLOR_WARN = THEMES[THEME_NAME]["warn"]
 CHART_COLORS = {"ناجحة": COLOR_SUCCESS, "غير ناجحة": COLOR_FAIL}
+# Palette النشاط: ثلاث عائلات لونية هادئة فقط بدرجات متقاربة.
 ACTIVITY_AGENT_PALETTE = [
-    "#6F9FB5", "#B07A87", "#B7A866", "#6E927A", "#8D7CAB", "#9C8067",
-    "#638A91", "#A86F7D", "#8A9A72", "#7F8EAB", "#A18E64", "#6B8F82",
+    "#2F6F73", "#477F82", "#628B8E", "#7D9A9D", "#98AEB2", "#B2C1C3",
+    "#5F7D8C", "#8095A2", "#A6B4B9",
 ]
-ACTIVITY_STATE_PALETTE = [COLOR_FAIL, COLOR_WARN, "#708090", "#866F96"]
+ACTIVITY_STATE_PALETTE = ["#2F6F73", "#628B8E", "#8095A2", "#A6B4B9"]
+ACTIVITY_OUTCOME_COLORS = {"ناجحة": "#2F6F73", "غير ناجحة": "#8095A2"}
 
 
 def _activity_agent_color_map(values):
@@ -1859,9 +1861,9 @@ def render_activity_kpi_cards(total, success, agent_count, success_rate, wasted_
     cards = [
         ("👥<br>عدد المحصّلين", agent_count, {"valueformat": ",d"}, THEME["text"]),
         ("📞<br>إجمالي المكالمات", total, {"valueformat": ",d"}, THEME["text"]),
-        ("✅<br>المكالمات الناجحة", success, {"valueformat": ",d"}, COLOR_SUCCESS),
-        ("📈<br>نسبة النجاح", success_rate, {"valueformat": ".1f", "suffix": "%"}, COLOR_ACCENT),
-        ("⏱️<br>إجمالي الوقت المهدر", wasted_minutes, {"valueformat": ".1f", "suffix": " دقيقة"}, COLOR_WARN),
+        ("✅<br>المكالمات الناجحة", success, {"valueformat": ",d"}, ACTIVITY_OUTCOME_COLORS["ناجحة"]),
+        ("📈<br>نسبة النجاح", success_rate, {"valueformat": ".1f", "suffix": "%"}, ACTIVITY_AGENT_PALETTE[1]),
+        ("⏱️<br>إجمالي الوقت المهدر", wasted_minutes, {"valueformat": ".1f", "suffix": " دقيقة"}, ACTIVITY_AGENT_PALETTE[3]),
     ]
     figure = go.Figure()
     gap = 0.014
@@ -1965,8 +1967,8 @@ def _render_activity_daily_chart(work, time_col, class_col=None):
     fig.add_trace(go.Scatter(
         x=daily_totals["اليوم"].astype(str), y=daily_totals["نسبة النجاح (%)"],
         name="نسبة النجاح", mode="lines+markers+text", text=daily_totals["نسبة النجاح (%)"].map(lambda value: f"{value:.1f}%"),
-        textposition="top center", line={"color": COLOR_ACCENT, "width": 3},
-        marker={"color": COLOR_ACCENT, "size": 9, "line": {"color": THEME["surface"], "width": 2}},
+        textposition="top center", line={"color": ACTIVITY_AGENT_PALETTE[0], "width": 3},
+        marker={"color": ACTIVITY_AGENT_PALETTE[0], "size": 9, "line": {"color": THEME["surface"], "width": 2}},
         yaxis="y2", customdata=[[""] for _ in range(len(daily_totals))],
         hovertemplate="<b>%{x}</b><br>نسبة النجاح: %{y:.1f}%<extra></extra>",
     ))
@@ -2025,7 +2027,7 @@ def _render_activity_outcome_donut(work, class_col):
     rate = success / len(work) * 100 if len(work) else 0
     fig = px.pie(
         donut_df, names="النتيجة", values="العدد", hole=0.62,
-        color="النتيجة", color_discrete_map=CHART_COLORS, template=PLOTLY_TEMPLATE,
+        color="النتيجة", color_discrete_map=ACTIVITY_OUTCOME_COLORS, template=PLOTLY_TEMPLATE,
     )
     fig.update_traces(
         textinfo="percent", textfont_size=15,
@@ -2157,10 +2159,10 @@ def build_dashboard_html(df, class_col, sales_col, time_col, source_name="", fil
     border = "#D9E2EC"
     text = "#1F2937"
     text_dim = "#526174"
-    export_success = "#2F7D65"
-    export_fail = "#B55B70"
-    export_accent = "#397B7D"
-    export_warn = "#997C3C"
+    export_success = "#2F6F73"
+    export_fail = "#8095A2"
+    export_accent = "#477F82"
+    export_warn = "#628B8E"
     export_template = "plotly_white"
     work = df.copy()
     if sales_col and sales_col in work.columns:
@@ -2242,14 +2244,14 @@ def build_dashboard_html(df, class_col, sales_col, time_col, source_name="", fil
         f'</div></div><label style="display:flex;flex-direction:column;gap:7px;color:{text_dim};font-size:13px"><span>🏷️ التصنيف</span><select id="filter-class" style="background:{background};color:{text};border:1px solid {border};border-radius:9px;padding:8px;font-size:13px"><option value="">الكل</option><option value="success">ناجحة</option><option value="failure">غير ناجحة</option></select></label>',
         f'<label style="display:flex;flex-direction:column;gap:7px;color:{text_dim};font-size:13px"><span>📅 من تاريخ</span><input id="filter-date-from" type="date" value="{export_date_min}" min="{export_date_min}" max="{export_date_max}" style="background:{background};color:{text};border:1px solid {border};border-radius:9px;padding:8px;font-size:13px"></label>',
         f'<label style="display:flex;flex-direction:column;gap:7px;color:{text_dim};font-size:13px"><span>📅 إلى تاريخ</span><input id="filter-date-to" type="date" value="{export_date_max}" min="{export_date_min}" max="{export_date_max}" style="background:{background};color:{text};border:1px solid {border};border-radius:9px;padding:8px;font-size:13px"></label>',
-        f'<div style="display:flex;gap:8px;align-items:end"><button id="reset-filters" type="button" style="flex:1;background:{COLOR_ACCENT};color:#fff;border:0;border-radius:9px;padding:8px;font-size:13px;cursor:pointer">↺ إعادة ضبط</button></div>',
+        f'<div style="display:flex;gap:8px;align-items:end"><button id="reset-filters" type="button" style="flex:1;background:{export_accent};color:#fff;border:0;border-radius:9px;padding:8px;font-size:13px;cursor:pointer">↺ إعادة ضبط</button></div>',
         '</section><div id="filter-status" style="text-align:center;color:' + text_dim + ';font-size:12px;margin-top:12px">عرض كل البيانات</div></section>',
         '<section id="kpi-grid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:14px;margin-bottom:18px">',
         metric_card("kpi-agents", "👥 عدد المحصلين", f"{agent_count:,}", text),
         metric_card("kpi-total", "📞 إجمالي المكالمات", f"{total:,}", text),
-        metric_card("kpi-success", "✅ المكالمات الناجحة", f"{success:,}", COLOR_SUCCESS),
-        metric_card("kpi-rate", "📈 نسبة النجاح", f"{rate:.1f}%", COLOR_ACCENT),
-        metric_card("kpi-wasted", "⏱️ إجمالي الوقت المهدر", f"{wasted:,.1f} دقيقة", COLOR_WARN),
+        metric_card("kpi-success", "✅ المكالمات الناجحة", f"{success:,}", export_success),
+        metric_card("kpi-rate", "📈 نسبة النجاح", f"{rate:.1f}%", export_accent),
+        metric_card("kpi-wasted", "⏱️ إجمالي الوقت المهدر", f"{wasted:,.1f} دقيقة", export_warn),
         '</section>',
     ])
 
@@ -2297,7 +2299,7 @@ def build_dashboard_html(df, class_col, sales_col, time_col, source_name="", fil
                 state_counts[state_name] = 0
         state_counts = state_counts.reindex(columns=ACTIVITY_NO_ANSWER_STATES, fill_value=0).reset_index().rename(columns={"_agent_display":"المحصّل"})
         state_long = state_counts.melt(id_vars=["المحصّل"], var_name="الحالة", value_name="العدد")
-        no_fig = px.bar(state_long, x="العدد", y="المحصّل", orientation="h", color="الحالة", barmode="stack", text_auto=True, template=export_template, category_orders={"الحالة":ACTIVITY_NO_ANSWER_STATES}, color_discrete_sequence=[export_fail, export_warn, "#708090", "#866F96"])
+        no_fig = px.bar(state_long, x="العدد", y="المحصّل", orientation="h", color="الحالة", barmode="stack", text_auto=True, template=export_template, category_orders={"الحالة":ACTIVITY_NO_ANSWER_STATES}, color_discrete_sequence=[export_success, export_accent, export_warn, "#A6B4B9"])
         no_fig.update_layout(**_activity_layout(title="📵 حالات لا يرد لكل محصل", title_x=0.5, xaxis_title="عدد الحالات", yaxis_title="", height=430, margin={"t":68,"b":80,"l":105,"r":20}, legend={"orientation":"h","y":-0.18,"x":0.5,"xanchor":"center"}, yaxis={"categoryorder":"total ascending"}))
         no_fig.update_traces(hovertemplate="<b>%{y}</b><br>%{fullData.name}: %{x:,}<extra></extra>")
         figs.append(("📵 تحليل حالات Sub State", no_fig))

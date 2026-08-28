@@ -3505,7 +3505,8 @@ def _render_native_multi_slicer(label, options, state_key, empty_label):
     widget_keys = [f"{state_key}__{index}" for index in range(len(options))]
     selected = [option for option, widget_key in zip(options, widget_keys) if st.session_state.get(widget_key, False)]
     trigger_text = empty_label if not selected else f"تم اختيار {len(selected)}"
-    with st.popover(f"{label} · {trigger_text}", use_container_width=True):
+    st.caption(label)
+    with st.popover(trigger_text, use_container_width=True):
         action_all, action_clear = st.columns(2)
         with action_all:
             if st.button("تحديد الكل", key=f"{state_key}__select_all", use_container_width=True):
@@ -3555,16 +3556,18 @@ def _render_slicers(df, sales_col, time_col):
             _clear_dashboard_chart_filter()
             st.rerun()
 
-    f1, f2, f3, f4 = st.columns(4, gap="small")
-    with f1:
+    agent_col, state_col = st.columns(2, gap="small")
+    with agent_col:
         selected_agents = _render_native_multi_slicer(
             "👤 المحصلون", agents, "dash_agent_slicer_v6", "كل المحصلين"
         )
-    with f2:
+    with state_col:
         selected_substates = _render_native_multi_slicer(
             "📊 الحالات الفرعية", substates, "dash_state_slicer_v6", "كل الحالات"
         ) if substates else []
-    with f3:
+
+    date_col, class_col_view = st.columns(2, gap="small")
+    with date_col:
         date_range = st.date_input(
             "📅 التاريخ",
             value=(date_min, date_max) if date_min is not None else None,
@@ -3572,7 +3575,7 @@ def _render_slicers(df, sales_col, time_col):
             max_value=date_max,
             key="dash_date_slicer_v5",
         ) if date_min is not None else None
-    with f4:
+    with class_col_view:
         selected_class = st.selectbox(
             "🏷️ التصنيف",
             class_labels,

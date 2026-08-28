@@ -1972,7 +1972,7 @@ def _render_activity_daily_chart(work, time_col, class_col=None):
     ))
     fig.update_layout(**_activity_layout(
         title="📊 Combo Chart يومي: المكالمات ونسبة النجاح", title_x=0.5,
-        xaxis_title="اليوم", yaxis_title="عدد المكالمات", height=500, bargap=0.18,
+        xaxis_title="اليوم", yaxis_title="عدد المكالمات", height=470, bargap=0.18,
         legend_title_text="", hovermode="x unified",
         legend={"orientation": "h", "yanchor": "top", "y": -0.20, "x": 0.5, "xanchor": "center"},
         margin={"t": 82, "b": 110, "l": 55, "r": 65},
@@ -2033,7 +2033,7 @@ def _render_activity_outcome_donut(work, class_col):
         hovertemplate="<b>%{label}</b><br>العدد: %{value:,}<br>النسبة: %{percent}<extra></extra>",
     )
     fig.update_layout(**_activity_layout(
-        title="🎯 الناجحة مقابل غير الناجحة", title_x=0.5, height=450,
+        title="🎯 الناجحة مقابل غير الناجحة", title_x=0.5, height=470,
         legend={"orientation": "h", "yanchor": "top", "y": -0.12, "x": 0.5, "xanchor": "center"},
         margin={"t": 72, "b": 82, "l": 20, "r": 20},
         annotations=[{"text": f"{rate:.1f}%<br>نجاح", "x": 0.5, "y": 0.5, "font": {"size": 22, "color": COLOR_SUCCESS}, "showarrow": False}],
@@ -2228,7 +2228,7 @@ def build_dashboard_html(df, class_col, sales_col, time_col, source_name="", fil
         '</header>',
         f'<section style="background:{surface};border:1px solid {border};border-radius:16px;padding:18px 20px;margin-bottom:24px">',
         f'<h2 style="margin:0 0 14px;text-align:center;font-size:20px;color:{text}">🎚️ فلاتر التقرير التفاعلية</h2>',
-        '<section id="interactive-filters" style="display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:12px;align-items:end">',
+        '<section id="interactive-filters" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:14px;align-items:end">',
         f'<div style="position:relative;display:flex;flex-direction:column;gap:7px;color:{text_dim};font-size:13px"><span>👤 المحصلون</span><button type="button" class="multi-trigger" data-target="agent-menu" style="background:{background};color:{text};border:1px solid {border};border-radius:9px;padding:11px;font-size:14px;text-align:right;cursor:pointer"><span id="agent-label">كل المحصلين</span>⌄</button><div id="agent-menu" class="multi-menu" style="display:none;position:absolute;z-index:20;top:74px;right:0;left:0;background:#FFFFFF;color:{text};border:1px solid {border};border-radius:10px;padding:8px;box-shadow:0 10px 24px rgba(15,23,42,.16);max-height:230px;overflow-y:auto"><label style="display:block;padding:8px;border-bottom:1px solid {border};font-weight:700"><input type="checkbox" class="select-all-agent"> كل المحصلين</label>',
     ])
     for value in agent_options:
@@ -2244,7 +2244,7 @@ def build_dashboard_html(df, class_col, sales_col, time_col, source_name="", fil
         f'<label style="display:flex;flex-direction:column;gap:7px;color:{text_dim};font-size:13px"><span>📅 إلى تاريخ</span><input id="filter-date-to" type="date" value="{export_date_max}" min="{export_date_min}" max="{export_date_max}" style="background:{background};color:{text};border:1px solid {border};border-radius:9px;padding:10px;font-size:14px"></label>',
         f'<div style="display:flex;gap:8px;align-items:end"><button id="reset-filters" type="button" style="flex:1;background:{COLOR_ACCENT};color:#fff;border:0;border-radius:9px;padding:11px;font-size:14px;cursor:pointer">↺ إعادة ضبط</button></div>',
         '</section><div id="filter-status" style="text-align:center;color:' + text_dim + ';font-size:12px;margin-top:12px">عرض كل البيانات</div></section>',
-        '<section id="kpi-grid" style="display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:14px;margin-bottom:24px">',
+        '<section id="kpi-grid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:14px;margin-bottom:24px">',
         metric_card("kpi-agents", "👥 عدد المحصلين", f"{agent_count:,}", text),
         metric_card("kpi-total", "📞 إجمالي المكالمات", f"{total:,}", text),
         metric_card("kpi-success", "✅ المكالمات الناجحة", f"{success:,}", COLOR_SUCCESS),
@@ -2302,11 +2302,11 @@ def build_dashboard_html(df, class_col, sales_col, time_col, source_name="", fil
         no_fig.update_traces(hovertemplate="<b>%{y}</b><br>%{fullData.name}: %{x:,}<extra></extra>")
         figs.append(("📵 تحليل حالات Sub State", no_fig))
 
-    parts.append('<section style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:18px">')
+    parts.append('<section style="display:grid;grid-template-columns:repeat(auto-fit,minmax(460px,1fr));gap:18px">')
     include_js = True
     for index, (heading, fig) in enumerate(figs):
         parts.append(f'<article id="chart-card-{index}" style="background:{surface};border:1px solid {border};border-radius:16px;padding:10px 14px 4px;min-width:0"><h2 style="font-size:17px;margin:8px 10px;color:{text};text-align:center">{heading}</h2>')
-        parts.append(pio.to_html(fig, full_html=False, include_plotlyjs=include_js, config=PLOTLY_CONFIG, div_id=f"activity_plot_{index}", default_width="100%", default_height=f"{fig.layout.height or 430}px"))
+        parts.append(pio.to_html(fig, full_html=False, include_plotlyjs=include_js, config=PLOTLY_CONFIG, div_id=f"activity_plot_{index}", default_width="100%", default_height=f"{max(fig.layout.height or 430, 450)}px"))
         parts.append('</article>')
         include_js = False
     parts.append('</section>')
@@ -3557,17 +3557,17 @@ def _render_slicers(df, sales_col, time_col):
 
     f1, f2, f3, f4 = st.columns(4)
     with f1:
-        with st.container(border=True):
+        with st.container(border=True, height=138):
             selected_agents = _render_native_multi_slicer(
                 "👤 المحصلون", agents, "dash_agent_slicer_v6", "كل المحصلين"
             )
     with f2:
-        with st.container(border=True):
+        with st.container(border=True, height=138):
             selected_substates = _render_native_multi_slicer(
                 "📊 الحالات الفرعية", substates, "dash_state_slicer_v6", "كل الحالات"
             ) if substates else []
     with f3:
-        with st.container(border=True):
+        with st.container(border=True, height=138):
             date_range = st.date_input(
                 "📅 التاريخ",
                 value=(date_min, date_max) if date_min is not None else None,
@@ -3576,7 +3576,7 @@ def _render_slicers(df, sales_col, time_col):
                 key="dash_date_slicer_v5",
             ) if date_min is not None else None
     with f4:
-        with st.container(border=True):
+        with st.container(border=True, height=138):
             selected_class = st.selectbox(
                 "🏷️ التصنيف",
                 class_labels,

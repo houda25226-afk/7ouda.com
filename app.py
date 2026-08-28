@@ -1997,6 +1997,8 @@ def _render_activity_hourly_chart(work, time_col):
         st.info("لا توجد أوقات صالحة لعرض النشاط الساعي.")
         return
     trend["الساعة"] = trend["_activity_time"].dt.hour
+    hour_min = int(trend["الساعة"].min())
+    hour_max = int(trend["الساعة"].max())
     hourly = trend.groupby(["الساعة", "_agent_display"], as_index=False).size().rename(columns={"size": "عدد المكالمات"})
     fig = px.bar(
         hourly, x="الساعة", y="عدد المكالمات", color="_agent_display", barmode="stack",
@@ -2005,7 +2007,7 @@ def _render_activity_hourly_chart(work, time_col):
     )
     fig.update_layout(**_activity_layout(
         title="🕒 Histogram ساعي لنشاط المحصلين", title_x=0.5, xaxis_title="ساعة اليوم", yaxis_title="عدد المكالمات",
-        xaxis={"dtick": 1, "range": [-0.5, 23.5]}, height=400, bargap=0.06, legend_title_text="",
+        xaxis={"dtick": 1, "tickvals": list(range(hour_min, hour_max + 1)), "range": [max(-0.5, hour_min - 0.5), min(23.5, hour_max + 0.5)]}, height=400, bargap=0.06, legend_title_text="",
         legend={"orientation": "h", "yanchor": "top", "y": -0.16, "x": 0.5, "xanchor": "center"},
         margin={"t": 62, "b": 78, "l": 50, "r": 16},
     ))
@@ -2284,9 +2286,11 @@ def build_dashboard_html(df, class_col, sales_col, time_col, source_name="", fil
             figs.append(("📊 Combo Chart النشاط اليومي", day_fig))
 
             timed["الساعة"] = timed["_activity_time"].dt.hour
+            hour_min = int(timed["الساعة"].min())
+            hour_max = int(timed["الساعة"].max())
             hourly = timed.groupby(["الساعة", "_agent_display"], as_index=False).size().rename(columns={"size":"عدد المكالمات"})
             hour_fig = px.bar(hourly, x="الساعة", y="عدد المكالمات", color="_agent_display", barmode="stack", text_auto=True, custom_data=["_agent_display"], template=export_template, labels={"_agent_display":"المحصل"}, color_discrete_sequence=ACTIVITY_AGENT_PALETTE)
-            hour_fig.update_layout(**_activity_layout(title="🕒 Histogram ساعي لنشاط المحصلين", title_x=0.5, xaxis_title="ساعة اليوم", yaxis_title="عدد المكالمات", height=430, bargap=0.08, margin={"t":68,"b":95,"l":55,"r":20}, xaxis={"dtick":1,"range":[-0.5,23.5]}, legend={"orientation":"h","y":-0.2,"x":0.5,"xanchor":"center"}))
+            hour_fig.update_layout(**_activity_layout(title="🕒 Histogram ساعي لنشاط المحصلين", title_x=0.5, xaxis_title="ساعة اليوم", yaxis_title="عدد المكالمات", height=430, bargap=0.08, margin={"t":68,"b":95,"l":55,"r":20}, xaxis={"dtick":1,"tickvals":list(range(hour_min, hour_max + 1)),"range":[max(-0.5, hour_min - 0.5), min(23.5, hour_max + 0.5)]}, legend={"orientation":"h","y":-0.2,"x":0.5,"xanchor":"center"}))
             hour_fig.update_traces(marker_line_width=0, hovertemplate="<b>الساعة %{x}:00</b><br>%{fullData.name}: %{y:,} مكالمة<extra></extra>")
             figs.append(("🕒 Histogram النشاط الساعي", hour_fig))
 

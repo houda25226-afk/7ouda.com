@@ -2223,12 +2223,12 @@ def build_dashboard_html(df, class_col, sales_col, time_col, source_name="", fil
         f'<section style="background:{surface};border:1px solid {border};border-radius:16px;padding:18px 20px;margin-bottom:24px">',
         f'<h2 style="margin:0 0 14px;text-align:center;font-size:20px;color:{text}">🎚️ فلاتر التقرير التفاعلية</h2>',
         '<section id="interactive-filters" style="display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:12px;align-items:end">',
-        f'<label style="display:flex;flex-direction:column;gap:7px;color:{text_dim};font-size:13px"><span>👤 المحصل</span><select id="filter-agent" style="background:{background};color:{text};border:1px solid {border};border-radius:9px;padding:11px;font-size:14px"><option value="">كل المحصلين</option>',
+        f'<label style="display:flex;flex-direction:column;gap:7px;color:{text_dim};font-size:13px"><span>👤 المحصل</span><select id="filter-agent" multiple size="4" style="background:{background};color:{text};border:1px solid {border};border-radius:9px;padding:11px;font-size:14px"><option value="">كل المحصلين</option>',
     ])
     for value in agent_options:
         parts.append(f'<option value="{escape(value, quote=True)}">{escape(value)}</option>')
     parts.extend([
-        f'</select></label><label style="display:flex;flex-direction:column;gap:7px;color:{text_dim};font-size:13px"><span>📊 الحالة الفرعية</span><select id="filter-state" style="background:{background};color:{text};border:1px solid {border};border-radius:9px;padding:11px;font-size:14px"><option value="">كل الحالات</option>',
+        f'</select></label><label style="display:flex;flex-direction:column;gap:7px;color:{text_dim};font-size:13px"><span>📊 الحالة الفرعية</span><select id="filter-state" multiple size="4" style="background:{background};color:{text};border:1px solid {border};border-radius:9px;padding:11px;font-size:14px"><option value="">كل الحالات</option>',
     ])
     for value in state_options:
         parts.append(f'<option value="{escape(value, quote=True)}">{escape(value)}</option>')
@@ -2334,12 +2334,13 @@ const donutPlot = document.getElementById('activity_plot_0');
 const statePlot = document.getElementById('activity_plot_3');
 const fmt = n => Number(n || 0).toLocaleString('en-US');
 function selectedRows() {
-  const agent = document.getElementById('filter-agent').value;
-  const state = document.getElementById('filter-state').value;
+  const values = id => [...document.getElementById(id).selectedOptions].map(option => option.value).filter(Boolean);
+  const agent = values('filter-agent');
+  const state = values('filter-state');
   const cls = document.getElementById('filter-class').value;
   const from = document.getElementById('filter-date-from').value;
   const to = document.getElementById('filter-date-to').value;
-  return activityData.filter(row => (!agent || row.agent === agent) && (!state || row.state === state) && (!cls || (cls === 'success' ? row.success : !row.success)) && (!from || !row.time || row.time.slice(0,10) >= from) && (!to || !row.time || row.time.slice(0,10) <= to));
+  return activityData.filter(row => ((!agent.length) || agent.includes(row.agent)) && ((!state.length) || state.includes(row.state)) && (!cls || (cls === 'success' ? row.success : !row.success)) && (!from || !row.time || row.time.slice(0,10) >= from) && (!to || !row.time || row.time.slice(0,10) <= to));
 }
 function setKpi(id, value) { const el = document.querySelector('#' + id + ' [data-role=value]'); if (el) el.textContent = value; }
 function refreshDashboard() {
@@ -2361,7 +2362,7 @@ function refreshDashboard() {
   if (statePlot) Plotly.react(statePlot, stateTraces, {...statePlot.layout, barmode:'stack'});
 }
 ['filter-agent','filter-state','filter-class','filter-date-from','filter-date-to'].forEach(id => document.getElementById(id)?.addEventListener('change', refreshDashboard));
-document.getElementById('reset-filters')?.addEventListener('click', () => { document.getElementById('filter-agent').value=''; document.getElementById('filter-state').value=''; document.getElementById('filter-class').value=''; document.getElementById('filter-date-from').value='__DATE_MIN__'; document.getElementById('filter-date-to').value='__DATE_MAX__'; refreshDashboard(); });
+document.getElementById('reset-filters')?.addEventListener('click', () => { ['filter-agent','filter-state'].forEach(id => [...document.getElementById(id).options].forEach(option => option.selected=false)); document.getElementById('filter-class').value=''; document.getElementById('filter-date-from').value='__DATE_MIN__'; document.getElementById('filter-date-to').value='__DATE_MAX__'; refreshDashboard(); });
 refreshDashboard();
 </script>
 """.replace('__ACTIVITY_DATA__', raw_records_json).replace('__AGENT_COLORS__', agent_color_json).replace('__STATE_COLORS__', state_color_json).replace('__ACCENT__', json.dumps(COLOR_ACCENT)).replace('__SUCCESS__', json.dumps(COLOR_SUCCESS)).replace('__FAIL__', json.dumps(COLOR_FAIL)).replace('__DATE_MIN__', export_date_min).replace('__DATE_MAX__', export_date_max)
@@ -3501,8 +3502,8 @@ def _render_slicers(df, sales_col, time_col):
         st.subheader("🎚️ فلاتر التحليل")
         st.caption("كل فلتر مستقل؛ اترك الاختيار على «الكل» لعرض كل البيانات.")
     with action_col:
-        if st.button("↺ إعادة ضبط", key="clear_dashboard_slicers_v4", use_container_width=True):
-            for key in ("dash_agent_slicer_v3", "dash_state_slicer_v3", "dash_date_slicer_v3", "dash_class_slicer_v4"):
+        if st.button("↺ إعادة ضبط", key="clear_dashboard_slicers_v5", use_container_width=True):
+            for key in ("dash_agent_slicer_v5", "dash_state_slicer_v5", "dash_date_slicer_v5", "dash_class_slicer_v5"):
                 st.session_state.pop(key, None)
             _clear_dashboard_chart_filter()
             st.rerun()
@@ -3510,19 +3511,23 @@ def _render_slicers(df, sales_col, time_col):
     f1, f2, f3, f4 = st.columns(4)
     with f1:
         with st.container(border=True):
-            agent_choice = st.selectbox(
-                "👤 المحصل",
-                [all_agent_label] + agents,
-                key="dash_agent_slicer_v3",
+            selected_agents = st.multiselect(
+                "👤 المحصلون",
+                agents,
+                default=[],
+                placeholder="كل المحصلين",
+                key="dash_agent_slicer_v5",
                 on_change=_clear_dashboard_chart_filter,
             )
     with f2:
         with st.container(border=True):
-            state_choice = st.selectbox(
-                "📊 الحالة الفرعية",
-                [all_state_label] + substates,
-                key="dash_state_slicer_v3",
-            ) if substates else all_state_label
+            selected_substates = st.multiselect(
+                "📊 الحالات الفرعية",
+                substates,
+                default=[],
+                placeholder="كل الحالات",
+                key="dash_state_slicer_v5",
+            ) if substates else []
     with f3:
         with st.container(border=True):
             date_range = st.date_input(
@@ -3530,7 +3535,7 @@ def _render_slicers(df, sales_col, time_col):
                 value=(date_min, date_max) if date_min is not None else None,
                 min_value=date_min,
                 max_value=date_max,
-                key="dash_date_slicer_v3",
+                key="dash_date_slicer_v5",
             ) if date_min is not None else None
     with f4:
         with st.container(border=True):
@@ -3538,17 +3543,17 @@ def _render_slicers(df, sales_col, time_col):
                 "🏷️ التصنيف",
                 class_labels,
                 index=0,
-                key="dash_class_slicer_v4",
+                key="dash_class_slicer_v5",
             )
 
-    selected_agents = [] if agent_choice == all_agent_label else [agent_choice]
-    selected_substates = [] if state_choice == all_state_label else [state_choice]
+    selected_agents = [str(agent) for agent in selected_agents]
+    selected_substates = [str(state) for state in selected_substates]
     date_summary = "كل التواريخ"
     if isinstance(date_range, tuple) and len(date_range) == 2:
         date_summary = f"{date_range[0]} إلى {date_range[1]}"
     st.session_state["dashboard_filter_summary"] = {
-        "المحصل": agent_choice,
-        "الحالة الفرعية": state_choice,
+        "المحصل": "كل المحصلين" if not selected_agents else ", ".join(selected_agents),
+        "الحالة الفرعية": "كل الحالات" if not selected_substates else ", ".join(selected_substates),
         "التاريخ": date_summary,
         "التصنيف": selected_class,
     }
@@ -3556,7 +3561,7 @@ def _render_slicers(df, sales_col, time_col):
     hint_parts = []
     if sales_col and selected_agents:
         filtered = filtered[filtered[sales_col].astype(str).isin(selected_agents)]
-        hint_parts.append(f"المحصل: {agent_choice}")
+        hint_parts.append(f"المحصلون: {', '.join(selected_agents)}")
     if time_col and isinstance(date_range, tuple) and len(date_range) == 2:
         d0, d1 = date_range
         if d0 != date_min or d1 != date_max:
@@ -3568,7 +3573,7 @@ def _render_slicers(df, sales_col, time_col):
         hint_parts.append(f"التصنيف: {selected_class}")
     if sub_col and selected_substates:
         filtered = filtered[filtered[sub_col].astype(str).isin(selected_substates)]
-        hint_parts.append(f"الحالة: {state_choice}")
+        hint_parts.append(f"الحالات: {', '.join(selected_substates)}")
     return filtered, " · ".join(hint_parts)
 
 

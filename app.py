@@ -1972,10 +1972,10 @@ def _render_activity_daily_chart(work, time_col, class_col=None):
     ))
     fig.update_layout(**_activity_layout(
         title="📊 Combo Chart يومي: المكالمات ونسبة النجاح", title_x=0.5,
-        xaxis_title="اليوم", yaxis_title="عدد المكالمات", height=470, bargap=0.18,
+        xaxis_title="اليوم", yaxis_title="عدد المكالمات", height=400, bargap=0.14,
         legend_title_text="", hovermode="x unified",
-        legend={"orientation": "h", "yanchor": "top", "y": -0.20, "x": 0.5, "xanchor": "center"},
-        margin={"t": 82, "b": 110, "l": 55, "r": 65},
+        legend={"orientation": "h", "yanchor": "top", "y": -0.16, "x": 0.5, "xanchor": "center"},
+        margin={"t": 62, "b": 78, "l": 50, "r": 55},
         xaxis={"type": "category", "categoryorder": "array", "categoryarray": ordered_days, "tickangle": -25},
         yaxis={"title": "عدد المكالمات", "rangemode": "tozero"},
         yaxis2={"title": "نسبة النجاح (%)", "overlaying": "y", "side": "right", "range": [0, 100], "ticksuffix": "%", "showgrid": False},
@@ -2003,9 +2003,9 @@ def _render_activity_hourly_chart(work, time_col):
     )
     fig.update_layout(**_activity_layout(
         title="🕒 Histogram ساعي لنشاط المحصلين", title_x=0.5, xaxis_title="ساعة اليوم", yaxis_title="عدد المكالمات",
-        xaxis={"dtick": 1, "range": [-0.5, 23.5]}, height=470, bargap=0.08, legend_title_text="",
-        legend={"orientation": "h", "yanchor": "top", "y": -0.22, "x": 0.5, "xanchor": "center"},
-        margin={"t": 72, "b": 105, "l": 55, "r": 20},
+        xaxis={"dtick": 1, "range": [-0.5, 23.5]}, height=400, bargap=0.06, legend_title_text="",
+        legend={"orientation": "h", "yanchor": "top", "y": -0.16, "x": 0.5, "xanchor": "center"},
+        margin={"t": 62, "b": 78, "l": 50, "r": 16},
     ))
     fig.update_traces(
         marker_line_width=0,
@@ -2033,9 +2033,9 @@ def _render_activity_outcome_donut(work, class_col):
         hovertemplate="<b>%{label}</b><br>العدد: %{value:,}<br>النسبة: %{percent}<extra></extra>",
     )
     fig.update_layout(**_activity_layout(
-        title="🎯 الناجحة مقابل غير الناجحة", title_x=0.5, height=470,
+        title="🎯 الناجحة مقابل غير الناجحة", title_x=0.5, height=400,
         legend={"orientation": "h", "yanchor": "top", "y": -0.12, "x": 0.5, "xanchor": "center"},
-        margin={"t": 72, "b": 82, "l": 20, "r": 20},
+        margin={"t": 62, "b": 62, "l": 16, "r": 16},
         annotations=[{"text": f"{rate:.1f}%<br>نجاح", "x": 0.5, "y": 0.5, "font": {"size": 22, "color": COLOR_SUCCESS}, "showarrow": False}],
     ))
     st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG, key="dashboard_outcome_donut")
@@ -2057,8 +2057,8 @@ def _render_activity_no_answer_chart(agent):
     )
     fig.update_layout(**_activity_layout(
         title="📵 حالات لا يرد لكل محصل (تشمل مغلق والتكرار)", title_x=0.5, xaxis_title="عدد الحالات", yaxis_title="",
-        height=470, legend_title_text="", legend={"orientation": "h", "yanchor": "top", "y": -0.22, "x": 0.5, "xanchor": "center"},
-        margin={"t": 72, "b": 105, "l": 105, "r": 20}, yaxis={"categoryorder": "total ascending"},
+        height=400, legend_title_text="", legend={"orientation": "h", "yanchor": "top", "y": -0.16, "x": 0.5, "xanchor": "center"},
+        margin={"t": 62, "b": 78, "l": 100, "r": 16}, yaxis={"categoryorder": "total ascending"},
     ))
     fig.update_traces(
         marker_line_width=0,

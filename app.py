@@ -2151,11 +2151,17 @@ def build_dashboard_html(df, class_col, sales_col, time_col, source_name="", fil
     from html import escape
     import json
 
-    background = THEME.get("bg", "#0E1420")
-    surface = THEME.get("surface", "#151F30")
-    border = THEME.get("border", "rgba(15,157,138,.28)")
-    text = THEME.get("text", "#F8FAFC")
-    text_dim = THEME.get("text_dim", "#B9C6D6")
+    # التقرير المصدّر له Light Mode مستقل حتى يظل واضحًا عند فتحه في أي متصفح.
+    background = "#F5F7FB"
+    surface = "#FFFFFF"
+    border = "#D9E2EC"
+    text = "#1F2937"
+    text_dim = "#526174"
+    export_success = "#2F7D65"
+    export_fail = "#B55B70"
+    export_accent = "#397B7D"
+    export_warn = "#997C3C"
+    export_template = "plotly_white"
     work = df.copy()
     if sales_col and sales_col in work.columns:
         work["_agent_display"] = work[sales_col].fillna("غير محدد").astype(str).str.strip()
@@ -2250,9 +2256,9 @@ def build_dashboard_html(df, class_col, sales_col, time_col, source_name="", fil
     figs = []
     if class_col and class_col in work.columns:
         donut_df = pd.DataFrame({"النتيجة": ["ناجحة", "غير ناجحة"], "العدد": [success, total - success]})
-        fig = px.pie(donut_df, names="النتيجة", values="العدد", hole=0.62, color="النتيجة", color_discrete_map=CHART_COLORS, template=PLOTLY_TEMPLATE)
+        fig = px.pie(donut_df, names="النتيجة", values="العدد", hole=0.62, color="النتيجة", color_discrete_map={"ناجحة": export_success, "غير ناجحة": export_fail}, template=export_template)
         fig.update_traces(textinfo="percent", textfont_size=15, marker={"line": {"color": surface, "width": 3}}, hovertemplate="<b>%{label}</b><br>العدد: %{value:,}<br>النسبة: %{percent}<extra></extra>")
-        fig.update_layout(**_activity_layout(title="🎯 الناجحة مقابل غير الناجحة", title_x=0.5, height=410, margin={"t":68,"b":65,"l":20,"r":20}, legend={"orientation":"h","y":-0.1,"x":0.5,"xanchor":"center"}, annotations=[{"text":f"{rate:.1f}%<br>نجاح","x":0.5,"y":0.5,"font":{"size":22,"color":COLOR_SUCCESS},"showarrow":False}]))
+        fig.update_layout(**_activity_layout(title="🎯 الناجحة مقابل غير الناجحة", title_x=0.5, height=410, margin={"t":68,"b":65,"l":20,"r":20}, legend={"orientation":"h","y":-0.1,"x":0.5,"xanchor":"center"}, annotations=[{"text":f"{rate:.1f}%<br>نجاح","x":0.5,"y":0.5,"font":{"size":22,"color":export_success},"showarrow":False}]))
         figs.append(("🎯 توزيع نتائج المكالمات", fig))
 
     if time_col and time_col in work.columns:
@@ -2269,15 +2275,15 @@ def build_dashboard_html(df, class_col, sales_col, time_col, source_name="", fil
             daily = daily.sort_values(["اليوم", "_agent_display"])
             daily_totals["اليوم"] = pd.Categorical(daily_totals["اليوم"], categories=ordered_days, ordered=True)
             daily_totals = daily_totals.sort_values("اليوم")
-            day_fig = px.bar(daily, x="اليوم", y="عدد المكالمات", color="_agent_display", barmode="group", text_auto=True, custom_data=["_agent_display"], template=PLOTLY_TEMPLATE, labels={"_agent_display":"المحصل"}, color_discrete_sequence=ACTIVITY_AGENT_PALETTE)
-            day_fig.add_trace(go.Scatter(x=daily_totals["اليوم"].astype(str), y=daily_totals["نسبة النجاح (%)"], name="نسبة النجاح", mode="lines+markers+text", text=daily_totals["نسبة النجاح (%)"].map(lambda value: f"{value:.1f}%"), textposition="top center", line={"color": COLOR_ACCENT, "width": 3}, marker={"color": COLOR_ACCENT, "size": 9}, yaxis="y2", hovertemplate="<b>%{x}</b><br>نسبة النجاح: %{y:.1f}%<extra></extra>"))
+            day_fig = px.bar(daily, x="اليوم", y="عدد المكالمات", color="_agent_display", barmode="group", text_auto=True, custom_data=["_agent_display"], template=export_template, labels={"_agent_display":"المحصل"}, color_discrete_sequence=ACTIVITY_AGENT_PALETTE)
+            day_fig.add_trace(go.Scatter(x=daily_totals["اليوم"].astype(str), y=daily_totals["نسبة النجاح (%)"], name="نسبة النجاح", mode="lines+markers+text", text=daily_totals["نسبة النجاح (%)"].map(lambda value: f"{value:.1f}%"), textposition="top center", line={"color": export_accent, "width": 3}, marker={"color": export_accent, "size": 9}, yaxis="y2", hovertemplate="<b>%{x}</b><br>نسبة النجاح: %{y:.1f}%<extra></extra>"))
             day_fig.update_layout(**_activity_layout(title="📊 Combo Chart يومي: المكالمات ونسبة النجاح", title_x=0.5, xaxis_title="اليوم", yaxis_title="عدد المكالمات", height=430, bargap=0.18, margin={"t":68,"b":95,"l":55,"r":65}, xaxis={"type":"category","categoryorder":"array","categoryarray":ordered_days,"tickangle":-25}, yaxis={"rangemode":"tozero"}, yaxis2={"title":"نسبة النجاح (%)","overlaying":"y","side":"right","range":[0,100],"ticksuffix":"%","showgrid":False}, legend={"orientation":"h","y":-0.2,"x":0.5,"xanchor":"center"}))
             day_fig.update_traces(selector={"type":"bar"}, marker_line_width=0, hovertemplate="<b>%{x}</b><br>%{fullData.name}: %{y:,} مكالمة<extra></extra>")
             figs.append(("📊 Combo Chart النشاط اليومي", day_fig))
 
             timed["الساعة"] = timed["_activity_time"].dt.hour
             hourly = timed.groupby(["الساعة", "_agent_display"], as_index=False).size().rename(columns={"size":"عدد المكالمات"})
-            hour_fig = px.bar(hourly, x="الساعة", y="عدد المكالمات", color="_agent_display", barmode="stack", text_auto=True, custom_data=["_agent_display"], template=PLOTLY_TEMPLATE, labels={"_agent_display":"المحصل"}, color_discrete_sequence=ACTIVITY_AGENT_PALETTE)
+            hour_fig = px.bar(hourly, x="الساعة", y="عدد المكالمات", color="_agent_display", barmode="stack", text_auto=True, custom_data=["_agent_display"], template=export_template, labels={"_agent_display":"المحصل"}, color_discrete_sequence=ACTIVITY_AGENT_PALETTE)
             hour_fig.update_layout(**_activity_layout(title="🕒 Histogram ساعي لنشاط المحصلين", title_x=0.5, xaxis_title="ساعة اليوم", yaxis_title="عدد المكالمات", height=430, bargap=0.08, margin={"t":68,"b":95,"l":55,"r":20}, xaxis={"dtick":1,"range":[-0.5,23.5]}, legend={"orientation":"h","y":-0.2,"x":0.5,"xanchor":"center"}))
             hour_fig.update_traces(marker_line_width=0, hovertemplate="<b>الساعة %{x}:00</b><br>%{fullData.name}: %{y:,} مكالمة<extra></extra>")
             figs.append(("🕒 Histogram النشاط الساعي", hour_fig))
@@ -2291,7 +2297,7 @@ def build_dashboard_html(df, class_col, sales_col, time_col, source_name="", fil
                 state_counts[state_name] = 0
         state_counts = state_counts.reindex(columns=ACTIVITY_NO_ANSWER_STATES, fill_value=0).reset_index().rename(columns={"_agent_display":"المحصّل"})
         state_long = state_counts.melt(id_vars=["المحصّل"], var_name="الحالة", value_name="العدد")
-        no_fig = px.bar(state_long, x="العدد", y="المحصّل", orientation="h", color="الحالة", barmode="stack", text_auto=True, template=PLOTLY_TEMPLATE, category_orders={"الحالة":ACTIVITY_NO_ANSWER_STATES}, color_discrete_sequence=ACTIVITY_STATE_PALETTE)
+        no_fig = px.bar(state_long, x="العدد", y="المحصّل", orientation="h", color="الحالة", barmode="stack", text_auto=True, template=export_template, category_orders={"الحالة":ACTIVITY_NO_ANSWER_STATES}, color_discrete_sequence=[export_fail, export_warn, "#708090", "#866F96"])
         no_fig.update_layout(**_activity_layout(title="📵 حالات لا يرد لكل محصل", title_x=0.5, xaxis_title="عدد الحالات", yaxis_title="", height=430, margin={"t":68,"b":80,"l":105,"r":20}, legend={"orientation":"h","y":-0.18,"x":0.5,"xanchor":"center"}, yaxis={"categoryorder":"total ascending"}))
         no_fig.update_traces(hovertemplate="<b>%{y}</b><br>%{fullData.name}: %{x:,}<extra></extra>")
         figs.append(("📵 تحليل حالات Sub State", no_fig))
@@ -2365,7 +2371,7 @@ function refreshDashboard() {
 document.getElementById('reset-filters')?.addEventListener('click', () => { ['filter-agent','filter-state'].forEach(id => [...document.getElementById(id).options].forEach(option => option.selected=false)); document.getElementById('filter-class').value=''; document.getElementById('filter-date-from').value='__DATE_MIN__'; document.getElementById('filter-date-to').value='__DATE_MAX__'; refreshDashboard(); });
 refreshDashboard();
 </script>
-""".replace('__ACTIVITY_DATA__', raw_records_json).replace('__AGENT_COLORS__', agent_color_json).replace('__STATE_COLORS__', state_color_json).replace('__ACCENT__', json.dumps(COLOR_ACCENT)).replace('__SUCCESS__', json.dumps(COLOR_SUCCESS)).replace('__FAIL__', json.dumps(COLOR_FAIL)).replace('__DATE_MIN__', export_date_min).replace('__DATE_MAX__', export_date_max)
+""".replace('__ACTIVITY_DATA__', raw_records_json).replace('__AGENT_COLORS__', agent_color_json).replace('__STATE_COLORS__', state_color_json).replace('__ACCENT__', json.dumps(export_accent)).replace('__SUCCESS__', json.dumps(export_success)).replace('__FAIL__', json.dumps(export_fail)).replace('__DATE_MIN__', export_date_min).replace('__DATE_MAX__', export_date_max)
     parts.append(interactive_js)
     parts.extend(['<footer style="color:' + text_dim + ';font-size:12px;text-align:center;margin-top:24px">تم إنشاء التقرير من لوحة تحليل نشاط المحصلين</footer></main></body></html>'])
     return "".join(parts)

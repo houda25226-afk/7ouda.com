@@ -2228,7 +2228,7 @@ def build_dashboard_html(df, class_col, sales_col, time_col, source_name="", fil
         '</header>',
         f'<section style="background:{surface};border:0;border-radius:12px;padding:8px 0;margin-bottom:14px">',
         f'<h2 style="margin:0 0 8px;text-align:center;font-size:18px;color:{text}">🎚️ فلاتر التقرير التفاعلية</h2>',
-        '<section id="interactive-filters" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:9px;align-items:end">',
+        '<section id="interactive-filters" style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:9px;align-items:end">',
         f'<div style="position:relative;display:flex;flex-direction:column;gap:7px;color:{text_dim};font-size:13px"><span>👤 المحصلون</span><button type="button" class="multi-trigger" data-target="agent-menu" style="background:{background};color:{text};border:1px solid {border};border-radius:9px;padding:8px;font-size:13px;text-align:right;cursor:pointer"><span id="agent-label">كل المحصلين</span>⌄</button><div id="agent-menu" class="multi-menu" style="display:none;position:absolute;z-index:20;top:74px;right:0;left:0;background:#FFFFFF;color:{text};border:1px solid {border};border-radius:10px;padding:8px;box-shadow:0 10px 24px rgba(15,23,42,.16);max-height:230px;overflow-y:auto"><label style="display:block;padding:8px;border-bottom:1px solid {border};font-weight:700"><input type="checkbox" class="select-all-agent"> كل المحصلين</label>',
     ])
     for value in agent_options:
@@ -3556,18 +3556,16 @@ def _render_slicers(df, sales_col, time_col):
             _clear_dashboard_chart_filter()
             st.rerun()
 
-    agent_col, state_col = st.columns(2, gap="small")
-    with agent_col:
+    slicer_cols = st.columns(4, gap="small")
+    with slicer_cols[0]:
         selected_agents = _render_native_multi_slicer(
             "👤 المحصلون", agents, "dash_agent_slicer_v6", "كل المحصلين"
         )
-    with state_col:
+    with slicer_cols[1]:
         selected_substates = _render_native_multi_slicer(
             "📊 الحالات الفرعية", substates, "dash_state_slicer_v6", "كل الحالات"
         ) if substates else []
-
-    date_col, class_col_view = st.columns(2, gap="small")
-    with date_col:
+    with slicer_cols[2]:
         date_range = st.date_input(
             "📅 التاريخ",
             value=(date_min, date_max) if date_min is not None else None,
@@ -3575,7 +3573,7 @@ def _render_slicers(df, sales_col, time_col):
             max_value=date_max,
             key="dash_date_slicer_v5",
         ) if date_min is not None else None
-    with class_col_view:
+    with slicer_cols[3]:
         selected_class = st.selectbox(
             "🏷️ التصنيف",
             class_labels,

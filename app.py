@@ -3557,17 +3557,17 @@ def _render_slicers(df, sales_col, time_col):
 
     f1, f2, f3, f4 = st.columns(4)
     with f1:
-        with st.container(border=True, height=104):
+        with st.container(border=True):
             selected_agents = _render_native_multi_slicer(
                 "👤 المحصلون", agents, "dash_agent_slicer_v6", "كل المحصلين"
             )
     with f2:
-        with st.container(border=True, height=104):
+        with st.container(border=True):
             selected_substates = _render_native_multi_slicer(
                 "📊 الحالات الفرعية", substates, "dash_state_slicer_v6", "كل الحالات"
             ) if substates else []
     with f3:
-        with st.container(border=True, height=104):
+        with st.container(border=True):
             date_range = st.date_input(
                 "📅 التاريخ",
                 value=(date_min, date_max) if date_min is not None else None,
@@ -3576,7 +3576,7 @@ def _render_slicers(df, sales_col, time_col):
                 key="dash_date_slicer_v5",
             ) if date_min is not None else None
     with f4:
-        with st.container(border=True, height=104):
+        with st.container(border=True):
             selected_class = st.selectbox(
                 "🏷️ التصنيف",
                 class_labels,

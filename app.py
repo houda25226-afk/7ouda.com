@@ -2229,17 +2229,17 @@ def build_dashboard_html(df, class_col, sales_col, time_col, source_name="", fil
         f'<section style="background:{surface};border:1px solid {border};border-radius:16px;padding:18px 20px;margin-bottom:24px">',
         f'<h2 style="margin:0 0 14px;text-align:center;font-size:20px;color:{text}">🎚️ فلاتر التقرير التفاعلية</h2>',
         '<section id="interactive-filters" style="display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:12px;align-items:end">',
-        f'<label style="display:flex;flex-direction:column;gap:7px;color:{text_dim};font-size:13px"><span>👤 المحصل</span><select id="filter-agent" multiple size="4" style="background:{background};color:{text};border:1px solid {border};border-radius:9px;padding:11px;font-size:14px"><option value="">كل المحصلين</option>',
+        f'<div style="position:relative;display:flex;flex-direction:column;gap:7px;color:{text_dim};font-size:13px"><span>👤 المحصلون</span><button type="button" class="multi-trigger" data-target="agent-menu" style="background:{background};color:{text};border:1px solid {border};border-radius:9px;padding:11px;font-size:14px;text-align:right;cursor:pointer"><span id="agent-label">كل المحصلين</span>⌄</button><div id="agent-menu" class="multi-menu" style="display:none;position:absolute;z-index:20;top:74px;right:0;left:0;background:#FFFFFF;color:{text};border:1px solid {border};border-radius:10px;padding:8px;box-shadow:0 10px 24px rgba(15,23,42,.16);max-height:230px;overflow-y:auto"><label style="display:block;padding:8px;border-bottom:1px solid {border};font-weight:700"><input type="checkbox" class="select-all-agent"> كل المحصلين</label>',
     ])
     for value in agent_options:
-        parts.append(f'<option value="{escape(value, quote=True)}">{escape(value)}</option>')
+        parts.append(f'<label style="display:block;padding:8px 6px;border-radius:7px;cursor:pointer"><input type="checkbox" class="agent-option" value="{escape(value, quote=True)}"> {escape(value)}</label>')
     parts.extend([
-        f'</select></label><label style="display:flex;flex-direction:column;gap:7px;color:{text_dim};font-size:13px"><span>📊 الحالة الفرعية</span><select id="filter-state" multiple size="4" style="background:{background};color:{text};border:1px solid {border};border-radius:9px;padding:11px;font-size:14px"><option value="">كل الحالات</option>',
+        f'</div></div><div style="position:relative;display:flex;flex-direction:column;gap:7px;color:{text_dim};font-size:13px"><span>📊 الحالات الفرعية</span><button type="button" class="multi-trigger" data-target="state-menu" style="background:{background};color:{text};border:1px solid {border};border-radius:9px;padding:11px;font-size:14px;text-align:right;cursor:pointer"><span id="state-label">كل الحالات</span>⌄</button><div id="state-menu" class="multi-menu" style="display:none;position:absolute;z-index:20;top:74px;right:0;left:0;background:#FFFFFF;color:{text};border:1px solid {border};border-radius:10px;padding:8px;box-shadow:0 10px 24px rgba(15,23,42,.16);max-height:230px;overflow-y:auto"><label style="display:block;padding:8px;border-bottom:1px solid {border};font-weight:700"><input type="checkbox" class="select-all-state"> كل الحالات</label>',
     ])
     for value in state_options:
-        parts.append(f'<option value="{escape(value, quote=True)}">{escape(value)}</option>')
+        parts.append(f'<label style="display:block;padding:8px 6px;border-radius:7px;cursor:pointer"><input type="checkbox" class="state-option" value="{escape(value, quote=True)}"> {escape(value)}</label>')
     parts.extend([
-        f'</select></label><label style="display:flex;flex-direction:column;gap:7px;color:{text_dim};font-size:13px"><span>🏷️ التصنيف</span><select id="filter-class" style="background:{background};color:{text};border:1px solid {border};border-radius:9px;padding:11px;font-size:14px"><option value="">الكل</option><option value="success">ناجحة</option><option value="failure">غير ناجحة</option></select></label>',
+        f'</div></div><label style="display:flex;flex-direction:column;gap:7px;color:{text_dim};font-size:13px"><span>🏷️ التصنيف</span><select id="filter-class" style="background:{background};color:{text};border:1px solid {border};border-radius:9px;padding:11px;font-size:14px"><option value="">الكل</option><option value="success">ناجحة</option><option value="failure">غير ناجحة</option></select></label>',
         f'<label style="display:flex;flex-direction:column;gap:7px;color:{text_dim};font-size:13px"><span>📅 من تاريخ</span><input id="filter-date-from" type="date" value="{export_date_min}" min="{export_date_min}" max="{export_date_max}" style="background:{background};color:{text};border:1px solid {border};border-radius:9px;padding:10px;font-size:14px"></label>',
         f'<label style="display:flex;flex-direction:column;gap:7px;color:{text_dim};font-size:13px"><span>📅 إلى تاريخ</span><input id="filter-date-to" type="date" value="{export_date_max}" min="{export_date_min}" max="{export_date_max}" style="background:{background};color:{text};border:1px solid {border};border-radius:9px;padding:10px;font-size:14px"></label>',
         f'<div style="display:flex;gap:8px;align-items:end"><button id="reset-filters" type="button" style="flex:1;background:{COLOR_ACCENT};color:#fff;border:0;border-radius:9px;padding:11px;font-size:14px;cursor:pointer">↺ إعادة ضبط</button></div>',
@@ -2339,10 +2339,16 @@ const hourlyPlot = document.getElementById('activity_plot_2');
 const donutPlot = document.getElementById('activity_plot_0');
 const statePlot = document.getElementById('activity_plot_3');
 const fmt = n => Number(n || 0).toLocaleString('en-US');
+function updateMultiLabels() {
+  const agent = [...document.querySelectorAll('.agent-option:checked')].map(o => o.value);
+  const state = [...document.querySelectorAll('.state-option:checked')].map(o => o.value);
+  document.getElementById('agent-label').textContent = agent.length ? `${agent.length} محصل محدد` : 'كل المحصلين';
+  document.getElementById('state-label').textContent = state.length ? `${state.length} حالة محددة` : 'كل الحالات';
+}
 function selectedRows() {
-  const values = id => [...document.getElementById(id).selectedOptions].map(option => option.value).filter(Boolean);
-  const agent = values('filter-agent');
-  const state = values('filter-state');
+  const values = cls => [...document.querySelectorAll('.' + cls + ':checked')].map(option => option.value).filter(Boolean);
+  const agent = values('agent-option');
+  const state = values('state-option');
   const cls = document.getElementById('filter-class').value;
   const from = document.getElementById('filter-date-from').value;
   const to = document.getElementById('filter-date-to').value;
@@ -2367,8 +2373,14 @@ function refreshDashboard() {
   const stateNames = Object.keys(stateColors); const stateTraces = stateNames.map(state=>({type:'bar',name:state,x:agents,y:agents.map(a=>rows.filter(r=>r.agent===a && r.state===state).length),marker:{color:stateColors[state]},texttemplate:'%{y}',textposition:'inside'}));
   if (statePlot) Plotly.react(statePlot, stateTraces, {...statePlot.layout, barmode:'stack'});
 }
-['filter-agent','filter-state','filter-class','filter-date-from','filter-date-to'].forEach(id => document.getElementById(id)?.addEventListener('change', refreshDashboard));
-document.getElementById('reset-filters')?.addEventListener('click', () => { ['filter-agent','filter-state'].forEach(id => [...document.getElementById(id).options].forEach(option => option.selected=false)); document.getElementById('filter-class').value=''; document.getElementById('filter-date-from').value='__DATE_MIN__'; document.getElementById('filter-date-to').value='__DATE_MAX__'; refreshDashboard(); });
+document.querySelectorAll('.multi-trigger').forEach(trigger => trigger.addEventListener('click', event => { event.stopPropagation(); const menu = document.getElementById(trigger.dataset.target); document.querySelectorAll('.multi-menu').forEach(other => { if (other !== menu) other.style.display = 'none'; }); menu.style.display = menu.style.display === 'block' ? 'none' : 'block'; }));
+document.addEventListener('click', () => document.querySelectorAll('.multi-menu').forEach(menu => menu.style.display = 'none'));
+document.querySelectorAll('.agent-option,.state-option').forEach(option => option.addEventListener('change', () => { updateMultiLabels(); refreshDashboard(); }));
+document.querySelector('.select-all-agent')?.addEventListener('change', event => { document.querySelectorAll('.agent-option').forEach(option => option.checked = event.target.checked); updateMultiLabels(); refreshDashboard(); });
+document.querySelector('.select-all-state')?.addEventListener('change', event => { document.querySelectorAll('.state-option').forEach(option => option.checked = event.target.checked); updateMultiLabels(); refreshDashboard(); });
+['filter-class','filter-date-from','filter-date-to'].forEach(id => document.getElementById(id)?.addEventListener('change', refreshDashboard));
+document.getElementById('reset-filters')?.addEventListener('click', () => { document.querySelectorAll('.agent-option,.state-option,.select-all-agent,.select-all-state').forEach(option => option.checked=false); document.getElementById('filter-class').value=''; document.getElementById('filter-date-from').value='__DATE_MIN__'; document.getElementById('filter-date-to').value='__DATE_MAX__'; updateMultiLabels(); refreshDashboard(); });
+updateMultiLabels();
 refreshDashboard();
 </script>
 """.replace('__ACTIVITY_DATA__', raw_records_json).replace('__AGENT_COLORS__', agent_color_json).replace('__STATE_COLORS__', state_color_json).replace('__ACCENT__', json.dumps(export_accent)).replace('__SUCCESS__', json.dumps(export_success)).replace('__FAIL__', json.dumps(export_fail)).replace('__DATE_MIN__', export_date_min).replace('__DATE_MAX__', export_date_max)

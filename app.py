@@ -2149,6 +2149,7 @@ def _fig_to_div(fig, div_id, height=420):
 def build_dashboard_html(df, class_col, sales_col, time_col, source_name="", filter_hint="", filter_summary=None) -> str:
     """إنشاء نسخة HTML مستقلة من Dashboard النشاط بنفس التسلسل والألوان والرسوم الأساسية."""
     from html import escape
+    import json
 
     background = THEME.get("bg", "#0E1420")
     surface = THEME.get("surface", "#151F30")
@@ -2161,6 +2162,9 @@ def build_dashboard_html(df, class_col, sales_col, time_col, source_name="", fil
     else:
         work["_agent_display"] = "غير محدد"
     work["_success_bool"] = _activity_success_mask(work, class_col)
+    sub_col_for_export = find_column(work, PROMISE_SUB_STATE_CANDIDATES)
+    if sub_col_for_export:
+        work["_activity_state"] = work[sub_col_for_export].map(_classify_activity_sub_state)
     total = len(work)
     success = int(work["_success_bool"].sum())
     rate = success / total * 100 if total else 0
@@ -2173,13 +2177,30 @@ def build_dashboard_html(df, class_col, sales_col, time_col, source_name="", fil
         ("📅 التاريخ", filter_summary.get("التاريخ", "كل التواريخ")),
         ("🏷️ التصنيف", filter_summary.get("التصنيف", "الكل")),
     ]
+    timed_source = pd.to_datetime(work[time_col], errors="coerce") if time_col and time_col in work.columns else pd.Series(pd.NaT, index=work.index)
+    raw_records = []
+    for row_index, row in work.iterrows():
+        timestamp = timed_source.loc[row_index] if row_index in timed_source.index else pd.NaT
+        raw_records.append({
+            "agent": str(row.get("_agent_display", "غير محدد")),
+            "time": timestamp.isoformat() if pd.notna(timestamp) else "",
+            "success": bool(row.get("_success_bool", False)),
+            "wasted": float(pd.to_numeric(row.get(WASTED_TIME_COL, 0), errors="coerce") or 0),
+            "state": str(_classify_activity_sub_state(row.get(find_column(work, PROMISE_SUB_STATE_CANDIDATES), ""))) if find_column(work, PROMISE_SUB_STATE_CANDIDATES) else "",
+        })
+    raw_records_json = json.dumps(raw_records, ensure_ascii=False).replace("</", "<\\/")
+    date_values = sorted({record["time"][:10] for record in raw_records if record.get("time")})
+    export_date_min = date_values[0] if date_values else ""
+    export_date_max = date_values[-1] if date_values else ""
+    agent_color_json = json.dumps(_activity_agent_color_map(work["_agent_display"]), ensure_ascii=False)
+    state_color_json = json.dumps(dict(zip(ACTIVITY_NO_ANSWER_STATES, ACTIVITY_STATE_PALETTE)), ensure_ascii=False)
 
-    def metric_card(label, value, color):
+    def metric_card(card_id, label, value, color):
         return (
-            f'<div style="background:{surface};border:1px solid {border};border-radius:14px;'
+            f'<div id="{card_id}" style="background:{surface};border:1px solid {border};border-radius:14px;'
             f'padding:22px 14px;text-align:center;min-height:112px;box-sizing:border-box">'
             f'<div style="color:{text_dim};font-size:15px;margin-bottom:12px">{label}</div>'
-            f'<div style="color:{color};font-size:28px;font-weight:700;line-height:1.2">{value}</div></div>'
+            f'<div data-role="value" style="color:{color};font-size:28px;font-weight:700;line-height:1.2">{value}</div></div>'
         )
 
     parts = [
@@ -2195,26 +2216,34 @@ def build_dashboard_html(df, class_col, sales_col, time_col, source_name="", fil
     ]
     if filter_hint:
         parts.append(f'<div style="margin-top:12px;color:{text_dim};font-size:13px">الفلاتر النشطة: {escape(filter_hint)}</div>')
+    agent_options = sorted(work["_agent_display"].dropna().astype(str).unique().tolist())
+    state_options = sorted(work["_activity_state"].dropna().astype(str).unique().tolist()) if "_activity_state" in work.columns else []
     parts.extend([
         '</header>',
         f'<section style="background:{surface};border:1px solid {border};border-radius:16px;padding:18px 20px;margin-bottom:24px">',
-        f'<h2 style="margin:0 0 14px;text-align:center;font-size:20px;color:{text}">🎚️ فلاتر التقرير</h2>',
-        '<section style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px">',
+        f'<h2 style="margin:0 0 14px;text-align:center;font-size:20px;color:{text}">🎚️ فلاتر التقرير التفاعلية</h2>',
+        '<section id="interactive-filters" style="display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:12px;align-items:end">',
+        f'<label style="display:flex;flex-direction:column;gap:7px;color:{text_dim};font-size:13px"><span>👤 المحصل</span><select id="filter-agent" style="background:{background};color:{text};border:1px solid {border};border-radius:9px;padding:11px;font-size:14px"><option value="">كل المحصلين</option>',
     ])
-    for filter_label, filter_value in filter_items:
-        parts.append(
-            f'<div style="background:{background};border:1px solid {border};border-radius:10px;padding:12px 14px;min-height:58px;box-sizing:border-box">'
-            f'<div style="color:{text_dim};font-size:12px;margin-bottom:4px">{escape(str(filter_label))}</div>'
-            f'<div style="color:{text};font-size:15px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{escape(str(filter_value))}</div></div>'
-        )
+    for value in agent_options:
+        parts.append(f'<option value="{escape(value, quote=True)}">{escape(value)}</option>')
     parts.extend([
-        '</section></section>',
-        '<section style="display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:14px;margin-bottom:24px">',
-        metric_card("👥 عدد المحصلين", f"{agent_count:,}", text),
-        metric_card("📞 إجمالي المكالمات", f"{total:,}", text),
-        metric_card("✅ المكالمات الناجحة", f"{success:,}", COLOR_SUCCESS),
-        metric_card("📈 نسبة النجاح", f"{rate:.1f}%", COLOR_ACCENT),
-        metric_card("⏱️ إجمالي الوقت المهدر", f"{wasted:,.1f} دقيقة", COLOR_WARN),
+        f'</select></label><label style="display:flex;flex-direction:column;gap:7px;color:{text_dim};font-size:13px"><span>📊 الحالة الفرعية</span><select id="filter-state" style="background:{background};color:{text};border:1px solid {border};border-radius:9px;padding:11px;font-size:14px"><option value="">كل الحالات</option>',
+    ])
+    for value in state_options:
+        parts.append(f'<option value="{escape(value, quote=True)}">{escape(value)}</option>')
+    parts.extend([
+        f'</select></label><label style="display:flex;flex-direction:column;gap:7px;color:{text_dim};font-size:13px"><span>🏷️ التصنيف</span><select id="filter-class" style="background:{background};color:{text};border:1px solid {border};border-radius:9px;padding:11px;font-size:14px"><option value="">الكل</option><option value="success">ناجحة</option><option value="failure">غير ناجحة</option></select></label>',
+        f'<label style="display:flex;flex-direction:column;gap:7px;color:{text_dim};font-size:13px"><span>📅 من تاريخ</span><input id="filter-date-from" type="date" value="{export_date_min}" min="{export_date_min}" max="{export_date_max}" style="background:{background};color:{text};border:1px solid {border};border-radius:9px;padding:10px;font-size:14px"></label>',
+        f'<label style="display:flex;flex-direction:column;gap:7px;color:{text_dim};font-size:13px"><span>📅 إلى تاريخ</span><input id="filter-date-to" type="date" value="{export_date_max}" min="{export_date_min}" max="{export_date_max}" style="background:{background};color:{text};border:1px solid {border};border-radius:9px;padding:10px;font-size:14px"></label>',
+        f'<div style="display:flex;gap:8px;align-items:end"><button id="reset-filters" type="button" style="flex:1;background:{COLOR_ACCENT};color:#fff;border:0;border-radius:9px;padding:11px;font-size:14px;cursor:pointer">↺ إعادة ضبط</button></div>',
+        '</section><div id="filter-status" style="text-align:center;color:' + text_dim + ';font-size:12px;margin-top:12px">عرض كل البيانات</div></section>',
+        '<section id="kpi-grid" style="display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:14px;margin-bottom:24px">',
+        metric_card("kpi-agents", "👥 عدد المحصلين", f"{agent_count:,}", text),
+        metric_card("kpi-total", "📞 إجمالي المكالمات", f"{total:,}", text),
+        metric_card("kpi-success", "✅ المكالمات الناجحة", f"{success:,}", COLOR_SUCCESS),
+        metric_card("kpi-rate", "📈 نسبة النجاح", f"{rate:.1f}%", COLOR_ACCENT),
+        metric_card("kpi-wasted", "⏱️ إجمالي الوقت المهدر", f"{wasted:,.1f} دقيقة", COLOR_WARN),
         '</section>',
     ])
 
@@ -2270,7 +2299,7 @@ def build_dashboard_html(df, class_col, sales_col, time_col, source_name="", fil
     parts.append('<section style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:18px">')
     include_js = True
     for index, (heading, fig) in enumerate(figs):
-        parts.append(f'<article style="background:{surface};border:1px solid {border};border-radius:16px;padding:10px 14px 4px;min-width:0"><h2 style="font-size:17px;margin:8px 10px;color:{text}">{heading}</h2>')
+        parts.append(f'<article id="chart-card-{index}" style="background:{surface};border:1px solid {border};border-radius:16px;padding:10px 14px 4px;min-width:0"><h2 style="font-size:17px;margin:8px 10px;color:{text};text-align:center">{heading}</h2>')
         parts.append(pio.to_html(fig, full_html=False, include_plotlyjs=include_js, config=PLOTLY_CONFIG, div_id=f"activity_plot_{index}", default_width="100%", default_height=f"{fig.layout.height or 430}px"))
         parts.append('</article>')
         include_js = False
@@ -2280,7 +2309,7 @@ def build_dashboard_html(df, class_col, sales_col, time_col, source_name="", fil
         agent_table, _, _ = _build_activity_summary(df, class_col, sales_col, time_col)
         columns = ["المحصّل", "إجمالي المكالمات", "المكالمات الناجحة", "نسبة النجاح (%)", "نسبة من إجمالي المكالمات (%)", "واعد بالسداد", "إجمالي لا يرد", "أيام النشاط", "متوسط ساعات العمل/اليوم", "إجمالي ساعات العمل", "إجمالي الوقت المهدر (دقيقة)"]
         columns = [column for column in columns if column in agent_table.columns]
-        parts.append(f'<section style="background:{surface};border:1px solid {border};border-radius:16px;padding:18px;margin-top:18px"><h2 style="font-size:19px;margin:0 0 12px">📋 ملخص أداء كل محصل</h2><div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:13px"><thead><tr>')
+        parts.append(f'<section id="activity-summary-table" style="background:{surface};border:1px solid {border};border-radius:16px;padding:18px;margin-top:18px"><h2 style="font-size:19px;margin:0 0 12px;text-align:center">📋 ملخص أداء كل محصل</h2><div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:13px"><thead><tr>')
         for column in columns:
             parts.append(f'<th style="padding:10px;border-bottom:1px solid {border};color:{text_dim};white-space:nowrap;text-align:right">{escape(column)}</th>')
         parts.append('</tr></thead><tbody>')
@@ -2294,6 +2323,49 @@ def build_dashboard_html(df, class_col, sales_col, time_col, source_name="", fil
             parts.append('</tr>')
         parts.append('</tbody></table></div></section>')
 
+    interactive_js = """
+<script>
+const activityData = __ACTIVITY_DATA__;
+const agentColors = __AGENT_COLORS__;
+const stateColors = __STATE_COLORS__;
+const dailyPlot = document.getElementById('activity_plot_1');
+const hourlyPlot = document.getElementById('activity_plot_2');
+const donutPlot = document.getElementById('activity_plot_0');
+const statePlot = document.getElementById('activity_plot_3');
+const fmt = n => Number(n || 0).toLocaleString('en-US');
+function selectedRows() {
+  const agent = document.getElementById('filter-agent').value;
+  const state = document.getElementById('filter-state').value;
+  const cls = document.getElementById('filter-class').value;
+  const from = document.getElementById('filter-date-from').value;
+  const to = document.getElementById('filter-date-to').value;
+  return activityData.filter(row => (!agent || row.agent === agent) && (!state || row.state === state) && (!cls || (cls === 'success' ? row.success : !row.success)) && (!from || !row.time || row.time.slice(0,10) >= from) && (!to || !row.time || row.time.slice(0,10) <= to));
+}
+function setKpi(id, value) { const el = document.querySelector('#' + id + ' [data-role=value]'); if (el) el.textContent = value; }
+function refreshDashboard() {
+  const rows = selectedRows();
+  const agents = [...new Set(rows.map(r => r.agent))].sort();
+  const success = rows.filter(r => r.success).length;
+  const rate = rows.length ? success / rows.length * 100 : 0;
+  setKpi('kpi-agents', fmt(agents.length)); setKpi('kpi-total', fmt(rows.length)); setKpi('kpi-success', fmt(success)); setKpi('kpi-rate', rate.toFixed(1) + '%'); setKpi('kpi-wasted', Number(rows.reduce((s,r) => s + (r.wasted || 0), 0)).toLocaleString('en-US', {maximumFractionDigits:1}) + ' دقيقة');
+  document.getElementById('filter-status').textContent = `عرض ${fmt(rows.length)} مكالمة من أصل ${fmt(activityData.length)} — ${fmt(agents.length)} محصل`;
+  const days = [...new Set(rows.filter(r => r.time).map(r => r.time.slice(0,10)))].sort();
+  const dailyTraces = agents.map(agent => ({type:'bar', name:agent, x:days, y:days.map(day => rows.filter(r => r.agent===agent && r.time.slice(0,10)===day).length), marker:{color:agentColors[agent] || '#6F9FB5'}, texttemplate:'%{y}', textposition:'inside', hovertemplate:'<b>%{x}</b><br>%{fullData.name}: %{y} مكالمة<extra></extra>'}));
+  const dailySuccess = days.map(day => { const d=rows.filter(r => r.time && r.time.slice(0,10)===day); return d.length ? d.filter(r=>r.success).length/d.length*100 : 0; });
+  dailyTraces.push({type:'scatter', mode:'lines+markers+text', name:'نسبة النجاح', x:days, y:dailySuccess, text:dailySuccess.map(v=>v.toFixed(1)+'%'), textposition:'top center', line:{color:'__ACCENT__',width:3}, marker:{color:'__ACCENT__',size:8}, yaxis:'y2', hovertemplate:'<b>%{x}</b><br>نسبة النجاح: %{y:.1f}%<extra></extra>'});
+  if (dailyPlot) Plotly.react(dailyPlot, dailyTraces, {...dailyPlot.layout, xaxis:{...(dailyPlot.layout?.xaxis||{}), type:'category', categoryarray:days}, yaxis2:{...(dailyPlot.layout?.yaxis2||{}), range:[0,100], ticksuffix:'%'}});
+  const hours = Array.from({length:24},(_,i)=>i); const hourlyTraces = agents.map(agent=>({type:'bar',name:agent,x:hours,y:hours.map(h=>rows.filter(r=>r.agent===agent && r.time && new Date(r.time).getHours()===h).length),marker:{color:agentColors[agent]||'#6F9FB5'},texttemplate:'%{y}',textposition:'inside'}));
+  if (hourlyPlot) Plotly.react(hourlyPlot, hourlyTraces, {...hourlyPlot.layout, barmode:'stack', xaxis:{...(hourlyPlot.layout?.xaxis||{}), dtick:1, range:[-0.5,23.5]}});
+  if (donutPlot) Plotly.react(donutPlot, [{type:'pie',labels:['ناجحة','غير ناجحة'],values:[success, rows.length-success],hole:.62,marker:{colors:['__SUCCESS__','__FAIL__']},textinfo:'percent'}], donutPlot.layout);
+  const stateNames = Object.keys(stateColors); const stateTraces = stateNames.map(state=>({type:'bar',name:state,x:agents,y:agents.map(a=>rows.filter(r=>r.agent===a && r.state===state).length),marker:{color:stateColors[state]},texttemplate:'%{y}',textposition:'inside'}));
+  if (statePlot) Plotly.react(statePlot, stateTraces, {...statePlot.layout, barmode:'stack'});
+}
+['filter-agent','filter-state','filter-class','filter-date-from','filter-date-to'].forEach(id => document.getElementById(id)?.addEventListener('change', refreshDashboard));
+document.getElementById('reset-filters')?.addEventListener('click', () => { document.getElementById('filter-agent').value=''; document.getElementById('filter-state').value=''; document.getElementById('filter-class').value=''; document.getElementById('filter-date-from').value='__DATE_MIN__'; document.getElementById('filter-date-to').value='__DATE_MAX__'; refreshDashboard(); });
+refreshDashboard();
+</script>
+""".replace('__ACTIVITY_DATA__', raw_records_json).replace('__AGENT_COLORS__', agent_color_json).replace('__STATE_COLORS__', state_color_json).replace('__ACCENT__', json.dumps(COLOR_ACCENT)).replace('__SUCCESS__', json.dumps(COLOR_SUCCESS)).replace('__FAIL__', json.dumps(COLOR_FAIL)).replace('__DATE_MIN__', export_date_min).replace('__DATE_MAX__', export_date_max)
+    parts.append(interactive_js)
     parts.extend(['<footer style="color:' + text_dim + ';font-size:12px;text-align:center;margin-top:24px">تم إنشاء التقرير من لوحة تحليل نشاط المحصلين</footer></main></body></html>'])
     return "".join(parts)
 

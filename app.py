@@ -3499,6 +3499,31 @@ def _clear_dashboard_chart_filter():
     st.session_state.pop(DASHBOARD_AGENT_FILTER_KEY, None)
 
 
+def _render_native_multi_slicer(label, options, state_key, empty_label):
+    """Multi-select نظيف بلا Tags: الاختيارات تظهر داخل Popover فقط، والزر يعرض ملخصًا مختصرًا."""
+    options = [str(option) for option in options]
+    widget_keys = [f"{state_key}__{index}" for index in range(len(options))]
+    selected = [option for option, widget_key in zip(options, widget_keys) if st.session_state.get(widget_key, False)]
+    trigger_text = empty_label if not selected else f"تم اختيار {len(selected)}"
+    with st.popover(f"{label} · {trigger_text}", use_container_width=True):
+        action_all, action_clear = st.columns(2)
+        with action_all:
+            if st.button("تحديد الكل", key=f"{state_key}__select_all", use_container_width=True):
+                for widget_key in widget_keys:
+                    st.session_state[widget_key] = True
+                st.rerun()
+        with action_clear:
+            if st.button("إلغاء الكل", key=f"{state_key}__clear_all", use_container_width=True):
+                for widget_key in widget_keys:
+                    st.session_state[widget_key] = False
+                st.rerun()
+        st.caption("اختار أكثر من قيمة؛ لن تظهر الاختيارات كوسوم خارج القائمة.")
+        for option, widget_key in zip(options, widget_keys):
+            st.session_state.setdefault(widget_key, False)
+            st.checkbox(option, key=widget_key, label_visibility="visible")
+    return [option for option, widget_key in zip(options, widget_keys) if st.session_state.get(widget_key, False)]
+
+
 def _render_slicers(df, sales_col, time_col):
     agents = sorted([str(a) for a in df[sales_col].dropna().unique()]) if sales_col and sales_col in df.columns else []
     date_min = date_max = None
@@ -3523,28 +3548,23 @@ def _render_slicers(df, sales_col, time_col):
         if st.button("↺ إعادة ضبط", key="clear_dashboard_slicers_v5", use_container_width=True):
             for key in ("dash_agent_slicer_v5", "dash_state_slicer_v5", "dash_date_slicer_v5", "dash_class_slicer_v5"):
                 st.session_state.pop(key, None)
+            for prefix in ("dash_agent_slicer_v6", "dash_state_slicer_v6"):
+                for session_key in list(st.session_state.keys()):
+                    if session_key.startswith(prefix + "__"):
+                        st.session_state.pop(session_key, None)
             _clear_dashboard_chart_filter()
             st.rerun()
 
     f1, f2, f3, f4 = st.columns(4)
     with f1:
         with st.container(border=True):
-            selected_agents = st.multiselect(
-                "👤 المحصلون",
-                agents,
-                default=[],
-                placeholder="كل المحصلين",
-                key="dash_agent_slicer_v5",
-                on_change=_clear_dashboard_chart_filter,
+            selected_agents = _render_native_multi_slicer(
+                "👤 المحصلون", agents, "dash_agent_slicer_v6", "كل المحصلين"
             )
     with f2:
         with st.container(border=True):
-            selected_substates = st.multiselect(
-                "📊 الحالات الفرعية",
-                substates,
-                default=[],
-                placeholder="كل الحالات",
-                key="dash_state_slicer_v5",
+            selected_substates = _render_native_multi_slicer(
+                "📊 الحالات الفرعية", substates, "dash_state_slicer_v6", "كل الحالات"
             ) if substates else []
     with f3:
         with st.container(border=True):
@@ -3570,8 +3590,8 @@ def _render_slicers(df, sales_col, time_col):
     if isinstance(date_range, tuple) and len(date_range) == 2:
         date_summary = f"{date_range[0]} إلى {date_range[1]}"
     st.session_state["dashboard_filter_summary"] = {
-        "المحصل": "كل المحصلين" if not selected_agents else ", ".join(selected_agents),
-        "الحالة الفرعية": "كل الحالات" if not selected_substates else ", ".join(selected_substates),
+        "المحصل": "كل المحصلين" if not selected_agents else f"تم اختيار {len(selected_agents)} محصل",
+        "الحالة الفرعية": "كل الحالات" if not selected_substates else f"تم اختيار {len(selected_substates)} حالة",
         "التاريخ": date_summary,
         "التصنيف": selected_class,
     }

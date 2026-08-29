@@ -3077,18 +3077,23 @@ with st.sidebar:
     _logo_candidates = [
         Path(__file__).resolve().parent / "ahly_logo.png",
         Path("ahly_logo.png"),
-        Path("/home/workdir/artifacts/ahly_logo.png"),
     ]
     _logo_path = next((p for p in _logo_candidates if p.exists()), None)
-    logo_col = st.columns([1, 2, 1])
-    with logo_col[1]:
+
+    c1, c2, c3 = st.columns([1, 2, 1])
+    with c2:
         if _logo_path:
-            st.image(str(_logo_path), use_container_width=True)
+            st.image(str(_logo_path), width=110)
         else:
-            st.markdown("<div style='text-align:center;font-size:42px'>🦅</div>", unsafe_allow_html=True)
-    st.markdown("<h2 style='text-align:center;margin:0.2rem 0 0.1rem'>🎙️ لوحة التحكم</h2>", unsafe_allow_html=True)
-    st.markdown("<p style='text-align:center;opacity:0.75;margin:0 0 0.6rem;font-size:0.9rem'>اختر القسم من القائمة</p>", unsafe_allow_html=True)
+            st.markdown("<div style='text-align:center;font-size:40px'>🦅</div>", unsafe_allow_html=True)
+
+    st.markdown(
+        "<h2 style='text-align:center;margin:0.25rem 0 0.1rem'>🎙️ لوحة التحكم</h2>"
+        "<p style='text-align:center;opacity:0.75;margin:0 0 0.5rem;font-size:0.9rem'>اختر القسم من القائمة</p>",
+        unsafe_allow_html=True,
+    )
     st.divider()
+
     selected_page = st.session_state.get("selected_page", DEFAULT_PAGE)
     for page_label in PAGES:
         if st.button(

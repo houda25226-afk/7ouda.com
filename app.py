@@ -3073,24 +3073,21 @@ PAGES = {
 
 DEFAULT_PAGE = next(iter(PAGES))
 with st.sidebar:
-    brand_left, brand_center, brand_right = st.columns([0.18, 0.64, 0.18])
-    with brand_center:
-        import os
-        from pathlib import Path
-        _logo_candidates = [
-            Path(__file__).resolve().parent / "ahly_logo.png",
-            Path("ahly_logo.png"),
-            Path("/home/workdir/artifacts/ahly_logo.png"),
-        ]
-        _logo_path = next((p for p in _logo_candidates if p.exists()), None)
+    from pathlib import Path
+    _logo_candidates = [
+        Path(__file__).resolve().parent / "ahly_logo.png",
+        Path("ahly_logo.png"),
+        Path("/home/workdir/artifacts/ahly_logo.png"),
+    ]
+    _logo_path = next((p for p in _logo_candidates if p.exists()), None)
+    logo_col = st.columns([1, 2, 1])
+    with logo_col[1]:
         if _logo_path:
-            st.image(str(_logo_path), width=90)
+            st.image(str(_logo_path), use_container_width=True)
         else:
-            st.markdown("🦅")
-        st.title("🎙️ لوحة التحكم")
-        desc_left, desc_center, desc_right = st.columns([0.08, 0.84, 0.08])
-        with desc_center:
-            st.caption("اختر القسم من القائمة")
+            st.markdown("<div style='text-align:center;font-size:42px'>🦅</div>", unsafe_allow_html=True)
+    st.markdown("<h2 style='text-align:center;margin:0.2rem 0 0.1rem'>🎙️ لوحة التحكم</h2>", unsafe_allow_html=True)
+    st.markdown("<p style='text-align:center;opacity:0.75;margin:0 0 0.6rem;font-size:0.9rem'>اختر القسم من القائمة</p>", unsafe_allow_html=True)
     st.divider()
     selected_page = st.session_state.get("selected_page", DEFAULT_PAGE)
     for page_label in PAGES:

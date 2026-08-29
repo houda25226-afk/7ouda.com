@@ -819,9 +819,11 @@ def predict_batch(texts, tokenizer, model, device, batch_size=16):
         all_preds.extend(preds.cpu().tolist())
         all_confidences.extend(confidences.cpu().tolist())
 
+        done = min(i + batch_size, total)
+        pct = int(done / total * 100) if total else 100
         progress_bar.progress(
-            min((i + batch_size) / total, 1.0),
-            text=f"جارٍ التصنيف... ({min(i + batch_size, total)}/{total})",
+            done / total if total else 1.0,
+            text=f"جارٍ التصنيف... {pct}%  ({done}/{total})",
         )
 
     progress_bar.empty()
@@ -3073,10 +3075,18 @@ DEFAULT_PAGE = next(iter(PAGES))
 with st.sidebar:
     brand_left, brand_center, brand_right = st.columns([0.18, 0.64, 0.18])
     with brand_center:
-        st.image(
-            "https://upload.wikimedia.org/wikipedia/commons/thumb/d/d8/Al-Ahly_SC_Logo_1952.svg/150px-Al-Ahly_SC_Logo_1952.svg.png",
-            width=90,
-        )
+        import os
+        from pathlib import Path
+        _logo_candidates = [
+            Path(__file__).resolve().parent / "ahly_logo.png",
+            Path("ahly_logo.png"),
+            Path("/home/workdir/artifacts/ahly_logo.png"),
+        ]
+        _logo_path = next((p for p in _logo_candidates if p.exists()), None)
+        if _logo_path:
+            st.image(str(_logo_path), width=90)
+        else:
+            st.markdown("🦅")
         st.title("🎙️ لوحة التحكم")
         desc_left, desc_center, desc_right = st.columns([0.08, 0.84, 0.08])
         with desc_center:

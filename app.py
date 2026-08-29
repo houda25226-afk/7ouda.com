@@ -3080,7 +3080,7 @@ with st.sidebar:
     with c2:
         st.image(BytesIO(base64.b64decode(_AHLY_LOGO_B64)), width=110)
     st.markdown(
-        "<h2 style='text-align:center;margin:0.25rem 0 0.1rem'>🎙️ لوحة التحكم</h2>"
+        "<h2 style='text-align:center;margin:0.25rem 0 0.1rem'>🎙️ 𝔖𝔢𝔱𝔱𝔦𝔫𝔤𝔰</h2>"
         "<p style='text-align:center;opacity:0.75;margin:0 0 0.5rem;font-size:0.9rem'>اختر القسم من القائمة</p>",
         unsafe_allow_html=True,
     )

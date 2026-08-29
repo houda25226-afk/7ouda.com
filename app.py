@@ -664,7 +664,7 @@ def page_promises():
 
 
 st.set_page_config(
-    page_title="لوحة تحليل المكالمات | 7oudaModel",
+    page_title="لوحة تحليل المكالمات",
     page_icon="🎙️",
     layout="wide",
     initial_sidebar_state="expanded",
@@ -3073,7 +3073,10 @@ DEFAULT_PAGE = next(iter(PAGES))
 with st.sidebar:
     brand_left, brand_center, brand_right = st.columns([0.18, 0.64, 0.18])
     with brand_center:
-        st.caption("7OUDA MODEL")
+        st.image(
+            "https://upload.wikimedia.org/wikipedia/commons/thumb/d/d8/Al-Ahly_SC_Logo_1952.svg/150px-Al-Ahly_SC_Logo_1952.svg.png",
+            width=90,
+        )
         st.title("🎙️ لوحة التحكم")
         desc_left, desc_center, desc_right = st.columns([0.08, 0.84, 0.08])
         with desc_center:

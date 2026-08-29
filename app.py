@@ -1298,7 +1298,47 @@ def _build_activity_summary(df, class_col, sales_col, time_col, break_start=None
 
 
 def _activity_layout(**overrides):
-    return {**PLOTLY_LAYOUT, **overrides}
+    """تنسيق موحّد لكل رسوم داشبورد النشاط."""
+    base = {
+        **PLOTLY_LAYOUT,
+        "title_x": 0.5,
+        "title_font_size": 16,
+        "height": 380,
+        "bargap": 0.18,
+        "legend_title_text": "",
+        "legend": {
+            "orientation": "h",
+            "yanchor": "top",
+            "y": -0.22,
+            "x": 0.5,
+            "xanchor": "center",
+            "bgcolor": "rgba(0,0,0,0)",
+        },
+        "margin": dict(t=56, b=88, l=56, r=28),
+        "xaxis": dict(showgrid=False, automargin=True),
+        "yaxis": dict(showgrid=True, gridcolor=THEME.get("border_soft", "rgba(148,163,184,0.15)"), automargin=True),
+    }
+    # deep-merge shallow keys from overrides
+    for key, value in overrides.items():
+        if key in ("legend", "margin", "xaxis", "yaxis", "yaxis2") and isinstance(value, dict) and isinstance(base.get(key), dict):
+            base[key] = {**base[key], **value}
+        else:
+            base[key] = value
+    return base
+
+
+def _style_activity_bars(fig, horizontal=False):
+    fig.update_traces(
+        marker_line_width=0,
+        textposition="none",
+        cliponaxis=False,
+        hovertemplate=(
+            "<b>%{y}</b><br>%{fullData.name}: %{x:,}<extra></extra>"
+            if horizontal else
+            "<b>%{x}</b><br>%{fullData.name}: %{y:,}<extra></extra>"
+        ),
+    )
+    return fig
 
 
 def render_activity_kpi_cards(total, success, agent_count, success_rate, wasted_minutes):
@@ -1369,65 +1409,97 @@ def _render_activity_daily_chart(work, time_col, class_col=None):
     if trend.empty:
         st.info("لا توجد تواريخ صالحة لعرض النشاط اليومي.")
         return
-    trend["اليوم"] = trend["_activity_time"].dt.strftime("%Y-%m-%d")
+
+    trend["اليوم"] = trend["_activity_time"].dt.strftime("%m/%d")
+    trend["_day_key"] = trend["_activity_time"].dt.strftime("%Y-%m-%d")
     trend["_success_for_day"] = _activity_success_mask(trend, class_col)
-    daily = trend.groupby(["اليوم", "_agent_display"], as_index=False).agg(
+
+    daily = trend.groupby(["_day_key", "اليوم", "_agent_display"], as_index=False).agg(
         **{"عدد المكالمات": ("_agent_display", "size"), "المكالمات الناجحة": ("_success_for_day", "sum")}
     )
-    daily_totals = daily.groupby("اليوم", as_index=False).agg(
+    daily_totals = daily.groupby(["_day_key", "اليوم"], as_index=False).agg(
         **{"إجمالي المكالمات": ("عدد المكالمات", "sum"), "إجمالي الناجحة": ("المكالمات الناجحة", "sum")}
     )
     daily_totals["نسبة النجاح (%)"] = (
         daily_totals["إجمالي الناجحة"] / daily_totals["إجمالي المكالمات"].replace(0, pd.NA) * 100
     ).fillna(0).round(1)
-    sort_options = {
-        "التاريخ تصاعديًا": "date",
-        "إجمالي المكالمات تنازليًا": "calls",
-        "نسبة النجاح تنازليًا": "success_rate",
-    }
+
     sort_label = st.selectbox(
-        "ترتيب الـ Histogram اليومي",
-        list(sort_options.keys()),
-        key="activity_daily_sort_v1",
-        help="الترتيب يغيّر ترتيب الأيام على المحور الأفقي فقط.",
+        "ترتيب الأيام",
+        ["التاريخ تصاعديًا", "إجمالي المكالمات", "نسبة النجاح"],
+        key="activity_daily_sort_v2",
+        label_visibility="collapsed",
     )
-    sort_mode = sort_options[sort_label]
-    if sort_mode == "calls":
-        ordered_days = daily_totals.sort_values(["إجمالي المكالمات", "اليوم"], ascending=[False, True])["اليوم"].tolist()
-    elif sort_mode == "success_rate":
-        ordered_days = daily_totals.sort_values(["نسبة النجاح (%)", "إجمالي المكالمات", "اليوم"], ascending=[False, False, True])["اليوم"].tolist()
+    if sort_label == "إجمالي المكالمات":
+        ordered = daily_totals.sort_values(["إجمالي المكالمات", "_day_key"], ascending=[False, True])
+    elif sort_label == "نسبة النجاح":
+        ordered = daily_totals.sort_values(["نسبة النجاح (%)", "إجمالي المكالمات", "_day_key"], ascending=[False, False, True])
     else:
-        ordered_days = sorted(daily_totals["اليوم"].tolist())
-    daily["اليوم"] = pd.Categorical(daily["اليوم"], categories=ordered_days, ordered=True)
-    daily = daily.sort_values(["اليوم", "_agent_display"])
-    daily_totals["اليوم"] = pd.Categorical(daily_totals["اليوم"], categories=ordered_days, ordered=True)
-    daily_totals = daily_totals.sort_values("اليوم")
+        ordered = daily_totals.sort_values("_day_key")
+    ordered_keys = ordered["_day_key"].tolist()
+    label_map = dict(zip(daily_totals["_day_key"], daily_totals["اليوم"]))
+    ordered_labels = [label_map[k] for k in ordered_keys]
+
+    daily["_day_key"] = pd.Categorical(daily["_day_key"], categories=ordered_keys, ordered=True)
+    daily = daily.sort_values(["_day_key", "_agent_display"])
+    daily_totals = ordered.copy()
+    daily_totals["اليوم"] = daily_totals["_day_key"].map(label_map)
 
     fig = px.bar(
-        daily, x="اليوم", y="عدد المكالمات", color="_agent_display", barmode="group",
-        text_auto=True, custom_data=["_agent_display"], template=PLOTLY_TEMPLATE,
-        labels={"_agent_display": "المحصّل"}, color_discrete_sequence=ACTIVITY_AGENT_PALETTE,
+        daily,
+        x="_day_key",
+        y="عدد المكالمات",
+        color="_agent_display",
+        barmode="stack",
+        custom_data=["_agent_display"],
+        template=PLOTLY_TEMPLATE,
+        labels={"_agent_display": "المحصّل", "_day_key": "اليوم"},
+        color_discrete_sequence=ACTIVITY_AGENT_PALETTE,
     )
     fig.add_trace(go.Scatter(
-        x=daily_totals["اليوم"].astype(str), y=daily_totals["نسبة النجاح (%)"],
-        name="نسبة النجاح", mode="lines+markers+text", text=daily_totals["نسبة النجاح (%)"].map(lambda value: f"{value:.1f}%"),
-        textposition="top center", line={"color": ACTIVITY_AGENT_PALETTE[0], "width": 3},
-        marker={"color": ACTIVITY_AGENT_PALETTE[0], "size": 9, "line": {"color": THEME["surface"], "width": 2}},
-        yaxis="y2", customdata=[[""] for _ in range(len(daily_totals))],
+        x=daily_totals["_day_key"].astype(str),
+        y=daily_totals["نسبة النجاح (%)"],
+        name="نسبة النجاح",
+        mode="lines+markers",
+        line={"color": COLOR_WARN, "width": 2.5},
+        marker={"size": 8, "color": COLOR_WARN, "line": {"color": THEME["surface"], "width": 1.5}},
+        yaxis="y2",
         hovertemplate="<b>%{x}</b><br>نسبة النجاح: %{y:.1f}%<extra></extra>",
     ))
     fig.update_layout(**_activity_layout(
-        title="📊 Combo Chart يومي: المكالمات ونسبة النجاح", title_x=0.5,
-        xaxis_title="اليوم", yaxis_title="عدد المكالمات", height=400, bargap=0.14,
-        legend_title_text="", hovermode="x unified",
-        legend={"orientation": "h", "yanchor": "top", "y": -0.16, "x": 0.5, "xanchor": "center"},
-        margin={"t": 62, "b": 78, "l": 50, "r": 55},
-        xaxis={"type": "category", "categoryorder": "array", "categoryarray": ordered_days, "tickangle": -25},
-        yaxis={"title": "عدد المكالمات", "rangemode": "tozero"},
-        yaxis2={"title": "نسبة النجاح (%)", "overlaying": "y", "side": "right", "range": [0, 100], "ticksuffix": "%", "showgrid": False},
+        title="النشاط اليومي ونسبة النجاح",
+        xaxis_title="",
+        yaxis_title="عدد المكالمات",
+        hovermode="x unified",
+        bargap=0.25,
+        xaxis={
+            "type": "category",
+            "categoryorder": "array",
+            "categoryarray": ordered_keys,
+            "tickmode": "array",
+            "tickvals": ordered_keys,
+            "ticktext": ordered_labels,
+            "tickangle": 0,
+        },
+        yaxis={"rangemode": "tozero", "title": "عدد المكالمات"},
+        yaxis2={
+            "title": "نجاح %",
+            "overlaying": "y",
+            "side": "right",
+            "range": [0, 100],
+            "ticksuffix": "%",
+            "showgrid": False,
+            "zeroline": False,
+        },
+        margin=dict(t=56, b=88, l=56, r=52),
     ))
-    fig.update_traces(selector={"type": "bar"}, marker_line_width=0, hovertemplate="<b>%{x}</b><br>%{fullData.name}: %{y:,} مكالمة<extra></extra>")
+    _style_activity_bars(fig, horizontal=False)
+    # keep scatter hover as set
+    for tr in fig.data:
+        if tr.type == "scatter":
+            tr.hovertemplate = "<b>%{x}</b><br>نسبة النجاح: %{y:.1f}%<extra></extra>"
     render_selectable_chart(fig, "dashboard_activity_daily", filter_key=DASHBOARD_AGENT_FILTER_KEY)
+
 
 
 def _render_activity_hourly_chart(work, time_col):
@@ -1443,23 +1515,38 @@ def _render_activity_hourly_chart(work, time_col):
     trend["الساعة"] = trend["_activity_time"].dt.hour
     hour_min = int(trend["الساعة"].min())
     hour_max = int(trend["الساعة"].max())
-    hourly = trend.groupby(["الساعة", "_agent_display"], as_index=False).size().rename(columns={"size": "عدد المكالمات"})
+    hourly = (
+        trend.groupby(["الساعة", "_agent_display"], as_index=False)
+        .size()
+        .rename(columns={"size": "عدد المكالمات"})
+    )
     fig = px.bar(
-        hourly, x="الساعة", y="عدد المكالمات", color="_agent_display", barmode="stack",
-        text_auto=True, custom_data=["_agent_display"], template=PLOTLY_TEMPLATE,
-        labels={"_agent_display": "المحصّل"}, color_discrete_sequence=ACTIVITY_AGENT_PALETTE,
+        hourly,
+        x="الساعة",
+        y="عدد المكالمات",
+        color="_agent_display",
+        barmode="stack",
+        custom_data=["_agent_display"],
+        template=PLOTLY_TEMPLATE,
+        labels={"_agent_display": "المحصّل"},
+        color_discrete_sequence=ACTIVITY_AGENT_PALETTE,
     )
     fig.update_layout(**_activity_layout(
-        title="🕒 Histogram ساعي لنشاط المحصلين", title_x=0.5, xaxis_title="ساعة اليوم", yaxis_title="عدد المكالمات",
-        xaxis={"dtick": 1, "tickvals": list(range(hour_min, hour_max + 1)), "range": [max(-0.5, hour_min - 0.5), min(23.5, hour_max + 0.5)]}, height=400, bargap=0.06, legend_title_text="",
-        legend={"orientation": "h", "yanchor": "top", "y": -0.16, "x": 0.5, "xanchor": "center"},
-        margin={"t": 62, "b": 78, "l": 50, "r": 16},
+        title="توزيع المكالمات على ساعات اليوم",
+        xaxis_title="الساعة",
+        yaxis_title="عدد المكالمات",
+        bargap=0.12,
+        xaxis={
+            "dtick": 1,
+            "tickvals": list(range(hour_min, hour_max + 1)),
+            "range": [hour_min - 0.5, hour_max + 0.5],
+            "ticksuffix": ":00",
+        },
+        yaxis={"rangemode": "tozero"},
     ))
-    fig.update_traces(
-        marker_line_width=0,
-        hovertemplate="<b>الساعة %{x}:00</b><br>%{fullData.name}: %{y:,} مكالمة<extra></extra>",
-    )
+    _style_activity_bars(fig, horizontal=False)
     render_selectable_chart(fig, "dashboard_activity_hourly", filter_key=DASHBOARD_AGENT_FILTER_KEY)
+
 
 
 def _render_activity_outcome_donut(work, class_col):
@@ -1480,7 +1567,7 @@ def _render_activity_outcome_donut(work, class_col):
         hovertemplate="<b>%{label}</b><br>العدد: %{value:,}<br>النسبة: %{percent}<extra></extra>",
     )
     fig.update_layout(**_activity_layout(
-        title="🎯 الناجحة مقابل غير الناجحة", title_x=0.5, height=400,
+        title="توزيع نتائج المكالمات", title_x=0.5, height=380,
         legend={"orientation": "h", "yanchor": "top", "y": -0.12, "x": 0.5, "xanchor": "center"},
         margin={"t": 62, "b": 62, "l": 16, "r": 16},
         annotations=[{"text": f"{rate:.1f}%<br>نجاح", "x": 0.5, "y": 0.5, "font": {"size": 22, "color": COLOR_SUCCESS}, "showarrow": False}],
@@ -1498,20 +1585,19 @@ def _render_activity_no_answer_chart(agent):
     plot = plot.sort_values("إجمالي لا يرد", ascending=True)
     long = plot.melt(id_vars=["المحصّل"], value_vars=available, var_name="الحالة", value_name="العدد")
     fig = px.bar(
-        long, x="العدد", y="المحصّل", orientation="h", color="الحالة", barmode="stack", text_auto=True,
+        long, x="العدد", y="المحصّل", orientation="h", color="الحالة", barmode="stack",
         template=PLOTLY_TEMPLATE, category_orders={"الحالة": ACTIVITY_NO_ANSWER_STATES},
         color_discrete_sequence=ACTIVITY_STATE_PALETTE,
     )
     fig.update_layout(**_activity_layout(
-        title="📵 حالات لا يرد لكل محصل (تشمل مغلق والتكرار)", title_x=0.5, xaxis_title="عدد الحالات", yaxis_title="",
-        height=400, legend_title_text="", legend={"orientation": "h", "yanchor": "top", "y": -0.16, "x": 0.5, "xanchor": "center"},
-        margin={"t": 62, "b": 78, "l": 100, "r": 16}, yaxis={"categoryorder": "total ascending"},
+        title="حالات لا يرد / مغلق",
+        xaxis_title="العدد",
+        yaxis_title="",
+        margin=dict(t=56, b=88, l=120, r=24),
+        yaxis={"categoryorder": "total ascending"},
     ))
-    fig.update_traces(
-        marker_line_width=0,
-        customdata=long["المحصّل"],
-        hovertemplate="<b>%{y}</b><br>%{fullData.name}: %{x:,}<extra></extra>",
-    )
+    _style_activity_bars(fig, horizontal=True)
+    fig.update_traces(customdata=long["المحصّل"])
     render_selectable_chart(fig, "dashboard_no_answer_states", filter_key=DASHBOARD_AGENT_FILTER_KEY)
 
 
@@ -1548,17 +1634,16 @@ def _render_activity_success_rate_chart(agent):
         template=PLOTLY_TEMPLATE,
     )
     fig.update_layout(**_activity_layout(
-        title="📈 نسبة نجاح كل محصّل",
-        title_x=0.5,
-        xaxis_title="نسبة النجاح (%)",
+        title="نسبة النجاح حسب المحصّل",
+        xaxis_title="%",
         yaxis_title="",
-        xaxis={"range": [0, 100]},
-        height=400,
+        xaxis={"range": [0, 105]},
         coloraxis_showscale=False,
-        margin={"t": 62, "b": 50, "l": 100, "r": 40},
+        showlegend=False,
+        margin=dict(t=56, b=56, l=120, r=36),
     ))
     fig.update_traces(
-        texttemplate="%{text:.1f}%",
+        texttemplate="%{x:.0f}%",
         textposition="outside",
         cliponaxis=False,
         marker_line_width=0,
@@ -1584,13 +1669,12 @@ def _render_activity_work_hours_chart(agent):
         template=PLOTLY_TEMPLATE,
     )
     fig.update_layout(**_activity_layout(
-        title="🕓 إجمالي ساعات العمل لكل محصّل",
-        title_x=0.5,
+        title="ساعات العمل حسب المحصّل",
         xaxis_title="ساعة",
         yaxis_title="",
-        height=400,
         coloraxis_showscale=False,
-        margin={"t": 62, "b": 50, "l": 100, "r": 40},
+        showlegend=False,
+        margin=dict(t=56, b=56, l=120, r=36),
     ))
     custom = plot["المحصّل"]
     hover = "<b>%{y}</b><br>ساعات العمل: %{x:.1f}<extra></extra>"
@@ -1628,25 +1712,17 @@ def _render_activity_promise_payment_chart(agent):
         orientation="h",
         color="الحالة",
         barmode="stack",
-        text_auto=True,
         template=PLOTLY_TEMPLATE,
         color_discrete_sequence=[COLOR_SUCCESS, COLOR_ACCENT, COLOR_WARN, "#8B5CF6", "#3B82F6"],
     )
     fig.update_layout(**_activity_layout(
-        title="🤝 الوعود وحالات السداد لكل محصّل",
-        title_x=0.5,
+        title="الوعود وحالات السداد",
         xaxis_title="العدد",
         yaxis_title="",
-        height=400,
-        legend_title_text="",
-        legend={"orientation": "h", "yanchor": "top", "y": -0.18, "x": 0.5, "xanchor": "center"},
-        margin={"t": 62, "b": 80, "l": 100, "r": 16},
+        margin=dict(t=56, b=88, l=120, r=24),
     ))
-    fig.update_traces(
-        marker_line_width=0,
-        customdata=long["المحصّل"],
-        hovertemplate="<b>%{y}</b><br>%{fullData.name}: %{x:,}<extra></extra>",
-    )
+    _style_activity_bars(fig, horizontal=True)
+    fig.update_traces(customdata=long["المحصّل"])
     render_selectable_chart(fig, "dashboard_promise_payment", filter_key=DASHBOARD_AGENT_FILTER_KEY)
 
 
@@ -1668,11 +1744,11 @@ def render_activity_dashboard(df, class_col=None, sales_col=None, time_col=None,
     success_rate = success / total * 100 if total else 0
     wasted = float(pd.to_numeric(work.get(WASTED_TIME_COL, pd.Series(dtype=float)), errors="coerce").fillna(0).sum())
 
-    st.markdown("### 📌 مؤشرات الأداء الرئيسية")
+    st.markdown("##### 📌 مؤشرات الأداء الرئيسية")
     render_activity_kpi_cards(total, success, int(agent["المحصّل"].nunique()), success_rate, wasted)
-    st.caption("💡 اضغط على اسم أي محصّل داخل الرسوم لتطبيق فلتر سريع على كل اللوحة.")
+    st.caption("اضغط على محصّل داخل أي رسم لتطبيق فلتر على اللوحة.")
 
-    st.markdown("### 📅 النشاط عبر الزمن")
+    st.markdown("##### 📅 النشاط عبر الزمن")
     daily_col, hourly_col = st.columns(2)
     with daily_col:
         with st.container(border=True):
@@ -1681,7 +1757,7 @@ def render_activity_dashboard(df, class_col=None, sales_col=None, time_col=None,
         with st.container(border=True):
             _render_activity_hourly_chart(work, time_col)
 
-    st.markdown("### 🎯 نتائج التصنيف والأداء")
+    st.markdown("##### 🎯 نتائج التصنيف والأداء")
     outcome_col, rate_col = st.columns(2)
     with outcome_col:
         with st.container(border=True):
@@ -1690,7 +1766,7 @@ def render_activity_dashboard(df, class_col=None, sales_col=None, time_col=None,
         with st.container(border=True):
             _render_activity_success_rate_chart(agent)
 
-    st.markdown("### 📞 حالات المتابعة")
+    st.markdown("##### 📞 حالات المتابعة")
     no_answer_col, promise_col = st.columns(2)
     with no_answer_col:
         with st.container(border=True):
@@ -1699,7 +1775,7 @@ def render_activity_dashboard(df, class_col=None, sales_col=None, time_col=None,
         with st.container(border=True):
             _render_activity_promise_payment_chart(agent)
 
-    st.markdown("### ⏱️ الوقت والعمل")
+    st.markdown("##### ⏱️ الوقت والعمل")
     hours_col, wasted_col = st.columns(2)
     with hours_col:
         with st.container(border=True):
@@ -1719,13 +1795,12 @@ def render_activity_dashboard(df, class_col=None, sales_col=None, time_col=None,
                     template=PLOTLY_TEMPLATE,
                 )
                 fig.update_layout(**_activity_layout(
-                    title="⏳ الوقت المهدر لكل محصّل",
-                    title_x=0.5,
+                    title="الوقت المهدر حسب المحصّل",
                     xaxis_title="دقيقة",
                     yaxis_title="",
-                    height=400,
                     coloraxis_showscale=False,
-                    margin={"t": 62, "b": 50, "l": 100, "r": 40},
+                    showlegend=False,
+                    margin=dict(t=56, b=56, l=120, r=36),
                 ))
                 fig.update_traces(
                     texttemplate="%{text:.0f}",
@@ -1739,7 +1814,7 @@ def render_activity_dashboard(df, class_col=None, sales_col=None, time_col=None,
             else:
                 st.info("لا يوجد عمود وقت مهدر في الملف الحالي.")
 
-    st.markdown("### 📋 جدول أداء المحصّلين")
+    st.markdown("##### 📋 جدول أداء المحصّلين")
     with st.container(border=True):
         if not sub_col:
             st.warning("لم يتم العثور على عمود Sub State؛ أعمدة الحالات ستظهر بصفر.")
@@ -2530,7 +2605,7 @@ def render_agent_activity_charts(agent, df, sales_col, period_title):
         )
         fig.update_layout(
             **PLOTLY_LAYOUT,
-            title="📈 نسبة نجاح كل محصّل",
+            title="نسبة النجاح حسب المحصّل",
             xaxis_range=[0, 100],
             xaxis_title="نسبة النجاح (%)",
             yaxis_title="",
@@ -3124,7 +3199,7 @@ def _render_dashboard(df, class_col, sales_col, time_col, source_name, filter_hi
         break_start=break_start,
         break_end=break_end,
     )
-    st.markdown("### ⬇️ التصدير")
+    st.markdown("##### ⬇️ التصدير")
     dashboard_html = build_dashboard_html(
         df,
         class_col=class_col,
@@ -3180,7 +3255,7 @@ def _render_native_multi_slicer(label, options, state_key, empty_label):
                 for widget_key in widget_keys:
                     st.session_state[widget_key] = False
                 st.rerun()
-        st.caption("اختار أكثر من قيمة؛ لن تظهر الاختيارات كوسوم خارج القائمة.")
+        st.caption("يمكن اختيار أكثر من قيمة.")
         for option, widget_key in zip(options, widget_keys):
             st.session_state.setdefault(widget_key, False)
             st.checkbox(option, key=widget_key, label_visibility="visible")
@@ -3200,45 +3275,46 @@ def _render_slicers(df, sales_col, time_col):
     class_labels = ["الكل", "ناجحة", "غير ناجحة"]
     class_values = {"الكل": None, "ناجحة": 1, "غير ناجحة": 0}
 
-    header_col, action_col = st.columns([5, 1])
-    with header_col:
-        st.markdown("### 🎚️ فلاتر التحليل")
-        st.caption("اترك الفلاتر فارغة/على «الكل» لعرض كل البيانات · اضغط على الرسوم لتصفية محصّل واحد.")
-    with action_col:
-        if st.button("↺ إعادة ضبط", key="clear_dashboard_slicers_v5", use_container_width=True):
-            for key in ("dash_agent_slicer_v5", "dash_state_slicer_v5", "dash_date_slicer_v5", "dash_class_slicer_v5"):
-                st.session_state.pop(key, None)
-            for prefix in ("dash_agent_slicer_v6", "dash_state_slicer_v6"):
-                for session_key in list(st.session_state.keys()):
-                    if session_key.startswith(prefix + "__"):
-                        st.session_state.pop(session_key, None)
-            _clear_dashboard_chart_filter()
-            st.rerun()
+    with st.container(border=True):
+        header_col, action_col = st.columns([5, 1])
+        with header_col:
+            st.markdown("##### 🎚️ فلاتر التحليل")
+        with action_col:
+            if st.button("↺ إعادة ضبط", key="clear_dashboard_slicers_v5", use_container_width=True):
+                for key in ("dash_agent_slicer_v5", "dash_state_slicer_v5", "dash_date_slicer_v5", "dash_class_slicer_v5"):
+                    st.session_state.pop(key, None)
+                for prefix in ("dash_agent_slicer_v6", "dash_state_slicer_v6"):
+                    for session_key in list(st.session_state.keys()):
+                        if session_key.startswith(prefix + "__"):
+                            st.session_state.pop(session_key, None)
+                _clear_dashboard_chart_filter()
+                st.rerun()
 
-    slicer_cols = st.columns(4, gap="small")
-    with slicer_cols[0]:
-        selected_agents = _render_native_multi_slicer(
-            "👤 المحصلون", agents, "dash_agent_slicer_v6", "كل المحصلين"
-        )
-    with slicer_cols[1]:
-        selected_substates = _render_native_multi_slicer(
-            "📊 الحالات الفرعية", substates, "dash_state_slicer_v6", "كل الحالات"
-        ) if substates else []
-    with slicer_cols[2]:
-        date_range = st.date_input(
-            "📅 التاريخ",
-            value=(date_min, date_max) if date_min is not None else None,
-            min_value=date_min,
-            max_value=date_max,
-            key="dash_date_slicer_v5",
-        ) if date_min is not None else None
-    with slicer_cols[3]:
-        selected_class = st.selectbox(
-            "🏷️ التصنيف",
-            class_labels,
-            index=0,
-            key="dash_class_slicer_v5",
-        )
+        slicer_cols = st.columns(4, gap="medium")
+        with slicer_cols[0]:
+            selected_agents = _render_native_multi_slicer(
+                "المحصّلون", agents, "dash_agent_slicer_v6", "كل المحصّلين"
+            )
+        with slicer_cols[1]:
+            selected_substates = _render_native_multi_slicer(
+                "الحالات الفرعية", substates, "dash_state_slicer_v6", "كل الحالات"
+            ) if substates else []
+        with slicer_cols[2]:
+            date_range = st.date_input(
+                "الفترة",
+                value=(date_min, date_max) if date_min is not None else None,
+                min_value=date_min,
+                max_value=date_max,
+                key="dash_date_slicer_v5",
+            ) if date_min is not None else None
+        with slicer_cols[3]:
+            selected_class = st.selectbox(
+                "التصنيف",
+                class_labels,
+                index=0,
+                key="dash_class_slicer_v5",
+            )
+        st.caption("اترك الفلاتر على «الكل» لعرض كل البيانات. اضغط على أي محصّل داخل الرسوم لتطبيق فلتر سريع.")
 
     selected_agents = [str(agent) for agent in selected_agents]
     selected_substates = [str(state) for state in selected_substates]

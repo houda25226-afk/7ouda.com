@@ -43,6 +43,8 @@ WASTED_TIME_COL = "الوقت_المهدر_دقيقة"
 
 ID_CANDIDATES = ["Account ID", "account id", "AccountID", "ID", "id", "رقم الحساب", "الرقم التعريفي", "Account No", "account no", "Account Number"]
 SALES_PERSON_CANDIDATES = ["Create By", "create by", "CreateBy", "Created By", "created by", "Sales Person", "sales person", "المحصّل", "Salesperson", "salesperson", "SalesPerson"]
+COLLECTED_BY_CANDIDATES = ["Collected by", "collected by", "Collected By", "COLLECTED BY", "المحصل", "المحصّل", "Collector", "collector"]
+ACCOUNT_NUMBER_CANDIDATES = ["Customer Account number", "Customer Account Number", "customer account number", "Customer Account No", "Account Number", "account number", "Account No", "رقم حساب العميل", "رقم الحساب"]
 CREATED_ON_CANDIDATES = ["Created On", "created on", "CreatedOn", "تاريخ الافادة"]
 CLAIM_CANDIDATES = ["Claim", "claim", "CLAIM", "رقم المطالبة", "رقم المطالبه"]
 DUPLICATE_WINDOW_MINUTES = 20
@@ -2130,39 +2132,39 @@ def classify_period_file(uploaded_file, period_key):
 
 
 def render_pivot_section(df: pd.DataFrame, key_prefix: str):
-    """قسم Pivot Table تفاعلي (زي إكسيل): تختار الصفوف/الأعمدة/القيم/نوع التجميع.
-    بيرجع الـ pivot الناتج (أو None لو مفيش) عشان يتضاف كـ شيت إضافي في نفس ملف الإكسيل اللي بيتنزل."""
+    """Pivot Table ثابت: الصفوف = المحصل (Collected by)، الأعمدة = التصنيف،
+    والقيم = عدد المكالمات المغطاه (عدّ الصفوف اللي ليها رقم حساب عميل في عمود Customer Account number).
+    بيرجع الـ pivot الناتج (أو None لو الأعمدة المطلوبة مش موجودة) عشان يتضاف كـ شيت إضافي في نفس ملف الإكسيل."""
     if df is None or df.empty:
         return None
 
+    collected_col = find_column(df, COLLECTED_BY_CANDIDATES)
+    account_col = find_column(df, ACCOUNT_NUMBER_CANDIDATES)
+    class_col = CLASSIFICATION_COL if CLASSIFICATION_COL in df.columns else None
+
     with st.expander("📊 Pivot Table", expanded=False):
-        columns_list = df.columns.tolist()
-        c1, c2, c3 = st.columns(3)
-        with c1:
-            rows = st.selectbox("الصفوف (Rows)", columns_list, key=f"{key_prefix}_pivot_rows")
-        with c2:
-            cols = st.selectbox("الأعمدة (Columns)", ["بدون"] + columns_list, key=f"{key_prefix}_pivot_cols")
-        with c3:
-            values_col = st.selectbox("القيم (Values)", columns_list, key=f"{key_prefix}_pivot_values")
-
-        agg_func = st.selectbox(
-            "نوع التجميع",
-            ["count", "sum", "mean", "nunique", "min", "max"],
-            key=f"{key_prefix}_pivot_agg",
-        )
-
-        try:
-            pivot_df = pd.pivot_table(
-                df,
-                index=rows,
-                columns=None if cols == "بدون" else cols,
-                values=values_col,
-                aggfunc=agg_func,
-                fill_value=0,
-            )
-        except Exception as e:
-            st.warning(f"تعذر إنشاء الـ Pivot: {e}")
+        missing = [
+            label for label, col in [
+                ("المحصل (Collected by)", collected_col),
+                ("التصنيف", class_col),
+                ("رقم حساب العميل (Customer Account number)", account_col),
+            ] if col is None
+        ]
+        if missing:
+            st.warning("تعذر إنشاء الـ Pivot — الأعمدة دي مش موجودة في الملف: " + "، ".join(missing))
             return None
+
+        pivot_df = pd.pivot_table(
+            df,
+            index=collected_col,
+            columns=class_col,
+            values=account_col,
+            aggfunc="count",
+            fill_value=0,
+            margins=True,
+            margins_name="الإجمالي",
+        )
+        pivot_df = pivot_df.rename_axis(index="المحصل")
 
         st.dataframe(pivot_df, use_container_width=True)
         return pivot_df

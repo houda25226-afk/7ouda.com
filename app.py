@@ -2291,8 +2291,8 @@ def _inject_native_pivot_table(xlsx_bytes, df_columns, table_name, pivot_sheet_n
         f'{col_fields_xml}'
         f'<dataFields count="{2 if data_idx_2 is not None else 1}">'
         f'<dataField name="{_xml_escape(data_field_label)}" fld="{data_idx}" subtotal="{subtotal}" baseField="0" baseItem="0"/>'
-        f'<dataField name="{_xml_escape(data_field_label_2)}" fld="{data_idx_2}" subtotal="{subtotal_2}" baseField="0" baseItem="0"/>' if data_idx_2 is not None else ""
-        "</dataFields>"
+        + (f'<dataField name="{_xml_escape(data_field_label_2)}" fld="{data_idx_2}" subtotal="{subtotal_2}" baseField="0" baseItem="0"/>' if data_idx_2 is not None else "")
+        + "</dataFields>"
         '<pivotTableStyleInfo name="PivotStyleMedium9" showRowHeaders="1" showColHeaders="1" showRowStripes="0" showColStripes="0" showLastColumn="1"/>'
         "</pivotTableDefinition>"
     ).encode("utf-8")

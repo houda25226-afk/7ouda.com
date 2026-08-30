@@ -2034,6 +2034,358 @@ def read_uploaded_dataframe(uploaded_file):
     return pd.read_excel(io.BytesIO(data))
 
 
+def _xml_escape(value):
+    return (
+        str(value)
+        .replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+        .replace('"', "&quot;")
+        .replace("'", "&apos;")
+    )
+
+
+def _sanitize_table_name(name: str) -> str:
+    cleaned = re.sub(r"[^A-Za-z0-9_]", "_", name)
+    if not cleaned or not cleaned[0].isalpha():
+        cleaned = "T_" + cleaned
+    return cleaned[:60]
+
+
+def _build_base_workbook_bytes(df: pd.DataFrame, data_sheet_name: str, table_name: str, pivot_sheet_name: str = "Pivot Table") -> bytes:
+    """بيبني ملف إكسيل بـ openpyxl فيه شيت البيانات كـ Excel Table (ListObject) رسمي + شيت فاضي للـ Pivot."""
+    wb = Workbook()
+    ws = wb.active
+    ws.title = data_sheet_name
+    ws.append([str(c) for c in df.columns])
+    for row in df.itertuples(index=False, name=None):
+        ws.append(list(row))
+    last_row = max(ws.max_row, 2)
+    last_col_letter = get_column_letter(len(df.columns))
+    tab = Table(displayName=table_name, ref=f"A1:{last_col_letter}{last_row}")
+    tab.tableStyleInfo = TableStyleInfo(name="TableStyleMedium9", showRowStripes=True)
+    ws.add_table(tab)
+    wb.create_sheet(pivot_sheet_name)
+    buf = BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
+
+
+def _inject_native_pivot_table(
+    xlsx_bytes,
+    df_columns,
+    table_name,
+    pivot_sheet_name,
+    row_field,
+    data_field,
+    data_field_label,
+    col_field=None,
+    subtotal="count",
+    data_field2=None,
+    data_field2_label=None,
+    subtotal2="count",
+):
+    """بيحقن Pivot Table حقيقي (native، قابل للتحديث والسحب والإفلات) جوه ملف الإكسيل — نفس اللي بتعمله
+    يدوي في إكسيل بـ Insert > PivotTable. بيتحدث تلقائي من الـ Excel Table لما تفتح الملف."""
+    df_columns = list(df_columns)
+    row_idx = df_columns.index(row_field)
+    col_idx = df_columns.index(col_field) if col_field else None
+    data_idx = df_columns.index(data_field)
+    data_idx2 = df_columns.index(data_field2) if data_field2 else None
+    n_fields = len(df_columns)
+    data_indices = {data_idx}
+    if data_idx2 is not None:
+        data_indices.add(data_idx2)
+
+    zin = zipfile.ZipFile(BytesIO(xlsx_bytes), "r")
+    data = {n: zin.read(n) for n in zin.namelist()}
+    zin.close()
+
+    wb_xml = data["xl/workbook.xml"].decode("utf-8")
+    wb_rels = data["xl/_rels/workbook.xml.rels"].decode("utf-8")
+
+    name_to_rid = {}
+    for tag in re.findall(r"<sheet [^>]*/>", wb_xml):
+        m_name = re.search(r'name="([^"]+)"', tag)
+        m_rid = re.search(r'r:id="([^"]+)"', tag)
+        if m_name and m_rid:
+            name_to_rid[m_name.group(1)] = m_rid.group(1)
+    pivot_rid = name_to_rid[pivot_sheet_name]
+
+    rid_to_target = {}
+    for tag in re.findall(r"<Relationship [^>]*/>", wb_rels):
+        m_id = re.search(r'Id="([^"]+)"', tag)
+        m_target = re.search(r'Target="([^"]+)"', tag)
+        if m_id and m_target:
+            rid_to_target[m_id.group(1)] = m_target.group(1)
+    pivot_sheet_target = rid_to_target[pivot_rid]
+    pivot_sheet_path = pivot_sheet_target.lstrip("/")
+    if not pivot_sheet_path.startswith("xl/"):
+        pivot_sheet_path = "xl/" + pivot_sheet_path
+    sheet_file = pivot_sheet_path.split("/")[-1]
+
+    existing_ids = [int(re.sub(r"\D", "", rid)) for rid in re.findall(r'Id="(rId\d+)"', wb_rels)]
+    cache_rid = f"rId{max(existing_ids) + 1}"
+
+    wb_xml = wb_xml.replace(
+        "</workbook>",
+        f'<pivotCaches><pivotCache cacheId="1" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" r:id="{cache_rid}"/></pivotCaches></workbook>',
+    )
+    data["xl/workbook.xml"] = wb_xml.encode("utf-8")
+
+    new_rel = f'<Relationship Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/pivotCacheDefinition" Target="pivotCache/pivotCacheDefinition1.xml" Id="{cache_rid}"/>'
+    wb_rels = wb_rels.replace("</Relationships>", new_rel + "</Relationships>")
+    data["xl/_rels/workbook.xml.rels"] = wb_rels.encode("utf-8")
+
+    data[f"xl/worksheets/_rels/{sheet_file}.rels"] = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+        '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/pivotTable" Target="../pivotTables/pivotTable1.xml"/>'
+        "</Relationships>"
+    ).encode("utf-8")
+
+    ct = data["[Content_Types].xml"].decode("utf-8")
+    overrides = (
+        '<Override PartName="/xl/pivotCache/pivotCacheDefinition1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.pivotCacheDefinition+xml"/>'
+        '<Override PartName="/xl/pivotCache/pivotCacheRecords1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.pivotCacheRecords+xml"/>'
+        '<Override PartName="/xl/pivotTables/pivotTable1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.pivotTable+xml"/>'
+    )
+    data["[Content_Types].xml"] = ct.replace("</Types>", overrides + "</Types>").encode("utf-8")
+
+    cache_fields_xml = "".join(
+        f'<cacheField name="{_xml_escape(col)}" numFmtId="0"><sharedItems/></cacheField>' for col in df_columns
+    )
+    data["xl/pivotCache/pivotCacheDefinition1.xml"] = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<pivotCacheDefinition xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" '
+        'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" r:id="rId1" '
+        'refreshOnLoad="1" refreshedBy="Claude" refreshedDate="45900" createdVersion="6" refreshedVersion="6" '
+        f'minRefreshableVersion="3" recordCount="0">'
+        f'<cacheSource type="worksheet"><worksheetSource name="{table_name}"/></cacheSource>'
+        f'<cacheFields count="{n_fields}">{cache_fields_xml}</cacheFields>'
+        "</pivotCacheDefinition>"
+    ).encode("utf-8")
+    data["xl/pivotCache/pivotCacheRecords1.xml"] = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<pivotCacheRecords xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" '
+        'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" count="0"/>'
+    ).encode("utf-8")
+    data["xl/pivotCache/_rels/pivotCacheDefinition1.xml.rels"] = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+        '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/pivotCacheRecords" Target="pivotCacheRecords1.xml"/>'
+        "</Relationships>"
+    ).encode("utf-8")
+
+    pivot_fields_parts = []
+    for i in range(n_fields):
+        if i == row_idx:
+            pivot_fields_parts.append(
+                '<pivotField axis="axisRow" showAll="0"><items count="1"><item t="default"/></items></pivotField>'
+            )
+        elif col_idx is not None and i == col_idx:
+            pivot_fields_parts.append(
+                '<pivotField axis="axisCol" showAll="0"><items count="1"><item t="default"/></items></pivotField>'
+            )
+        elif i in data_indices:
+            pivot_fields_parts.append('<pivotField dataField="1" showAll="0"/>')
+        else:
+            pivot_fields_parts.append('<pivotField showAll="0"/>')
+    pivot_fields_xml = "".join(pivot_fields_parts)
+
+    data_fields_parts = [
+        f'<dataField name="{_xml_escape(data_field_label)}" fld="{data_idx}" subtotal="{subtotal}" baseField="0" baseItem="0"/>'
+    ]
+    if data_idx2 is not None:
+        label2 = data_field2_label or f"عدد {data_field2}"
+        data_fields_parts.append(
+            f'<dataField name="{_xml_escape(label2)}" fld="{data_idx2}" subtotal="{subtotal2}" baseField="0" baseItem="0"/>'
+        )
+    n_data_fields = len(data_fields_parts)
+    data_fields_xml = (
+        f'<dataFields count="{n_data_fields}">'
+        + "".join(data_fields_parts)
+        + "</dataFields>"
+    )
+
+    # مع أكتر من data field لازم نضيف محور Values (x="-2") على الأعمدة
+    # عشان Excel ما يشيلش الـ PivotTable أثناء الإصلاح.
+    if col_idx is not None:
+        col_fields_xml = (
+            f'<colFields count="1"><field x="{col_idx}"/></colFields>'
+            '<colItems count="1"><i><x/></i></colItems>'
+        )
+    elif n_data_fields > 1:
+        col_items = "".join(f'<i><x v="{i}"/></i>' if i else "<i><x/></i>" for i in range(n_data_fields))
+        # الصيغة الشائعة في OOXML لـ Values على الأعمدة:
+        # <colFields count="1"><field x="-2"/></colFields>
+        col_items = "".join(
+            ("<i><x/></i>" if i == 0 else f'<i><x i="{i}"/></i>') for i in range(n_data_fields)
+        )
+        col_fields_xml = (
+            '<colFields count="1"><field x="-2"/></colFields>'
+            f'<colItems count="{n_data_fields}">{col_items}</colItems>'
+        )
+    else:
+        col_fields_xml = ""
+
+    data["xl/pivotTables/pivotTable1.xml"] = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<pivotTableDefinition xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" '
+        'name="PivotTable1" cacheId="1" applyNumberFormats="0" applyBorderFormats="0" applyFontFormats="0" '
+        'applyPatternFormats="0" applyAlignmentFormats="0" applyWidthHeightFormats="1" dataCaption="Values" '
+        'updatedVersion="6" minRefreshableVersion="3" useAutoFormatting="1" itemPrintTitles="1" createdVersion="6" '
+        'indent="0" outline="1" outlineData="1" multipleFieldFilters="0">'
+        '<location ref="A3:D30" firstHeaderRow="1" firstDataRow="2" firstDataCol="1"/>'
+        f'<pivotFields count="{n_fields}">{pivot_fields_xml}</pivotFields>'
+        f'<rowFields count="1"><field x="{row_idx}"/></rowFields>'
+        '<rowItems count="1"><i><x/></i></rowItems>'
+        f"{col_fields_xml}"
+        f"{data_fields_xml}"
+        '<pivotTableStyleInfo name="PivotStyleMedium9" showRowHeaders="1" showColHeaders="1" showRowStripes="0" showColStripes="0" showLastColumn="1"/>'
+        "</pivotTableDefinition>"
+    ).encode("utf-8")
+    data["xl/pivotTables/_rels/pivotTable1.xml.rels"] = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+        '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/pivotCacheDefinition" Target="../pivotCache/pivotCacheDefinition1.xml"/>'
+        "</Relationships>"
+    ).encode("utf-8")
+
+    out_buf = BytesIO()
+    zout = zipfile.ZipFile(out_buf, "w", zipfile.ZIP_DEFLATED)
+    for n, content in data.items():
+        zout.writestr(n, content)
+    zout.close()
+    return out_buf.getvalue()
+
+
+def build_excel_with_native_pivot(result_df: pd.DataFrame, data_sheet_name: str, key_prefix: str):
+    """بيبني ملف إكسيل فيه شيت البيانات (كـ Excel Table) + شيت Pivot Table حقيقي (native) —
+    المحصل في الصفوف، ومجموع عمود التصنيف (SUM) + عدد Customer Account Number (COUNT) في القيم.
+    بيرجع (bytes, تم إضافة بيفوت ولا لأ)."""
+    collected_col = find_column(result_df, COLLECTED_BY_CANDIDATES)
+    class_col = CLASSIFICATION_COL if CLASSIFICATION_COL in result_df.columns else None
+    account_col = find_column(result_df, ACCOUNT_NUMBER_CANDIDATES)
+
+    table_name = _sanitize_table_name(f"tbl_{key_prefix}")
+    base_bytes = _build_base_workbook_bytes(result_df, data_sheet_name, table_name)
+
+    if not (collected_col and class_col):
+        return base_bytes, False
+
+    kwargs = dict(
+        xlsx_bytes=base_bytes,
+        df_columns=result_df.columns,
+        table_name=table_name,
+        pivot_sheet_name="Pivot Table",
+        row_field=collected_col,
+        data_field=class_col,
+        data_field_label="مجموع التصنيف",
+        subtotal="sum",
+    )
+    if account_col:
+        kwargs.update(
+            data_field2=account_col,
+            data_field2_label="عدد Customer Account Number",
+            subtotal2="count",
+        )
+
+    final_bytes = _inject_native_pivot_table(**kwargs)
+    return final_bytes, True
+
+
+def render_pivot_section(df: pd.DataFrame, key_prefix: str):
+    """معاينة سريعة جوه السيستم بس (نفس منطق الـ Pivot اللي هيتضاف حقيقي في ملف الإكسيل):
+    الصفوف = المحصل، القيم = مجموع (SUM) عمود التصنيف + عدد Customer Account Number."""
+    if df is None or df.empty:
+        return
+
+    collected_col = find_column(df, COLLECTED_BY_CANDIDATES)
+    class_col = CLASSIFICATION_COL if CLASSIFICATION_COL in df.columns else None
+    account_col = find_column(df, ACCOUNT_NUMBER_CANDIDATES)
+
+    with st.expander(
+        "📊 معاينة الـ Pivot Table (هتلاقي النسخة الحقيقية القابلة للتعديل جوه ملف الإكسيل بعد التحميل)",
+        expanded=False,
+    ):
+        missing = [
+            label
+            for label, col in [
+                ("المحصل (Created by)", collected_col),
+                ("التصنيف", class_col),
+            ]
+            if col is None
+        ]
+        if missing:
+            st.warning("تعذر إنشاء الـ Pivot — الأعمدة دي مش موجودة في الملف: " + "، ".join(missing))
+            return
+
+        agg = {class_col: "sum"}
+        if account_col:
+            agg[account_col] = "count"
+
+        pivot_df = pd.pivot_table(
+            df,
+            index=collected_col,
+            values=list(agg.keys()),
+            aggfunc=agg,
+            fill_value=0,
+            margins=True,
+            margins_name="الإجمالي",
+        )
+        if isinstance(pivot_df.columns, pd.MultiIndex):
+            pivot_df.columns = [
+                "مجموع التصنيف" if c[0] == class_col else "عدد Customer Account Number"
+                for c in pivot_df.columns
+            ]
+        else:
+            rename_map = {class_col: "مجموع التصنيف"}
+            if account_col:
+                rename_map[account_col] = "عدد Customer Account Number"
+            pivot_df = pivot_df.rename(columns=rename_map)
+
+        pivot_df = pivot_df.rename_axis(index="المحصل")
+        st.dataframe(pivot_df, use_container_width=True)
+
+
+def _render_period_results(stored, period_key):
+    """عرض نتائج الفترة المحفوظة (جدول + كروت + شارتات + تنزيل) — تُستخدم بعد الضغط على زر التصنيف وبعد شيل الملف."""
+    period_title = stored["period_title"]
+    result_df = stored["df"]
+    sales_col = stored["sales_col"]
+    time_col = stored["time_col"]
+
+    render_duplicate_summary(stored.get("duplicate_stats"))
+    st.dataframe(result_df, use_container_width=True, hide_index=True)
+
+    render_period_charts(result_df, sales_col, time_col, period_title)
+
+    render_pivot_section(result_df, f"period_{period_key}")
+
+    if result_df is not None:
+        excel_bytes, pivot_added = build_excel_with_native_pivot(result_df, "النتائج", f"period_{period_key}")
+        if not pivot_added:
+            st.caption("⚠️ اتنزل الملف من غير Pivot Table لأن عمود المحصل (Collected by) أو رقم حساب العميل (Customer Account number) مش موجود في الملف.")
+        st.download_button(
+            f"⬇️ تحميل نتائج {period_title}",
+            data=excel_bytes,
+            file_name=f"نتائج_{period_title}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            use_container_width=True,
+            key=f"download_{period_key}",
+        )
+
+
+def _show_period_results_from_cache(period_key):
+    """عرض النتائج المحفوظة بصمت لما يكون لا يوجد ملف مرفوع — بدون أي رسائل أو أزرار."""
+    stored = st.session_state["period_results"].get(period_key)
+    if stored:
+        _render_period_results(stored, period_key)
+
+
+
+
 def classify_period_file(uploaded_file, period_key):
     period_title = {"period_1": "الفترة الأولى", "period_2": "الفترة الثانية"}[period_key]
 
@@ -2133,273 +2485,6 @@ def classify_period_file(uploaded_file, period_key):
     stored = st.session_state["period_results"].get(period_key)
     if stored:
         st.success(f"تم تصنيف {period_title} بنجاح ✅ — {len(stored['df']):,} مكالمة")
-        _render_period_results(stored, period_key)
-
-
-def _xml_escape(value):
-    return (
-        str(value)
-        .replace("&", "&amp;")
-        .replace("<", "&lt;")
-        .replace(">", "&gt;")
-        .replace('"', "&quot;")
-        .replace("'", "&apos;")
-    )
-
-
-def _sanitize_table_name(name: str) -> str:
-    cleaned = re.sub(r"[^A-Za-z0-9_]", "_", name)
-    if not cleaned or not cleaned[0].isalpha():
-        cleaned = "T_" + cleaned
-    return cleaned[:60]
-
-
-def _build_base_workbook_bytes(df: pd.DataFrame, data_sheet_name: str, table_name: str, pivot_sheet_name: str = "Pivot Table") -> bytes:
-    """بيبني ملف إكسيل بـ openpyxl فيه شيت البيانات كـ Excel Table (ListObject) رسمي + شيت فاضي للـ Pivot."""
-    wb = Workbook()
-    ws = wb.active
-    ws.title = data_sheet_name
-    ws.append([str(c) for c in df.columns])
-    for row in df.itertuples(index=False, name=None):
-        ws.append(list(row))
-    last_row = max(ws.max_row, 2)
-    last_col_letter = get_column_letter(len(df.columns))
-    tab = Table(displayName=table_name, ref=f"A1:{last_col_letter}{last_row}")
-    tab.tableStyleInfo = TableStyleInfo(name="TableStyleMedium9", showRowStripes=True)
-    ws.add_table(tab)
-    wb.create_sheet(pivot_sheet_name)
-    buf = BytesIO()
-    wb.save(buf)
-    return buf.getvalue()
-
-
-def _inject_native_pivot_table(xlsx_bytes, df_columns, table_name, pivot_sheet_name, row_field, data_field, data_field_label, col_field=None, subtotal="count"):
-    """بيحقن Pivot Table حقيقي (native، قابل للتحديث والسحب والإفلات) جوه ملف الإكسيل — نفس اللي بتعمله
-    يدوي في إكسيل بـ Insert > PivotTable. بيتحدث تلقائي من الـ Excel Table لما تفتح الملف."""
-    df_columns = list(df_columns)
-    row_idx = df_columns.index(row_field)
-    col_idx = df_columns.index(col_field) if col_field else None
-    data_idx = df_columns.index(data_field)
-    n_fields = len(df_columns)
-
-    zin = zipfile.ZipFile(BytesIO(xlsx_bytes), "r")
-    data = {n: zin.read(n) for n in zin.namelist()}
-    zin.close()
-
-    wb_xml = data["xl/workbook.xml"].decode("utf-8")
-    wb_rels = data["xl/_rels/workbook.xml.rels"].decode("utf-8")
-
-    name_to_rid = {}
-    for tag in re.findall(r"<sheet [^>]*/>", wb_xml):
-        m_name = re.search(r'name="([^"]+)"', tag)
-        m_rid = re.search(r'r:id="([^"]+)"', tag)
-        if m_name and m_rid:
-            name_to_rid[m_name.group(1)] = m_rid.group(1)
-    pivot_rid = name_to_rid[pivot_sheet_name]
-
-    rid_to_target = {}
-    for tag in re.findall(r"<Relationship [^>]*/>", wb_rels):
-        m_id = re.search(r'Id="([^"]+)"', tag)
-        m_target = re.search(r'Target="([^"]+)"', tag)
-        if m_id and m_target:
-            rid_to_target[m_id.group(1)] = m_target.group(1)
-    pivot_sheet_target = rid_to_target[pivot_rid]
-    pivot_sheet_path = pivot_sheet_target.lstrip("/")
-    if not pivot_sheet_path.startswith("xl/"):
-        pivot_sheet_path = "xl/" + pivot_sheet_path
-    sheet_file = pivot_sheet_path.split("/")[-1]
-
-    existing_ids = [int(re.sub(r"\D", "", rid)) for rid in re.findall(r'Id="(rId\d+)"', wb_rels)]
-    cache_rid = f"rId{max(existing_ids) + 1}"
-
-    wb_xml = wb_xml.replace(
-        "</workbook>",
-        f'<pivotCaches><pivotCache cacheId="1" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" r:id="{cache_rid}"/></pivotCaches></workbook>',
-    )
-    data["xl/workbook.xml"] = wb_xml.encode("utf-8")
-
-    new_rel = f'<Relationship Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/pivotCacheDefinition" Target="pivotCache/pivotCacheDefinition1.xml" Id="{cache_rid}"/>'
-    wb_rels = wb_rels.replace("</Relationships>", new_rel + "</Relationships>")
-    data["xl/_rels/workbook.xml.rels"] = wb_rels.encode("utf-8")
-
-    data[f"xl/worksheets/_rels/{sheet_file}.rels"] = (
-        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
-        '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
-        '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/pivotTable" Target="../pivotTables/pivotTable1.xml"/>'
-        "</Relationships>"
-    ).encode("utf-8")
-
-    ct = data["[Content_Types].xml"].decode("utf-8")
-    overrides = (
-        '<Override PartName="/xl/pivotCache/pivotCacheDefinition1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.pivotCacheDefinition+xml"/>'
-        '<Override PartName="/xl/pivotCache/pivotCacheRecords1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.pivotCacheRecords+xml"/>'
-        '<Override PartName="/xl/pivotTables/pivotTable1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.pivotTable+xml"/>'
-    )
-    data["[Content_Types].xml"] = ct.replace("</Types>", overrides + "</Types>").encode("utf-8")
-
-    cache_fields_xml = "".join(
-        f'<cacheField name="{_xml_escape(col)}" numFmtId="0"><sharedItems/></cacheField>' for col in df_columns
-    )
-    data["xl/pivotCache/pivotCacheDefinition1.xml"] = (
-        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
-        '<pivotCacheDefinition xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" '
-        'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" r:id="rId1" '
-        'refreshOnLoad="1" refreshedBy="Claude" refreshedDate="45900" createdVersion="6" refreshedVersion="6" '
-        f'minRefreshableVersion="3" recordCount="0">'
-        f'<cacheSource type="worksheet"><worksheetSource name="{table_name}"/></cacheSource>'
-        f'<cacheFields count="{n_fields}">{cache_fields_xml}</cacheFields>'
-        "</pivotCacheDefinition>"
-    ).encode("utf-8")
-    data["xl/pivotCache/pivotCacheRecords1.xml"] = (
-        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
-        '<pivotCacheRecords xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" '
-        'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" count="0"/>'
-    ).encode("utf-8")
-    data["xl/pivotCache/_rels/pivotCacheDefinition1.xml.rels"] = (
-        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
-        '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
-        '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/pivotCacheRecords" Target="pivotCacheRecords1.xml"/>'
-        "</Relationships>"
-    ).encode("utf-8")
-
-    pivot_fields_parts = []
-    for i in range(n_fields):
-        if i == row_idx:
-            pivot_fields_parts.append('<pivotField axis="axisRow" showAll="0"><items count="1"><item t="default"/></items></pivotField>')
-        elif col_idx is not None and i == col_idx:
-            pivot_fields_parts.append('<pivotField axis="axisCol" showAll="0"><items count="1"><item t="default"/></items></pivotField>')
-        elif i == data_idx:
-            pivot_fields_parts.append('<pivotField dataField="1" showAll="0"/>')
-        else:
-            pivot_fields_parts.append('<pivotField showAll="0"/>')
-    pivot_fields_xml = "".join(pivot_fields_parts)
-
-    col_fields_xml = f'<colFields count="1"><field x="{col_idx}"/></colFields><colItems count="1"><i><x/></i></colItems>' if col_idx is not None else ""
-
-    data["xl/pivotTables/pivotTable1.xml"] = (
-        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
-        '<pivotTableDefinition xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" '
-        'name="PivotTable1" cacheId="1" applyNumberFormats="0" applyBorderFormats="0" applyFontFormats="0" '
-        'applyPatternFormats="0" applyAlignmentFormats="0" applyWidthHeightFormats="1" dataCaption="Values" '
-        'updatedVersion="6" minRefreshableVersion="3" useAutoFormatting="1" itemPrintTitles="1" createdVersion="6" '
-        'indent="0" outline="1" outlineData="1" multipleFieldFilters="0">'
-        '<location ref="A3:C10" firstHeaderRow="1" firstDataRow="2" firstDataCol="1"/>'
-        f'<pivotFields count="{n_fields}">{pivot_fields_xml}</pivotFields>'
-        f'<rowFields count="1"><field x="{row_idx}"/></rowFields>'
-        "<rowItems count=\"1\"><i><x/></i></rowItems>"
-        f'{col_fields_xml}'
-        "<dataFields count=\"1\">"
-        f'<dataField name="{_xml_escape(data_field_label)}" fld="{data_idx}" subtotal="{subtotal}" baseField="0" baseItem="0"/>'
-        "</dataFields>"
-        '<pivotTableStyleInfo name="PivotStyleMedium9" showRowHeaders="1" showColHeaders="1" showRowStripes="0" showColStripes="0" showLastColumn="1"/>'
-        "</pivotTableDefinition>"
-    ).encode("utf-8")
-    data["xl/pivotTables/_rels/pivotTable1.xml.rels"] = (
-        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
-        '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
-        '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/pivotCacheDefinition" Target="../pivotCache/pivotCacheDefinition1.xml"/>'
-        "</Relationships>"
-    ).encode("utf-8")
-
-    out_buf = BytesIO()
-    zout = zipfile.ZipFile(out_buf, "w", zipfile.ZIP_DEFLATED)
-    for n, content in data.items():
-        zout.writestr(n, content)
-    zout.close()
-    return out_buf.getvalue()
-
-
-def build_excel_with_native_pivot(result_df: pd.DataFrame, data_sheet_name: str, key_prefix: str):
-    """بيبني ملف إكسيل فيه شيت البيانات (كـ Excel Table) + شيت Pivot Table حقيقي (native) —
-    المحصل في الصفوف، ومجموع عمود التصنيف (SUM) في القيم.
-    بيرجع (bytes, تم إضافة بيفوت ولا لأ)."""
-    collected_col = find_column(result_df, COLLECTED_BY_CANDIDATES)
-    class_col = CLASSIFICATION_COL if CLASSIFICATION_COL in result_df.columns else None
-
-    table_name = _sanitize_table_name(f"tbl_{key_prefix}")
-    base_bytes = _build_base_workbook_bytes(result_df, data_sheet_name, table_name)
-
-    if not (collected_col and class_col):
-        return base_bytes, False
-
-    final_bytes = _inject_native_pivot_table(
-        base_bytes,
-        result_df.columns,
-        table_name,
-        "Pivot Table",
-        row_field=collected_col,
-        data_field=class_col,
-        data_field_label="مجموع التصنيف",
-        subtotal="sum",
-    )
-    return final_bytes, True
-
-
-def render_pivot_section(df: pd.DataFrame, key_prefix: str):
-    """معاينة سريعة جوه السيستم بس (نفس منطق الـ Pivot اللي هيتضاف حقيقي في ملف الإكسيل):
-    الصفوف = المحصل، القيم = مجموع (SUM) عمود التصنيف."""
-    if df is None or df.empty:
-        return
-
-    collected_col = find_column(df, COLLECTED_BY_CANDIDATES)
-    class_col = CLASSIFICATION_COL if CLASSIFICATION_COL in df.columns else None
-
-    with st.expander("📊 معاينة الـ Pivot Table (هتلاقي النسخة الحقيقية القابلة للتعديل جوه ملف الإكسيل بعد التحميل)", expanded=False):
-        missing = [
-            label for label, col in [
-                ("المحصل (Created by)", collected_col),
-                ("التصنيف", class_col),
-            ] if col is None
-        ]
-        if missing:
-            st.warning("تعذر إنشاء الـ Pivot — الأعمدة دي مش موجودة في الملف: " + "، ".join(missing))
-            return
-
-        pivot_df = pd.pivot_table(
-            df,
-            index=collected_col,
-            values=class_col,
-            aggfunc="sum",
-            fill_value=0,
-            margins=True,
-            margins_name="الإجمالي",
-        )
-        pivot_df = pivot_df.rename_axis(index="المحصل").rename(columns={class_col: "مجموع التصنيف"})
-        st.dataframe(pivot_df, use_container_width=True)
-
-
-def _render_period_results(stored, period_key):
-    """عرض نتائج الفترة المحفوظة (جدول + كروت + شارتات + تنزيل) — تُستخدم بعد الضغط على زر التصنيف وبعد شيل الملف."""
-    period_title = stored["period_title"]
-    result_df = stored["df"]
-    sales_col = stored["sales_col"]
-    time_col = stored["time_col"]
-
-    render_duplicate_summary(stored.get("duplicate_stats"))
-    st.dataframe(result_df, use_container_width=True, hide_index=True)
-
-    render_period_charts(result_df, sales_col, time_col, period_title)
-
-    render_pivot_section(result_df, f"period_{period_key}")
-
-    if result_df is not None:
-        excel_bytes, pivot_added = build_excel_with_native_pivot(result_df, "النتائج", f"period_{period_key}")
-        if not pivot_added:
-            st.caption("⚠️ اتنزل الملف من غير Pivot Table لأن عمود المحصل (Collected by) أو رقم حساب العميل (Customer Account number) مش موجود في الملف.")
-        st.download_button(
-            f"⬇️ تحميل نتائج {period_title}",
-            data=excel_bytes,
-            file_name=f"نتائج_{period_title}.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            use_container_width=True,
-            key=f"download_{period_key}",
-        )
-
-
-def _show_period_results_from_cache(period_key):
-    """عرض النتائج المحفوظة بصمت لما يكون لا يوجد ملف مرفوع — بدون أي رسائل أو أزرار."""
-    stored = st.session_state["period_results"].get(period_key)
-    if stored:
         _render_period_results(stored, period_key)
 
 

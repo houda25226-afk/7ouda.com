@@ -977,6 +977,11 @@ COLOR_FAIL = THEMES[THEME_NAME]["danger"]
 COLOR_ACCENT = THEMES[THEME_NAME]["accent"]
 COLOR_WARN = THEMES[THEME_NAME]["warn"]
 CHART_COLORS = {"ناجحة": COLOR_SUCCESS, "غير ناجحة": COLOR_FAIL}
+# لوحة التصنيف: ثلاثة ألوان أساسية فقط مع درجاتها للحفاظ على هوية بصرية موحّدة.
+CLASSIFICATION_PRIMARY = COLOR_ACCENT
+CLASSIFICATION_SECONDARY = THEMES[THEME_NAME]["accent_strong"]
+CLASSIFICATION_HIGHLIGHT = COLOR_SUCCESS
+CLASSIFICATION_SCALE = [CLASSIFICATION_SECONDARY, CLASSIFICATION_PRIMARY, CLASSIFICATION_HIGHLIGHT]
 # Palette النشاط: ثلاث عائلات لونية هادئة فقط بدرجات متقاربة.
 ACTIVITY_AGENT_PALETTE = [
     "#2F6F73", "#477F82", "#628B8E", "#7D9A9D", "#98AEB2", "#B2C1C3",
@@ -2646,8 +2651,8 @@ def render_agent_activity_charts(agent, df, sales_col, period_title):
 
     def total_vs_success_chart():
         fig = go.Figure([
-            go.Bar(name="إجمالي المكالمات", x=names, y=agent_sorted["إجمالي المكالمات"], marker_color=THEME["text_dim"], customdata=names),
-            go.Bar(name="المكالمات الناجحة", x=names, y=agent_sorted["ناجحة"], marker_color=COLOR_SUCCESS, customdata=names),
+            go.Bar(name="إجمالي المكالمات", x=names, y=agent_sorted["إجمالي المكالمات"], marker_color=CLASSIFICATION_SECONDARY, customdata=names),
+            go.Bar(name="المكالمات الناجحة", x=names, y=agent_sorted["ناجحة"], marker_color=CLASSIFICATION_HIGHLIGHT, customdata=names),
         ])
         fig.update_layout(
             **PLOTLY_LAYOUT,
@@ -2679,7 +2684,7 @@ def render_agent_activity_charts(agent, df, sales_col, period_title):
             orientation="h",
             text="نسبة النجاح",
             color="نسبة النجاح",
-            color_continuous_scale=[COLOR_FAIL, COLOR_WARN, COLOR_SUCCESS],
+            color_continuous_scale=CLASSIFICATION_SCALE,
             template=PLOTLY_TEMPLATE,
         )
         fig.update_layout(
@@ -2727,8 +2732,8 @@ def render_success_fail_chart(agent, period_title):
     names = [str(n) for n in ordered["المحصّل"]]
     failed = ordered["إجمالي المكالمات"] - ordered["ناجحة"]
     fig = go.Figure([
-        go.Bar(name="المكالمات الناجحة", x=names, y=ordered["ناجحة"], marker_color=COLOR_SUCCESS, customdata=names),
-        go.Bar(name="المكالمات غير الناجحة", x=names, y=failed, marker_color=COLOR_FAIL, customdata=names),
+        go.Bar(name="المكالمات الناجحة", x=names, y=ordered["ناجحة"], marker_color=CLASSIFICATION_HIGHLIGHT, customdata=names),
+        go.Bar(name="المكالمات غير الناجحة", x=names, y=failed, marker_color=CLASSIFICATION_SECONDARY, customdata=names),
     ])
     fig.update_layout(**PLOTLY_LAYOUT, title=f"✅ الناجحة مقابل غير الناجحة ({period_title})", barmode="group", xaxis_title="", yaxis_title="عدد المكالمات")
     fig.update_traces(hovertemplate="<b>%{x}</b><br>%{fullData.name}: %{y:,} مكالمة<extra></extra>")
@@ -2740,7 +2745,7 @@ def render_avg_duration_chart(agent, period_title):
     if key not in agent.columns:
         return
     ordered = agent.sort_values(key, ascending=True)
-    fig = px.bar(ordered, x=key, y="المحصّل", orientation="h", text=key, color=key, color_continuous_scale=[COLOR_ACCENT, COLOR_WARN], template=PLOTLY_TEMPLATE)
+    fig = px.bar(ordered, x=key, y="المحصّل", orientation="h", text=key, color=key, color_continuous_scale=CLASSIFICATION_SCALE, template=PLOTLY_TEMPLATE)
     fig.update_layout(**PLOTLY_LAYOUT, title=f"⏱️ متوسط مدة المكالمات ({period_title})", xaxis_title="دقيقة", yaxis_title="")
     fig.update_traces(customdata=ordered["المحصّل"], hovertemplate="<b>%{y}</b><br>متوسط المدة: %{x:.1f} دقيقة<extra></extra>")
     render_selectable_chart(fig, f"classification_avg_duration_{period_title}")
@@ -2755,7 +2760,7 @@ def render_no_answer_chart(df, sales_col, period_title):
     counts = work[work["_lrd"]].groupby(sales_col).size().reset_index(name="عدد إفادات لا يرد")
     if counts.empty:
         return
-    fig = px.bar(counts, x=sales_col, y="عدد إفادات لا يرد", color_discrete_sequence=[COLOR_FAIL], template=PLOTLY_TEMPLATE)
+    fig = px.bar(counts, x=sales_col, y="عدد إفادات لا يرد", color_discrete_sequence=[CLASSIFICATION_PRIMARY], template=PLOTLY_TEMPLATE)
     fig.update_layout(**PLOTLY_LAYOUT, title=f"📝 إفادات لا يرد لكل محصّل ({period_title})", xaxis_title="", yaxis_title="العدد")
     fig.update_traces(customdata=counts[sales_col], hovertemplate="<b>%{x}</b><br>عدد إفادات لا يرد: %{y}<extra></extra>")
     render_selectable_chart(fig, f"classification_no_answer_{period_title}")

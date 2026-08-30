@@ -3131,9 +3131,16 @@ def _show_neglect_results(df, meta):
     st.subheader("📋 جدول حالات الإهمال التفصيلي")
     display_cols = [c for c in [sales_col, meta["substate_col"], meta["duedate_col"], meta["lastdate_col"], "فرق_الأيام", net_col] if c and c in df.columns]
     st.dataframe(df[display_cols], use_container_width=True, hide_index=True)
+
+    # التصدير يحتفظ بكل أعمدة المحفظة الأصلية، مع استبعاد أعمدة المعالجة المؤقتة
+    # وإضافة الأعمدة المحسوبة التي يحتاجها تقرير الإهمال.
+    export_cols = [
+        c for c in df.columns
+        if c not in {"temp_due", "temp_last"}
+    ]
     out_excel = io.BytesIO()
     with pd.ExcelWriter(out_excel, engine="openpyxl") as writer:
-        df[display_cols].to_excel(writer, index=False, sheet_name="حالات الإهمال")
+        df[export_cols].to_excel(writer, index=False, sheet_name="حالات الإهمال")
     st.download_button(
         "⬇️ تحميل تقرير الإهمال (Excel)",
         data=out_excel.getvalue(),

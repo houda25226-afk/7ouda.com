@@ -2154,23 +2154,46 @@ def _sanitize_table_name(name: str) -> str:
     return cleaned[:60]
 
 
-def _build_base_workbook_bytes(df: pd.DataFrame, data_sheet_name: str, table_name: str, pivot_sheet_name: str = "Pivot Table") -> bytes:
-    """بيبني ملف إكسيل بـ openpyxl فيه شيت البيانات كـ Excel Table (ListObject) رسمي + شيت فاضي للـ Pivot."""
+def _dedupe_columns(columns):
+    """لو فيه أسماء أعمدة متكررة، بيضيفلها ترقيم (_2, _3...) عشان تبقى فريدة —
+    Excel Table لازم كل أعمدته يكون ليها اسم مختلف، وإلا بيعمل repair ويشيل الـ Table/الـ Pivot."""
+    seen = {}
+    result = []
+    for col in columns:
+        col = str(col)
+        if col not in seen:
+            seen[col] = 1
+            result.append(col)
+        else:
+            seen[col] += 1
+            new_name = f"{col}_{seen[col]}"
+            while new_name in seen:
+                seen[col] += 1
+                new_name = f"{col}_{seen[col]}"
+            seen[new_name] = 1
+            result.append(new_name)
+    return result
+
+
+def _build_base_workbook_bytes(df: pd.DataFrame, data_sheet_name: str, table_name: str, pivot_sheet_name: str = "Pivot Table"):
+    """بيبني ملف إكسيل بـ openpyxl فيه شيت البيانات كـ Excel Table (ListObject) رسمي + شيت فاضي للـ Pivot.
+    بيرجع (bytes, أسماء الأعمدة بعد ما اتاكد إنها فريدة)."""
+    dedup_cols = _dedupe_columns(list(df.columns))
     wb = Workbook()
     ws = wb.active
     ws.title = data_sheet_name
-    ws.append([str(c) for c in df.columns])
+    ws.append(dedup_cols)
     for row in df.itertuples(index=False, name=None):
         ws.append(list(row))
     last_row = max(ws.max_row, 2)
-    last_col_letter = get_column_letter(len(df.columns))
+    last_col_letter = get_column_letter(len(dedup_cols))
     tab = Table(displayName=table_name, ref=f"A1:{last_col_letter}{last_row}")
     tab.tableStyleInfo = TableStyleInfo(name="TableStyleMedium9", showRowStripes=True)
     ws.add_table(tab)
     wb.create_sheet(pivot_sheet_name)
     buf = BytesIO()
     wb.save(buf)
-    return buf.getvalue()
+    return buf.getvalue(), dedup_cols
 
 
 def _inject_native_pivot_table(xlsx_bytes, df_columns, table_name, pivot_sheet_name, row_field, data_fields, col_field=None):
@@ -2326,20 +2349,24 @@ def build_excel_with_native_pivot(result_df: pd.DataFrame, data_sheet_name: str,
     account_col = find_column(result_df, ACCOUNT_NUMBER_CANDIDATES)
 
     table_name = _sanitize_table_name(f"tbl_{key_prefix}")
-    base_bytes = _build_base_workbook_bytes(result_df, data_sheet_name, table_name)
+    base_bytes, dedup_cols = _build_base_workbook_bytes(result_df, data_sheet_name, table_name)
 
     if not (collected_col and class_col and account_col):
         return base_bytes, False
 
+    orig_cols = list(result_df.columns)
+    def _to_dedup(name):
+        return dedup_cols[orig_cols.index(name)]
+
     final_bytes = _inject_native_pivot_table(
         base_bytes,
-        result_df.columns,
+        dedup_cols,
         table_name,
         "Pivot Table",
-        row_field=collected_col,
+        row_field=_to_dedup(collected_col),
         data_fields=[
-            {"field": class_col, "subtotal": "sum", "label": "مجموع التصنيف"},
-            {"field": account_col, "subtotal": "count", "label": "عدد المكالمات المغطاه"},
+            {"field": _to_dedup(class_col), "subtotal": "sum", "label": "مجموع التصنيف"},
+            {"field": _to_dedup(account_col), "subtotal": "count", "label": "عدد المكالمات المغطاه"},
         ],
     )
     return final_bytes, True

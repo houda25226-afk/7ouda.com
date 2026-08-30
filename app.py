@@ -2196,7 +2196,7 @@ def _build_base_workbook_bytes(df: pd.DataFrame, data_sheet_name: str, table_nam
     return buf.getvalue(), dedup_cols
 
 
-def _inject_native_pivot_table(xlsx_bytes, df_columns, table_name, pivot_sheet_name, row_field, data_fields, col_field=None, source_df=None, source_sheet_name=None):
+def _inject_native_pivot_table(xlsx_bytes, df_columns, table_name, pivot_sheet_name, row_field, data_fields, col_field=None):
     """بيحقن Pivot Table حقيقي (native، قابل للتحديث والسحب والإفلات) جوه ملف الإكسيل — نفس اللي بتعمله
     يدوي في إكسيل بـ Insert > PivotTable. بيتحدث تلقائي من الـ Excel Table لما تفتح الملف.
     data_fields: list of dicts {"field": اسم العمود, "subtotal": "count"/"sum"/..., "label": الاسم اللي هيظهر}."""
@@ -2209,11 +2209,6 @@ def _inject_native_pivot_table(xlsx_bytes, df_columns, table_name, pivot_sheet_n
     ]
     data_idxs = {spec["idx"] for spec in data_field_specs}
     n_fields = len(df_columns)
-    source_rows = []
-    if source_df is not None:
-        source_rows = source_df.copy()
-        source_rows.columns = df_columns
-        source_rows = source_rows.where(pd.notna(source_rows), None).values.tolist()
 
     zin = zipfile.ZipFile(BytesIO(xlsx_bytes), "r")
     data = {n: zin.read(n) for n in zin.namelist()}
@@ -2270,41 +2265,23 @@ def _inject_native_pivot_table(xlsx_bytes, df_columns, table_name, pivot_sheet_n
     )
     data["[Content_Types].xml"] = ct.replace("</Types>", overrides + "</Types>").encode("utf-8")
 
-    shared_indexes = []
-    cache_field_parts = []
-    for col_idx, col in enumerate(df_columns):
-        values = []
-        for row in source_rows:
-            value = row[col_idx] if col_idx < len(row) else None
-            if value is not None and value not in values:
-                values.append(value)
-        shared_indexes.append({str(v): i for i, v in enumerate(values)})
-        items = []
-        for value in values:
-            if isinstance(value, (int, float)) and not isinstance(value, bool):
-                items.append(f'<n v="{_xml_escape(value)}"/>')
-            else:
-                items.append(f'<s v="{_xml_escape(value)}"/>')
-        cache_field_parts.append(f'<cacheField name="{_xml_escape(col)}" numFmtId="0"><sharedItems count="{len(values)}">{"".join(items)}</sharedItems></cacheField>')
-    cache_fields_xml = "".join(cache_field_parts)
+    cache_fields_xml = "".join(
+        f'<cacheField name="{_xml_escape(col)}" numFmtId="0"><sharedItems/></cacheField>' for col in df_columns
+    )
     data["xl/pivotCache/pivotCacheDefinition1.xml"] = (
         '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
         '<pivotCacheDefinition xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" '
         'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" r:id="rId1" '
         'refreshOnLoad="1" refreshedBy="Claude" refreshedDate="45900" createdVersion="6" refreshedVersion="6" '
-        f'minRefreshableVersion="3" recordCount="{len(source_rows)}">'
-        f'<cacheSource type="worksheet"><worksheetSource ref="A1:{get_column_letter(n_fields)}{len(source_rows) + 1}" sheet="{_xml_escape(source_sheet_name or table_name)}"/></cacheSource>'
+        f'minRefreshableVersion="3" recordCount="0">'
+        f'<cacheSource type="worksheet"><worksheetSource name="{table_name}"/></cacheSource>'
         f'<cacheFields count="{n_fields}">{cache_fields_xml}</cacheFields>'
         "</pivotCacheDefinition>"
     ).encode("utf-8")
-    records_xml = "".join(
-        '<r>' + "".join(f'<x v="{shared_indexes[i].get(str(value), 0)}"/>' for i, value in enumerate(row)) + '</r>'
-        for row in source_rows
-    )
     data["xl/pivotCache/pivotCacheRecords1.xml"] = (
         '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
         '<pivotCacheRecords xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" '
-        f'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" count="{len(source_rows)}">{records_xml}</pivotCacheRecords>'
+        'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" count="0"/>'
     ).encode("utf-8")
     data["xl/pivotCache/_rels/pivotCacheDefinition1.xml.rels"] = (
         '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
@@ -2331,33 +2308,6 @@ def _inject_native_pivot_table(xlsx_bytes, df_columns, table_name, pivot_sheet_n
         f'<dataField name="{_xml_escape(spec["label"])}" fld="{spec["idx"]}" subtotal="{spec["subtotal"]}" baseField="0" baseItem="0"/>'
         for spec in data_field_specs
     )
-
-    if source_df is not None:
-        display = source_df.copy()
-        display.columns = df_columns
-        grouped = display.groupby(row_field, dropna=False)
-        display_rows = [(row_field, [spec["label"] for spec in data_fields])]
-        for row_value, group in grouped:
-            vals = []
-            for spec in data_fields:
-                series = group[spec["field"]]
-                vals.append(series.count() if spec["subtotal"] == "count" else pd.to_numeric(series, errors="coerce").sum())
-            display_rows.append([row_value] + vals)
-        display_rows.append(["الإجمالي"] + [sum(row[i + 1] for row in display_rows[1:]) for i in range(len(data_fields))])
-        def _cell(ref, value):
-            if isinstance(value, (int, float)) and not isinstance(value, bool):
-                return f'<c r="{ref}" t="n"><v>{_xml_escape(value)}</v></c>'
-            return f'<c r="{ref}" t="inlineStr"><is><t>{_xml_escape(value)}</t></is></c>'
-        rows_xml = []
-        for r, values in enumerate(display_rows, start=3):
-            cells = "".join(_cell(f'{get_column_letter(c)}{r}', value) for c, value in enumerate(values, start=1))
-            rows_xml.append(f'<row r="{r}">{cells}</row>')
-        data[pivot_sheet_path] = ('<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
-            '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">'
-            f'<dimension ref="A3:{get_column_letter(len(data_fields) + 1)}{len(display_rows) + 2}"/>'
-            f'<sheetData>{"".join(rows_xml)}</sheetData><pageMargins left="0.75" right="0.75" top="1" bottom="1" header="0.5" footer="0.5"/>'
-            '<pivotTableParts count="1"><pivotTablePart r:id="rId1"/></pivotTableParts>'
-            '</worksheet>').encode('utf-8')
 
     data["xl/pivotTables/pivotTable1.xml"] = (
         '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
@@ -2414,8 +2364,6 @@ def build_excel_with_native_pivot(result_df: pd.DataFrame, data_sheet_name: str,
         table_name,
         "Pivot Table",
         row_field=_to_dedup(collected_col),
-        source_df=result_df,
-        source_sheet_name=data_sheet_name,
         data_fields=[
             {"field": _to_dedup(class_col), "subtotal": "sum", "label": "مجموع التصنيف"},
             {"field": _to_dedup(account_col), "subtotal": "count", "label": "عدد المكالمات المغطاه"},

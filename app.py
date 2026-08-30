@@ -2353,9 +2353,10 @@ def _inject_native_pivot_table(xlsx_bytes, df_columns, table_name, pivot_sheet_n
             cells = "".join(_cell(f'{get_column_letter(c)}{r}', value) for c, value in enumerate(values, start=1))
             rows_xml.append(f'<row r="{r}">{cells}</row>')
         data[pivot_sheet_path] = ('<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
-            '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
+            '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">'
             f'<dimension ref="A3:{get_column_letter(len(data_fields) + 1)}{len(display_rows) + 2}"/>'
             f'<sheetData>{"".join(rows_xml)}</sheetData><pageMargins left="0.75" right="0.75" top="1" bottom="1" header="0.5" footer="0.5"/>'
+            '<pivotTableParts count="1"><pivotTablePart r:id="rId1"/></pivotTableParts>'
             '</worksheet>').encode('utf-8')
 
     data["xl/pivotTables/pivotTable1.xml"] = (

@@ -2173,13 +2173,14 @@ def _build_base_workbook_bytes(df: pd.DataFrame, data_sheet_name: str, table_nam
     return buf.getvalue()
 
 
-def _inject_native_pivot_table(xlsx_bytes, df_columns, table_name, pivot_sheet_name, row_field, data_field, data_field_label, col_field=None, subtotal="count"):
+def _inject_native_pivot_table(xlsx_bytes, df_columns, table_name, pivot_sheet_name, row_field, data_field, data_field_label, col_field=None, subtotal="count", data_field2=None, data_field_label2=None, subtotal2="count"):
     """بيحقن Pivot Table حقيقي (native، قابل للتحديث والسحب والإفلات) جوه ملف الإكسيل — نفس اللي بتعمله
     يدوي في إكسيل بـ Insert > PivotTable. بيتحدث تلقائي من الـ Excel Table لما تفتح الملف."""
     df_columns = list(df_columns)
     row_idx = df_columns.index(row_field)
     col_idx = df_columns.index(col_field) if col_field else None
     data_idx = df_columns.index(data_field)
+    data_idx2 = df_columns.index(data_field2) if data_field2 else None
     n_fields = len(df_columns)
 
     zin = zipfile.ZipFile(BytesIO(xlsx_bytes), "r")
@@ -2263,12 +2264,15 @@ def _inject_native_pivot_table(xlsx_bytes, df_columns, table_name, pivot_sheet_n
     ).encode("utf-8")
 
     pivot_fields_parts = []
+    data_indices = {data_idx}
+    if data_idx2 is not None:
+        data_indices.add(data_idx2)
     for i in range(n_fields):
         if i == row_idx:
             pivot_fields_parts.append('<pivotField axis="axisRow" showAll="0"><items count="1"><item t="default"/></items></pivotField>')
         elif col_idx is not None and i == col_idx:
             pivot_fields_parts.append('<pivotField axis="axisCol" showAll="0"><items count="1"><item t="default"/></items></pivotField>')
-        elif i == data_idx:
+        elif i in data_indices:
             pivot_fields_parts.append('<pivotField dataField="1" showAll="0"/>')
         else:
             pivot_fields_parts.append('<pivotField showAll="0"/>')
@@ -2288,9 +2292,10 @@ def _inject_native_pivot_table(xlsx_bytes, df_columns, table_name, pivot_sheet_n
         f'<rowFields count="1"><field x="{row_idx}"/></rowFields>'
         "<rowItems count=\"1\"><i><x/></i></rowItems>"
         f'{col_fields_xml}'
-        "<dataFields count=\"1\">"
+        f"<dataFields count=\"{2 if data_idx2 is not None else 1}\">"
         f'<dataField name="{_xml_escape(data_field_label)}" fld="{data_idx}" subtotal="{subtotal}" baseField="0" baseItem="0"/>'
-        "</dataFields>"
+        + (f'<dataField name="{_xml_escape(data_field_label2)}" fld="{data_idx2}" subtotal="{subtotal2}" baseField="0" baseItem="0"/>' if data_idx2 is not None else "")
+        + "</dataFields>"
         '<pivotTableStyleInfo name="PivotStyleMedium9" showRowHeaders="1" showColHeaders="1" showRowStripes="0" showColStripes="0" showLastColumn="1"/>'
         "</pivotTableDefinition>"
     ).encode("utf-8")
@@ -2311,10 +2316,11 @@ def _inject_native_pivot_table(xlsx_bytes, df_columns, table_name, pivot_sheet_n
 
 def build_excel_with_native_pivot(result_df: pd.DataFrame, data_sheet_name: str, key_prefix: str):
     """بيبني ملف إكسيل فيه شيت البيانات (كـ Excel Table) + شيت Pivot Table حقيقي (native) —
-    المحصل في الصفوف، ومجموع عمود التصنيف (SUM) في القيم.
+    المحصل في الصفوف، ومجموع عمود التصنيف (SUM) + Count لـ Customer Account Number في القيم.
     بيرجع (bytes, تم إضافة بيفوت ولا لأ)."""
     collected_col = find_column(result_df, COLLECTED_BY_CANDIDATES)
     class_col = CLASSIFICATION_COL if CLASSIFICATION_COL in result_df.columns else None
+    account_col = find_column(result_df, ACCOUNT_NUMBER_CANDIDATES)
 
     table_name = _sanitize_table_name(f"tbl_{key_prefix}")
     base_bytes = _build_base_workbook_bytes(result_df, data_sheet_name, table_name)
@@ -2331,18 +2337,22 @@ def build_excel_with_native_pivot(result_df: pd.DataFrame, data_sheet_name: str,
         data_field=class_col,
         data_field_label="مجموع التصنيف",
         subtotal="sum",
+        data_field2=account_col,
+        data_field_label2="Customer Account Number",
+        subtotal2="count",
     )
     return final_bytes, True
 
 
 def render_pivot_section(df: pd.DataFrame, key_prefix: str):
     """معاينة سريعة جوه السيستم بس (نفس منطق الـ Pivot اللي هيتضاف حقيقي في ملف الإكسيل):
-    الصفوف = المحصل، القيم = مجموع (SUM) عمود التصنيف."""
+    الصفوف = المحصل، القيم = مجموع (SUM) عمود التصنيف + Count لـ Customer Account Number."""
     if df is None or df.empty:
         return
 
     collected_col = find_column(df, COLLECTED_BY_CANDIDATES)
     class_col = CLASSIFICATION_COL if CLASSIFICATION_COL in df.columns else None
+    account_col = find_column(df, ACCOUNT_NUMBER_CANDIDATES)
 
     with st.expander("📊 معاينة الـ Pivot Table (هتلاقي النسخة الحقيقية القابلة للتعديل جوه ملف الإكسيل بعد التحميل)", expanded=False):
         missing = [
@@ -2355,16 +2365,30 @@ def render_pivot_section(df: pd.DataFrame, key_prefix: str):
             st.warning("تعذر إنشاء الـ Pivot — الأعمدة دي مش موجودة في الملف: " + "، ".join(missing))
             return
 
-        pivot_df = pd.pivot_table(
-            df,
-            index=collected_col,
-            values=class_col,
-            aggfunc="sum",
-            fill_value=0,
-            margins=True,
-            margins_name="الإجمالي",
-        )
-        pivot_df = pivot_df.rename_axis(index="المحصل").rename(columns={class_col: "مجموع التصنيف"})
+        if account_col and account_col in df.columns:
+            pivot_df = pd.pivot_table(
+                df,
+                index=collected_col,
+                values=[class_col, account_col],
+                aggfunc={class_col: "sum", account_col: "count"},
+                fill_value=0,
+                margins=True,
+                margins_name="الإجمالي",
+            )
+            pivot_df = pivot_df.rename_axis(index="المحصل").rename(
+                columns={class_col: "مجموع التصنيف", account_col: "Customer Account Number"}
+            )
+        else:
+            pivot_df = pd.pivot_table(
+                df,
+                index=collected_col,
+                values=class_col,
+                aggfunc="sum",
+                fill_value=0,
+                margins=True,
+                margins_name="الإجمالي",
+            )
+            pivot_df = pivot_df.rename_axis(index="المحصل").rename(columns={class_col: "مجموع التصنيف"})
         st.dataframe(pivot_df, use_container_width=True)
 
 

@@ -2173,14 +2173,31 @@ def _build_base_workbook_bytes(df: pd.DataFrame, data_sheet_name: str, table_nam
     return buf.getvalue()
 
 
-def _inject_native_pivot_table(xlsx_bytes, df_columns, table_name, pivot_sheet_name, row_field, data_field, data_field_label, col_field=None, subtotal="count"):
+def _inject_native_pivot_table(
+    xlsx_bytes,
+    df_columns,
+    table_name,
+    pivot_sheet_name,
+    row_field,
+    data_field,
+    data_field_label,
+    col_field=None,
+    subtotal="count",
+    data_field2=None,
+    data_field2_label=None,
+    subtotal2="count",
+):
     """بيحقن Pivot Table حقيقي (native، قابل للتحديث والسحب والإفلات) جوه ملف الإكسيل — نفس اللي بتعمله
     يدوي في إكسيل بـ Insert > PivotTable. بيتحدث تلقائي من الـ Excel Table لما تفتح الملف."""
     df_columns = list(df_columns)
     row_idx = df_columns.index(row_field)
     col_idx = df_columns.index(col_field) if col_field else None
     data_idx = df_columns.index(data_field)
+    data_idx2 = df_columns.index(data_field2) if data_field2 else None
     n_fields = len(df_columns)
+    data_indices = {data_idx}
+    if data_idx2 is not None:
+        data_indices.add(data_idx2)
 
     zin = zipfile.ZipFile(BytesIO(xlsx_bytes), "r")
     data = {n: zin.read(n) for n in zin.namelist()}
@@ -2265,16 +2282,38 @@ def _inject_native_pivot_table(xlsx_bytes, df_columns, table_name, pivot_sheet_n
     pivot_fields_parts = []
     for i in range(n_fields):
         if i == row_idx:
-            pivot_fields_parts.append('<pivotField axis="axisRow" showAll="0"><items count="1"><item t="default"/></items></pivotField>')
+            pivot_fields_parts.append(
+                '<pivotField axis="axisRow" showAll="0"><items count="1"><item t="default"/></items></pivotField>'
+            )
         elif col_idx is not None and i == col_idx:
-            pivot_fields_parts.append('<pivotField axis="axisCol" showAll="0"><items count="1"><item t="default"/></items></pivotField>')
-        elif i == data_idx:
+            pivot_fields_parts.append(
+                '<pivotField axis="axisCol" showAll="0"><items count="1"><item t="default"/></items></pivotField>'
+            )
+        elif i in data_indices:
             pivot_fields_parts.append('<pivotField dataField="1" showAll="0"/>')
         else:
             pivot_fields_parts.append('<pivotField showAll="0"/>')
     pivot_fields_xml = "".join(pivot_fields_parts)
 
-    col_fields_xml = f'<colFields count="1"><field x="{col_idx}"/></colFields><colItems count="1"><i><x/></i></colItems>' if col_idx is not None else ""
+    col_fields_xml = (
+        f'<colFields count="1"><field x="{col_idx}"/></colFields><colItems count="1"><i><x/></i></colItems>'
+        if col_idx is not None
+        else ""
+    )
+
+    data_fields_parts = [
+        f'<dataField name="{_xml_escape(data_field_label)}" fld="{data_idx}" subtotal="{subtotal}" baseField="0" baseItem="0"/>'
+    ]
+    if data_idx2 is not None:
+        label2 = data_field2_label or f"عدد {data_field2}"
+        data_fields_parts.append(
+            f'<dataField name="{_xml_escape(label2)}" fld="{data_idx2}" subtotal="{subtotal2}" baseField="0" baseItem="0"/>'
+        )
+    data_fields_xml = (
+        f'<dataFields count="{len(data_fields_parts)}">'
+        + "".join(data_fields_parts)
+        + "</dataFields>"
+    )
 
     data["xl/pivotTables/pivotTable1.xml"] = (
         '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
@@ -2283,14 +2322,12 @@ def _inject_native_pivot_table(xlsx_bytes, df_columns, table_name, pivot_sheet_n
         'applyPatternFormats="0" applyAlignmentFormats="0" applyWidthHeightFormats="1" dataCaption="Values" '
         'updatedVersion="6" minRefreshableVersion="3" useAutoFormatting="1" itemPrintTitles="1" createdVersion="6" '
         'indent="0" outline="1" outlineData="1" multipleFieldFilters="0">'
-        '<location ref="A3:C10" firstHeaderRow="1" firstDataRow="2" firstDataCol="1"/>'
+        '<location ref="A3:D20" firstHeaderRow="1" firstDataRow="2" firstDataCol="1"/>'
         f'<pivotFields count="{n_fields}">{pivot_fields_xml}</pivotFields>'
         f'<rowFields count="1"><field x="{row_idx}"/></rowFields>'
-        "<rowItems count=\"1\"><i><x/></i></rowItems>"
-        f'{col_fields_xml}'
-        "<dataFields count=\"1\">"
-        f'<dataField name="{_xml_escape(data_field_label)}" fld="{data_idx}" subtotal="{subtotal}" baseField="0" baseItem="0"/>'
-        "</dataFields>"
+        '<rowItems count="1"><i><x/></i></rowItems>'
+        f"{col_fields_xml}"
+        f"{data_fields_xml}"
         '<pivotTableStyleInfo name="PivotStyleMedium9" showRowHeaders="1" showColHeaders="1" showRowStripes="0" showColStripes="0" showLastColumn="1"/>'
         "</pivotTableDefinition>"
     ).encode("utf-8")
@@ -2311,10 +2348,11 @@ def _inject_native_pivot_table(xlsx_bytes, df_columns, table_name, pivot_sheet_n
 
 def build_excel_with_native_pivot(result_df: pd.DataFrame, data_sheet_name: str, key_prefix: str):
     """بيبني ملف إكسيل فيه شيت البيانات (كـ Excel Table) + شيت Pivot Table حقيقي (native) —
-    المحصل في الصفوف، ومجموع عمود التصنيف (SUM) في القيم.
+    المحصل في الصفوف، ومجموع عمود التصنيف (SUM) + عدد Customer Account Number (COUNT) في القيم.
     بيرجع (bytes, تم إضافة بيفوت ولا لأ)."""
     collected_col = find_column(result_df, COLLECTED_BY_CANDIDATES)
     class_col = CLASSIFICATION_COL if CLASSIFICATION_COL in result_df.columns else None
+    account_col = find_column(result_df, ACCOUNT_NUMBER_CANDIDATES)
 
     table_name = _sanitize_table_name(f"tbl_{key_prefix}")
     base_bytes = _build_base_workbook_bytes(result_df, data_sheet_name, table_name)
@@ -2322,49 +2360,78 @@ def build_excel_with_native_pivot(result_df: pd.DataFrame, data_sheet_name: str,
     if not (collected_col and class_col):
         return base_bytes, False
 
-    final_bytes = _inject_native_pivot_table(
-        base_bytes,
-        result_df.columns,
-        table_name,
-        "Pivot Table",
+    kwargs = dict(
+        xlsx_bytes=base_bytes,
+        df_columns=result_df.columns,
+        table_name=table_name,
+        pivot_sheet_name="Pivot Table",
         row_field=collected_col,
         data_field=class_col,
         data_field_label="مجموع التصنيف",
         subtotal="sum",
     )
+    if account_col:
+        kwargs.update(
+            data_field2=account_col,
+            data_field2_label="عدد Customer Account Number",
+            subtotal2="count",
+        )
+
+    final_bytes = _inject_native_pivot_table(**kwargs)
     return final_bytes, True
 
 
 def render_pivot_section(df: pd.DataFrame, key_prefix: str):
     """معاينة سريعة جوه السيستم بس (نفس منطق الـ Pivot اللي هيتضاف حقيقي في ملف الإكسيل):
-    الصفوف = المحصل، القيم = مجموع (SUM) عمود التصنيف."""
+    الصفوف = المحصل، القيم = مجموع (SUM) عمود التصنيف + عدد Customer Account Number."""
     if df is None or df.empty:
         return
 
     collected_col = find_column(df, COLLECTED_BY_CANDIDATES)
     class_col = CLASSIFICATION_COL if CLASSIFICATION_COL in df.columns else None
+    account_col = find_column(df, ACCOUNT_NUMBER_CANDIDATES)
 
-    with st.expander("📊 معاينة الـ Pivot Table (هتلاقي النسخة الحقيقية القابلة للتعديل جوه ملف الإكسيل بعد التحميل)", expanded=False):
+    with st.expander(
+        "📊 معاينة الـ Pivot Table (هتلاقي النسخة الحقيقية القابلة للتعديل جوه ملف الإكسيل بعد التحميل)",
+        expanded=False,
+    ):
         missing = [
-            label for label, col in [
+            label
+            for label, col in [
                 ("المحصل (Created by)", collected_col),
                 ("التصنيف", class_col),
-            ] if col is None
+            ]
+            if col is None
         ]
         if missing:
             st.warning("تعذر إنشاء الـ Pivot — الأعمدة دي مش موجودة في الملف: " + "، ".join(missing))
             return
 
+        agg = {class_col: "sum"}
+        if account_col:
+            agg[account_col] = "count"
+
         pivot_df = pd.pivot_table(
             df,
             index=collected_col,
-            values=class_col,
-            aggfunc="sum",
+            values=list(agg.keys()),
+            aggfunc=agg,
             fill_value=0,
             margins=True,
             margins_name="الإجمالي",
         )
-        pivot_df = pivot_df.rename_axis(index="المحصل").rename(columns={class_col: "مجموع التصنيف"})
+        if isinstance(pivot_df.columns, pd.MultiIndex):
+            pivot_df.columns = [
+                "مجموع التصنيف" if c[0] == class_col else "عدد Customer Account Number"
+                for c in pivot_df.columns
+            ]
+        else:
+            rename_map = {class_col: "مجموع التصنيف"}
+            if account_col:
+                rename_map[account_col] = "عدد Customer Account Number"
+            pivot_df = pivot_df.rename(columns=rename_map)
+
+        pivot_df = pivot_df.rename_axis(index="المحصل")
         st.dataframe(pivot_df, use_container_width=True)
 
 

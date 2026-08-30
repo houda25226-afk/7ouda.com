@@ -2129,6 +2129,45 @@ def classify_period_file(uploaded_file, period_key):
         _render_period_results(stored, period_key)
 
 
+def render_pivot_section(df: pd.DataFrame, key_prefix: str):
+    """قسم Pivot Table تفاعلي (زي إكسيل): تختار الصفوف/الأعمدة/القيم/نوع التجميع.
+    بيرجع الـ pivot الناتج (أو None لو مفيش) عشان يتضاف كـ شيت إضافي في نفس ملف الإكسيل اللي بيتنزل."""
+    if df is None or df.empty:
+        return None
+
+    with st.expander("📊 Pivot Table", expanded=False):
+        columns_list = df.columns.tolist()
+        c1, c2, c3 = st.columns(3)
+        with c1:
+            rows = st.selectbox("الصفوف (Rows)", columns_list, key=f"{key_prefix}_pivot_rows")
+        with c2:
+            cols = st.selectbox("الأعمدة (Columns)", ["بدون"] + columns_list, key=f"{key_prefix}_pivot_cols")
+        with c3:
+            values_col = st.selectbox("القيم (Values)", columns_list, key=f"{key_prefix}_pivot_values")
+
+        agg_func = st.selectbox(
+            "نوع التجميع",
+            ["count", "sum", "mean", "nunique", "min", "max"],
+            key=f"{key_prefix}_pivot_agg",
+        )
+
+        try:
+            pivot_df = pd.pivot_table(
+                df,
+                index=rows,
+                columns=None if cols == "بدون" else cols,
+                values=values_col,
+                aggfunc=agg_func,
+                fill_value=0,
+            )
+        except Exception as e:
+            st.warning(f"تعذر إنشاء الـ Pivot: {e}")
+            return None
+
+        st.dataframe(pivot_df, use_container_width=True)
+        return pivot_df
+
+
 def _render_period_results(stored, period_key):
     """عرض نتائج الفترة المحفوظة (جدول + كروت + شارتات + تنزيل) — تُستخدم بعد الضغط على زر التصنيف وبعد شيل الملف."""
     period_title = stored["period_title"]
@@ -2141,10 +2180,14 @@ def _render_period_results(stored, period_key):
 
     render_period_charts(result_df, sales_col, time_col, period_title)
 
+    pivot_df = render_pivot_section(result_df, f"period_{period_key}")
+
     if result_df is not None:
         buffer = io.BytesIO()
         with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
             result_df.to_excel(writer, index=False, sheet_name="النتائج")
+            if pivot_df is not None:
+                pivot_df.to_excel(writer, sheet_name="Pivot Table")
         st.download_button(
             f"⬇️ تحميل نتائج {period_title}",
             data=buffer.getvalue(),
@@ -2474,7 +2517,7 @@ def _classify_aggregate_file(uploaded_file, company, period_key, period_title):
     stored = st.session_state.get(result_key)
     current_file_hash = uploaded_file_hash(uploaded_file)
     if stored and stored.get("uploaded_hash") == current_file_hash:
-        _render_aggregate_results(stored, period_title)
+        _render_aggregate_results(stored, period_title, period_key)
         return
     try:
         df = read_uploaded_dataframe(uploaded_file)
@@ -2520,16 +2563,19 @@ def _classify_aggregate_file(uploaded_file, company, period_key, period_title):
         }
         st.rerun()
 
-def _render_aggregate_results(stored, period_title):
+def _render_aggregate_results(stored, period_title, period_key):
     result_df = stored["df"]
     sales_col = stored["sales_col"]
     time_col = stored["time_col"]
     render_duplicate_summary(stored.get("duplicate_stats"))
     st.dataframe(result_df, use_container_width=True, hide_index=True)
     render_period_charts(result_df, sales_col, time_col, period_title)
+    pivot_df = render_pivot_section(result_df, f"agg_{period_key}")
     buffer = io.BytesIO()
     with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
         result_df.to_excel(writer, index=False, sheet_name=period_title)
+        if pivot_df is not None:
+            pivot_df.to_excel(writer, sheet_name="Pivot Table")
     st.download_button(
         f"⬇️ تحميل نتائج {period_title}",
         data=buffer.getvalue(),
@@ -2544,7 +2590,7 @@ def _show_aggregate_results_from_cache(period_key, period_title):
     stored = st.session_state.get(f"{period_key}_result")
     if stored:
         st.success(f"تم تصنيف {period_title} بنجاح ✅ — {len(stored['df']):,} مكالمة")
-        _render_aggregate_results(stored, period_title)
+        _render_aggregate_results(stored, period_title, period_key)
 def page_classification():
     init_activity_state()
     page_header("CALL QUALITY CLASSIFIER", "🎯 تصنيف المكالمات", "اختر الشركة → اختر الفترة → حدّد الميعاد والاستراحة → ارفع الملف → ابدأ التصنيف")

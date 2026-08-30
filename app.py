@@ -2034,108 +2034,6 @@ def read_uploaded_dataframe(uploaded_file):
     return pd.read_excel(io.BytesIO(data))
 
 
-def classify_period_file(uploaded_file, period_key):
-    period_title = {"period_1": "الفترة الأولى", "period_2": "الفترة الثانية"}[period_key]
-
-    # 💾 لو الفترة دي اتصنّفت قبل كده والنتيجة لسه في الذاكرة — نعرضها من الكاش من غير إعادة قراءة أو تصنيف
-    stored = st.session_state["period_results"].get(period_key)
-    current_file_hash = uploaded_file_hash(uploaded_file)
-    if stored and stored.get("uploaded_hash") == current_file_hash:
-        st.success(f"تم تصنيف {period_title} بنجاح ✅ — {len(stored['df']):,} مكالمة")
-        _render_period_results(stored, period_key)
-        return
-
-    try:
-        df = read_uploaded_dataframe(uploaded_file)
-    except Exception as e:
-        st.error(f"تعذر قراءة الملف: {e}")
-        return
-
-    # نفس قاعدة الملف الحالية: حذف أول صف بعد العناوين.
-    if len(df) > 0:
-        df = df.iloc[1:].reset_index(drop=True)
-
-    if ORIGINAL_TEXT_COL in df.columns:
-        df = df.rename(columns={ORIGINAL_TEXT_COL: MODEL_TEXT_COL})
-
-    if MODEL_TEXT_COL not in df.columns:
-        st.error(
-            f"عمود النص ('{ORIGINAL_TEXT_COL}' أو '{MODEL_TEXT_COL}') غير موجود. "
-            f"الأعمدة الموجودة: {', '.join(df.columns.astype(str))}"
-        )
-        return
-
-    if st.button(
-        f"🚀 بدء تصنيف {period_title}",
-        key=f"classify_{period_key}",
-        type="primary",
-        use_container_width=True,
-    ):
-        with st.spinner("جارٍ تجهيز النموذج وتصنيف الملف..."):
-            tokenizer, model, device = load_model()
-            texts = df[MODEL_TEXT_COL].tolist()
-            preds, confidences = predict_batch(texts, tokenizer, model, device)
-
-        result_df = df.copy()
-        result_df[CLASSIFICATION_COL] = preds
-        result_df["نسبة_الثقة"] = [round(c * 100, 1) for c in confidences]
-
-        sales_col = find_column(result_df, SALES_PERSON_CANDIDATES)
-        time_col = find_column(result_df, CREATED_ON_CANDIDATES)
-        claim_col = find_column(result_df, CLAIM_CANDIDATES)
-        result_df, duplicate_stats = remove_claim_duplicates(result_df, claim_col, time_col)
-
-        break_start = (
-            st.session_state[f"{period_key}_break_start"]
-            if st.session_state[f"{period_key}_has_break"]
-            else None
-        )
-        break_end = (
-            st.session_state[f"{period_key}_break_end"]
-            if st.session_state[f"{period_key}_has_break"]
-            else None
-        )
-
-        if sales_col and time_col:
-            result_df = calculate_wasted_time(
-                result_df, sales_col, time_col, break_start, break_end
-            )
-        else:
-            st.warning(
-                "تعذر العثور على عمود المحصّل أو عمود التاريخ والوقت، فلن يتم حساب الوقت المهدر. "
-                "تأكد من أسماء الأعمدة."
-            )
-
-        result_df = result_df.rename(columns={MODEL_TEXT_COL: ORIGINAL_TEXT_COL})
-
-        # معلومات الفترة والشركة تبقى مع النتيجة بدون التأثير على الموديل.
-        result_df["الشركة"] = st.session_state["selected_company"]
-        result_df["الفترة"] = period_title
-        result_df["بداية الفترة"] = st.session_state[f"{period_key}_start"].strftime("%H:%M")
-        result_df["نهاية الفترة"] = st.session_state[f"{period_key}_end"].strftime("%H:%M")
-
-        st.session_state["period_results"][period_key] = {
-            "df": result_df,
-            "sales_col": sales_col,
-            "time_col": time_col,
-            "claim_col": claim_col,
-            "duplicate_stats": duplicate_stats,
-            "company": st.session_state["selected_company"],
-            "period_title": period_title,
-            "uploaded_filename": uploaded_file.name,
-            "uploaded_hash": current_file_hash,
-        }
-        st.session_state["last_result_df"] = result_df
-        st.session_state["last_sales_col"] = sales_col
-        st.session_state["last_time_col"] = time_col
-        st.rerun()
-
-    stored = st.session_state["period_results"].get(period_key)
-    if stored:
-        st.success(f"تم تصنيف {period_title} بنجاح ✅ — {len(stored['df']):,} مكالمة")
-        _render_period_results(stored, period_key)
-
-
 def _xml_escape(value):
     return (
         str(value)
@@ -2434,10 +2332,143 @@ def render_pivot_section(df: pd.DataFrame, key_prefix: str):
         pivot_df = pivot_df.rename_axis(index="المحصل")
         st.dataframe(pivot_df, use_container_width=True)
 
+
+def _render_period_results(stored, period_key):
+    """عرض نتائج الفترة المحفوظة (جدول + كروت + شارتات + تنزيل) — تُستخدم بعد الضغط على زر التصنيف وبعد شيل الملف."""
+    period_title = stored["period_title"]
+    result_df = stored["df"]
+    sales_col = stored["sales_col"]
+    time_col = stored["time_col"]
+
+    render_duplicate_summary(stored.get("duplicate_stats"))
+    st.dataframe(result_df, use_container_width=True, hide_index=True)
+
+    render_period_charts(result_df, sales_col, time_col, period_title)
+
+    render_pivot_section(result_df, f"period_{period_key}")
+
+    if result_df is not None:
+        excel_bytes, pivot_added = build_excel_with_native_pivot(result_df, "النتائج", f"period_{period_key}")
+        if not pivot_added:
+            st.caption("⚠️ اتنزل الملف من غير Pivot Table لأن عمود المحصل (Collected by) أو رقم حساب العميل (Customer Account number) مش موجود في الملف.")
+        st.download_button(
+            f"⬇️ تحميل نتائج {period_title}",
+            data=excel_bytes,
+            file_name=f"نتائج_{period_title}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            use_container_width=True,
+            key=f"download_{period_key}",
+        )
+
+
 def _show_period_results_from_cache(period_key):
     """عرض النتائج المحفوظة بصمت لما يكون لا يوجد ملف مرفوع — بدون أي رسائل أو أزرار."""
     stored = st.session_state["period_results"].get(period_key)
     if stored:
+        _render_period_results(stored, period_key)
+
+
+
+
+def classify_period_file(uploaded_file, period_key):
+    period_title = {"period_1": "الفترة الأولى", "period_2": "الفترة الثانية"}[period_key]
+
+    # 💾 لو الفترة دي اتصنّفت قبل كده والنتيجة لسه في الذاكرة — نعرضها من الكاش من غير إعادة قراءة أو تصنيف
+    stored = st.session_state["period_results"].get(period_key)
+    current_file_hash = uploaded_file_hash(uploaded_file)
+    if stored and stored.get("uploaded_hash") == current_file_hash:
+        st.success(f"تم تصنيف {period_title} بنجاح ✅ — {len(stored['df']):,} مكالمة")
+        _render_period_results(stored, period_key)
+        return
+
+    try:
+        df = read_uploaded_dataframe(uploaded_file)
+    except Exception as e:
+        st.error(f"تعذر قراءة الملف: {e}")
+        return
+
+    # نفس قاعدة الملف الحالية: حذف أول صف بعد العناوين.
+    if len(df) > 0:
+        df = df.iloc[1:].reset_index(drop=True)
+
+    if ORIGINAL_TEXT_COL in df.columns:
+        df = df.rename(columns={ORIGINAL_TEXT_COL: MODEL_TEXT_COL})
+
+    if MODEL_TEXT_COL not in df.columns:
+        st.error(
+            f"عمود النص ('{ORIGINAL_TEXT_COL}' أو '{MODEL_TEXT_COL}') غير موجود. "
+            f"الأعمدة الموجودة: {', '.join(df.columns.astype(str))}"
+        )
+        return
+
+    if st.button(
+        f"🚀 بدء تصنيف {period_title}",
+        key=f"classify_{period_key}",
+        type="primary",
+        use_container_width=True,
+    ):
+        with st.spinner("جارٍ تجهيز النموذج وتصنيف الملف..."):
+            tokenizer, model, device = load_model()
+            texts = df[MODEL_TEXT_COL].tolist()
+            preds, confidences = predict_batch(texts, tokenizer, model, device)
+
+        result_df = df.copy()
+        result_df[CLASSIFICATION_COL] = preds
+        result_df["نسبة_الثقة"] = [round(c * 100, 1) for c in confidences]
+
+        sales_col = find_column(result_df, SALES_PERSON_CANDIDATES)
+        time_col = find_column(result_df, CREATED_ON_CANDIDATES)
+        claim_col = find_column(result_df, CLAIM_CANDIDATES)
+        result_df, duplicate_stats = remove_claim_duplicates(result_df, claim_col, time_col)
+
+        break_start = (
+            st.session_state[f"{period_key}_break_start"]
+            if st.session_state[f"{period_key}_has_break"]
+            else None
+        )
+        break_end = (
+            st.session_state[f"{period_key}_break_end"]
+            if st.session_state[f"{period_key}_has_break"]
+            else None
+        )
+
+        if sales_col and time_col:
+            result_df = calculate_wasted_time(
+                result_df, sales_col, time_col, break_start, break_end
+            )
+        else:
+            st.warning(
+                "تعذر العثور على عمود المحصّل أو عمود التاريخ والوقت، فلن يتم حساب الوقت المهدر. "
+                "تأكد من أسماء الأعمدة."
+            )
+
+        result_df = result_df.rename(columns={MODEL_TEXT_COL: ORIGINAL_TEXT_COL})
+
+        # معلومات الفترة والشركة تبقى مع النتيجة بدون التأثير على الموديل.
+        result_df["الشركة"] = st.session_state["selected_company"]
+        result_df["الفترة"] = period_title
+        result_df["بداية الفترة"] = st.session_state[f"{period_key}_start"].strftime("%H:%M")
+        result_df["نهاية الفترة"] = st.session_state[f"{period_key}_end"].strftime("%H:%M")
+
+        st.session_state["period_results"][period_key] = {
+            "df": result_df,
+            "sales_col": sales_col,
+            "time_col": time_col,
+            "claim_col": claim_col,
+            "duplicate_stats": duplicate_stats,
+            "company": st.session_state["selected_company"],
+            "period_title": period_title,
+            "uploaded_filename": uploaded_file.name,
+            "uploaded_hash": current_file_hash,
+        }
+        st.session_state["last_result_df"] = result_df
+        st.session_state["last_sales_col"] = sales_col
+        st.session_state["last_time_col"] = time_col
+        st.rerun()
+
+    stored = st.session_state["period_results"].get(period_key)
+    if stored:
+        st.success(f"تم تصنيف {period_title} بنجاح ✅ — {len(stored['df']):,} مكالمة")
         _render_period_results(stored, period_key)
 
 

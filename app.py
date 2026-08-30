@@ -2330,7 +2330,6 @@ def build_excel_with_native_pivot(result_df: pd.DataFrame, data_sheet_name: str,
         row_field=collected_col,
         data_field=class_col,
         data_field_label="مجموع التصنيف",
-        data_field_label="المكالمات المغطاه",
         subtotal="sum",
     )
     return final_bytes, True
@@ -2350,7 +2349,6 @@ def render_pivot_section(df: pd.DataFrame, key_prefix: str):
             label for label, col in [
                 ("المحصل (Created by)", collected_col),
                 ("التصنيف", class_col),
-                (" المكالمات المغطاه (Customer Account Number)",class_col)
             ] if col is None
         ]
         if missing:
@@ -2366,7 +2364,7 @@ def render_pivot_section(df: pd.DataFrame, key_prefix: str):
             margins=True,
             margins_name="الإجمالي",
         )
-        pivot_df = pivot_df.rename_axis(index="المحصل").rename(columns={class_col: "مجموع التصنيف"}).rename(columns={class_col: "المكالمات المغطاه"})
+        pivot_df = pivot_df.rename_axis(index="المحصل").rename(columns={class_col: "مجموع التصنيف"})
         st.dataframe(pivot_df, use_container_width=True)
 
 

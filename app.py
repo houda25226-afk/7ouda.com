@@ -3935,30 +3935,27 @@ def page_schedule_stalled():
         "ارفع المحفظة الحديثة وملف السدادات لتحديد حالات الجدولة المنتظمة والمتعثرة (أكثر من شهرين بلا سداد)",
     )
 
-    st.info(
-        "المنطق: فلترة المحفظة (استبعاد محصّلين محددين + Sub State = جدولة) ثم مطابقة "
-        "**Debitor** مع السدادات لجلب **تاريخ آخر سداد** (Date of Creation). "
-        f"≤ {SCHEDULE_REGULAR_MAX_DAYS} يوم = جدولة منتظمة · أكثر = جدولة متعثرة."
-    )
+    portfolio_key = "schedule_portfolio_upload"
+    payments_key = "schedule_payments_upload"
+    result_keys = (SCHEDULE_RESULT_KEY,)
 
     c1, c2 = st.columns(2)
     with c1:
         portfolio_file = st.file_uploader(
             "📂 ارفع المحفظة الحديثة (Excel أو CSV)",
             type=["xlsx", "xls", "csv"],
-            key="schedule_portfolio_upload",
+            key=portfolio_key,
+            on_change=sync_file_cache,
+            args=(portfolio_key, "schedule_portfolio", result_keys),
         )
     with c2:
         payments_file = st.file_uploader(
             "📂 ارفع ملف السدادات (Excel أو CSV)",
             type=["xlsx", "xls", "csv"],
-            key="schedule_payments_upload",
+            key=payments_key,
+            on_change=sync_file_cache,
+            args=(payments_key, "schedule_payments", result_keys),
         )
-
-    # مزامنة الكاش عند تغيير/إزالة الملفات
-    if portfolio_file is None or payments_file is None:
-        # لا نمسح النتيجة تلقائياً عند التنقل؛ نمسح فقط لو المستخدم شال الملفين والنتائج مش معروضة من كاش صالح
-        pass
 
     if portfolio_file is not None and payments_file is not None:
         st.caption(
@@ -4225,12 +4222,12 @@ def render_case_errors_filter_notice():
             st.rerun()
 
 
-def render_case_errors_kpi(total_rows, error_count, agent_count, rule_count):
+def render_case_errors_kpi(total_rows, error_count, agent_count, error_rate=0):
     cards = [
         ("📋<br>صفوف بعد الفلترة", total_rows, {"valueformat": ",d"}, THEME["text"]),
         ("🚨<br>أخطاء الحالات", error_count, {"valueformat": ",d"}, CASE_ERROR_PALETTE[0]),
         ("👥<br>محصّلون عليهم أخطاء", agent_count, {"valueformat": ",d"}, CASE_ERROR_PALETTE[1]),
-        ("📑<br>أنواع القواعد", rule_count, {"valueformat": ",d"}, CASE_ERROR_PALETTE[2]),
+        ("📈<br>نسبة الأخطاء %", error_rate, {"valueformat": ".1f", "suffix": "%"}, CASE_ERROR_PALETTE[2]),
     ]
     figure = go.Figure()
     gap = 0.018
@@ -4278,15 +4275,6 @@ def _show_case_errors_results(errors_df, meta):
 
     error_count = len(df)
     agent_count = int(df[sales_col].nunique()) if sales_col and sales_col in df.columns and error_count else 0
-    # عدّ القواعد من العرض الحالي
-    rule_set = set()
-    if CASE_ERROR_RULE_COL in df.columns and error_count:
-        for val in df[CASE_ERROR_RULE_COL].dropna():
-            for part in str(val).split(" | "):
-                if part.strip():
-                    rule_set.add(part.strip())
-    rule_count = len(rule_set)
-
     selected_agent = st.session_state.get(CASE_ERRORS_AGENT_FILTER_KEY)
     if not selected_agent:
         st.success(
@@ -4300,11 +4288,13 @@ def _show_case_errors_results(errors_df, meta):
         )
 
     st.subheader("📊 ملخص أخطاء الحالات" + (f" — {selected_agent}" if selected_agent else ""))
+    base_rows = meta.get("after_sales_filter", 0) if not selected_agent else error_count
+    error_rate = (error_count / base_rows * 100.0) if base_rows else 0.0
     render_case_errors_kpi(
-        meta.get("after_sales_filter", 0) if not selected_agent else error_count,
+        base_rows,
         error_count,
         agent_count,
-        rule_count,
+        error_rate,
     )
 
     if error_count == 0:
@@ -4351,38 +4341,49 @@ def _show_case_errors_results(errors_df, meta):
             render_selectable_chart(fig, "case_errors_by_agent", filter_key=CASE_ERRORS_AGENT_FILTER_KEY)
 
         with right:
-            # تفكيك القواعد (صف قد يحمل أكثر من قاعدة)
-            rule_rows = []
-            for val in df[CASE_ERROR_RULE_COL].dropna():
-                for part in str(val).split(" | "):
-                    part = part.strip()
-                    if part:
-                        rule_rows.append(part)
-            if rule_rows:
-                rule_df = pd.Series(rule_rows).value_counts().rename_axis("القاعدة").reset_index(name="العدد")
-                pie = px.pie(
-                    rule_df,
-                    values="العدد",
-                    names="القاعدة",
-                    hole=0.55,
-                    color="القاعدة",
-                    color_discrete_map=CASE_ERROR_RULE_COLORS,
+            # إجمالي المديونية (Net Amount) للأخطاء حسب المحصّل
+            if net_col and net_col in df.columns:
+                net_work = df.copy()
+                if "_net_num" in net_work.columns:
+                    net_work["_amt"] = pd.to_numeric(net_work["_net_num"], errors="coerce").fillna(0)
+                else:
+                    net_work["_amt"] = pd.to_numeric(net_work[net_col], errors="coerce").fillna(0)
+                agent_net = (
+                    net_work.groupby(sales_col)["_amt"]
+                    .sum()
+                    .reset_index(name="إجمالي Net Amount")
+                    .sort_values("إجمالي Net Amount", ascending=True)
+                    .tail(15)
+                )
+                net_fig = px.bar(
+                    agent_net,
+                    x="إجمالي Net Amount",
+                    y=sales_col,
+                    orientation="h",
+                    text="إجمالي Net Amount",
+                    color="إجمالي Net Amount",
+                    color_continuous_scale=[CASE_ERROR_PALETTE[2], CASE_ERROR_PALETTE[0]],
                     template=PLOTLY_TEMPLATE,
                 )
-                pie.update_layout(**{
+                net_fig.update_layout(**{
                     **PLOTLY_LAYOUT,
-                    "title": "توزيع أنواع الأخطاء",
+                    "title": "إجمالي المديونية في الأخطاء حسب المحصّل",
+                    "xaxis_title": "إجمالي Net Amount",
+                    "yaxis_title": "",
                     "height": 480,
-                    "legend_title_text": "",
-                    "margin": dict(t=78, b=40, l=30, r=30),
+                    "coloraxis_showscale": False,
+                    "margin": dict(t=78, b=50, l=170, r=70),
                 })
-                pie.update_traces(
-                    texttemplate="%{label}<br>%{value:,}",
-                    textfont=dict(size=12, color=THEME["text"]),
-                    textinfo="text",
-                    marker=dict(line=dict(color=THEME["surface"], width=2)),
+                net_fig.update_traces(
+                    texttemplate="%{x:,.0f}",
+                    textposition="outside",
+                    cliponaxis=False,
+                    customdata=agent_net[sales_col],
+                    hovertemplate="<b>%{y}</b><br>Net Amount: %{x:,.0f}<extra></extra>",
                 )
-                st.plotly_chart(pie, use_container_width=True, config=PLOTLY_CONFIG, key="case_errors_rules_pie")
+                render_selectable_chart(net_fig, "case_errors_net_by_agent", filter_key=CASE_ERRORS_AGENT_FILTER_KEY)
+            else:
+                st.info("لا يوجد عمود Net Amount لعرض رسم المديونية.")
 
         if substate_col and substate_col in df.columns:
             state_counts = (
@@ -4458,34 +4459,29 @@ def page_case_errors():
         "🧾 أخطاء الحالات",
         "ارفع المحفظة الحديثة لاكتشاف تعارضات الحالة مع Payment و Net Amount",
     )
-    st.info(
-        "خطوات المعالجة:\n"
-        "1) حذف أول صف بعد العناوين\n"
-        "2) استبعاد المحصّلين: Archive / Closed / Hold / Op II Ibrahim Qassem / قانونى -الوطنية\n"
-        "\n"
-        "قواعد Payment:\n"
-        "• **جدولة / سدد كامل المديونية** + Payment = 0 → خطأ\n"
-        "• حالة **غير سداد** + Payment > 0 → خطأ\n"
-        "• حالة **غير سداد** + Payment = 0 أو Net Amount = 0 → مش خطأ\n"
-        "\n"
-        "قواعد Net Amount:\n"
-        f"• **سدد كامل المديونية** + Net Amount ≥ {CASE_NET_AMOUNT_ERROR_MIN:g} → خطأ\n"
-        f"• **جدولة مقفلة** + Net Amount ≥ {CASE_NET_AMOUNT_ERROR_MIN:g} → خطأ\n"
-        f"  (متبقي < {CASE_NET_AMOUNT_ERROR_MIN:g} مقبول في الحالتين)\n"
-        "• **جدولة مقفلة بخصم / سدد كامل المديونية بخصم** + Net Amount = 0 → خطأ\n"
-        "• **جدولة** مع متبقي في Net Amount → طبيعي (مش خطأ)"
-    )
+
+    upload_key = "case_errors_upload"
+    cache_scope = "case_errors_upload"
+    result_keys = (CASE_ERRORS_RESULT_KEY,)
 
     uploaded = st.file_uploader(
         "📂 ارفع المحفظة الحديثة (Excel أو CSV)",
         type=["xlsx", "xls", "csv"],
-        key="case_errors_upload",
+        key=upload_key,
+        on_change=sync_file_cache,
+        args=(upload_key, cache_scope, result_keys),
     )
 
     if uploaded is not None:
         st.caption(f"الملف: {uploaded.name}")
         with st.spinner("جارٍ فحص أخطاء الحالات..."):
             _run_case_errors_pipeline(uploaded)
+    else:
+        cached_file = st.session_state.get(APP_DATA_CACHE_KEY, {}).get(cache_scope, {})
+        cached = st.session_state.get(CASE_ERRORS_RESULT_KEY)
+        if cached or cached_file:
+            # الملف اتشال → sync_file_cache يمسح النتائج؛ لو لسه فيه كاش قديم نعرض رسالة رفع
+            pass
 
     cached = st.session_state.get(CASE_ERRORS_RESULT_KEY)
     if cached and cached.get("df") is not None:

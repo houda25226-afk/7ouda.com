@@ -10,6 +10,7 @@
   - تصنيف المكالمات (حسب الشركة والفترة)
   - الوعود (قائمة + مكسورة)
   - الإهمال ومتابعة الإهمال
+  - الجدولة المتعثرة (محفظة + سدادات)
   - تحليل نشاط المحصّلين (Dashboard + تصدير HTML)
 
 أسماء الأعمدة قابلة للتعديل من قسم الإعدادات أعلى الملف.
@@ -95,6 +96,26 @@ NEGLECT_LAST_DATE_CANDIDATES = ["Follow up Last Date", "follow up last date", "L
 NEGLECT_RESULT_KEY = "neglect_result"
 APP_DATA_CACHE_KEY = "app_uploaded_data_cache"
 DASHBOARD_SOURCE_HASH_KEY = "dashboard_source_hash"
+
+# ==========================================================
+# إعدادات تويب الجدولة المتعثرة
+# ==========================================================
+SCHEDULE_RESULT_KEY = "schedule_stalled_result"
+SCHEDULE_SUB_STATE_VALUE = "جدولة"
+SCHEDULE_DEBITOR_CANDIDATES = [
+    "Debitor", "debitor", "DEBITOR", "Debtor", "debtor",
+    "رقم المدين", "المدين", "Debitor ID", "Debitor Id",
+]
+SCHEDULE_PAYMENT_DATE_CANDIDATES = [
+    "Date of Creation", "date of creation", "Date Of Creation",
+    "Creation Date", "creation date", "تاريخ الإنشاء", "تاريخ السداد",
+    "Payment Date", "payment date",
+]
+# حد الشهرين بالأيام: ≤ 60 يوم = منتظمة، أكثر من 60 يوم = متعثرة
+SCHEDULE_REGULAR_MAX_DAYS = 60
+SCHEDULE_STATUS_COL = "حالة_الجدولة"
+SCHEDULE_LAST_PAYMENT_COL = "تاريخ_آخر_سداد"
+SCHEDULE_DAYS_SINCE_COL = "أيام_منذ_آخر_سداد"
 
 
 def uploaded_file_hash(uploaded_file):
@@ -3397,6 +3418,376 @@ def _show_dashboard_from_cache(break_start=None, break_end=None):
 
 
 # ==========================================================
+# ==========================================================
+# تويب الجدولة المتعثرة
+# ==========================================================
+
+def _build_last_payment_map(payments_df, debitor_col, date_col):
+    """يرجع dict: Debitor -> أحدث تاريخ سداد (date)."""
+    work = payments_df[[debitor_col, date_col]].copy()
+    work["_debitor"] = work[debitor_col].astype(str).str.strip()
+    work["_pay_date"] = [parse_date_cell(v) for v in work[date_col]]
+    work = work[work["_debitor"].ne("") & work["_debitor"].ne("nan") & work["_pay_date"].notna()]
+    if work.empty:
+        return {}
+    # أحدث تاريخ لكل Debitor
+    idx = work.groupby("_debitor")["_pay_date"].idxmax()
+    latest = work.loc[idx]
+    return dict(zip(latest["_debitor"], latest["_pay_date"]))
+
+
+def _run_schedule_stalled_pipeline(portfolio_file, payments_file):
+    """محفظة حديثة + ملف السدادات → حالات جدولة منتظمة / متعثرة."""
+    portfolio_hash = hashlib.sha256(portfolio_file.getvalue()).hexdigest()
+    payments_hash = hashlib.sha256(payments_file.getvalue()).hexdigest()
+    combined_hash = hashlib.sha256(f"{portfolio_hash}:{payments_hash}".encode()).hexdigest()
+
+    cached = st.session_state.get(SCHEDULE_RESULT_KEY)
+    if cached and cached.get("file_hash") == combined_hash:
+        return False  # موجود في الكاش
+
+    try:
+        portfolio_df = read_uploaded_dataframe(portfolio_file)
+        payments_df = read_uploaded_dataframe(payments_file)
+    except Exception as e:
+        st.error(f"تعذر قراءة أحد الملفات: {e}")
+        return False
+
+    total_in_portfolio = len(portfolio_df)
+    # 1) حذف أول صف بعد العناوين من المحفظة
+    if len(portfolio_df) > 0:
+        portfolio_df = portfolio_df.iloc[1:].reset_index(drop=True)
+
+    # ملف السدادات: نحذف أول صف إن وُجد نمط مشابه (صف فارغ/عنوان مكرر)
+    # نتركه كما هو إن لم يكن ضرورياً — غالباً السدادات بدون صف زائد، لكن لو عدد الأعمدة غريب نتركه.
+    # المستخدم طلب الحذف صراحة للمحفظة فقط.
+
+    sales_col = find_column(portfolio_df, SALES_PERSON_CANDIDATES)
+    substate_col = find_column(portfolio_df, PROMISE_SUB_STATE_CANDIDATES)
+    portfolio_debitor_col = find_column(portfolio_df, SCHEDULE_DEBITOR_CANDIDATES)
+    payments_debitor_col = find_column(payments_df, SCHEDULE_DEBITOR_CANDIDATES)
+    payment_date_col = find_column(payments_df, SCHEDULE_PAYMENT_DATE_CANDIDATES)
+    net_col = find_column(portfolio_df, PROMISE_NET_AMOUNT_CANDIDATES)
+
+    missing = []
+    if not sales_col:
+        missing.append("المحصّل (Salesperson)")
+    if not substate_col:
+        missing.append("الحالة الفرعية (Sub State)")
+    if not portfolio_debitor_col:
+        missing.append("Debitor في المحفظة")
+    if not payments_debitor_col:
+        missing.append("Debitor في السدادات")
+    if not payment_date_col:
+        missing.append("Date of Creation في السدادات")
+    if missing:
+        st.error(
+            "تعذر العثور على أعمدة مهمة.\n"
+            f"الأعمدة الناقصة: {', '.join(missing)}\n\n"
+            f"أعمدة المحفظة: {', '.join(map(str, portfolio_df.columns))}\n"
+            f"أعمدة السدادات: {', '.join(map(str, payments_df.columns))}"
+        )
+        return False
+
+    # 2) فلترة Salesperson — استبعاد المحصّلين المحددين
+    sales_vals = portfolio_df[sales_col].astype(str).str.strip()
+    keep_sales = ~sales_vals.isin(PROMISE_EXCLUDED_SALES)
+    dropped_sales = int((~keep_sales).sum())
+    df = portfolio_df[keep_sales].copy()
+
+    # 3) فلترة Sub State = جدولة فقط
+    sub_vals = df[substate_col].astype(str).str.strip()
+    # توحيد بسيط: قبول "جدولة" و"جدوله"
+    keep_sub = sub_vals.apply(lambda s: _state_key(s) == _state_key(SCHEDULE_SUB_STATE_VALUE))
+    dropped_sub = int((~keep_sub).sum())
+    df = df[keep_sub].copy()
+
+    # 4) VLOOKUP: تاريخ آخر سداد من ملف السدادات عبر Debitor
+    last_pay_map = _build_last_payment_map(payments_df, payments_debitor_col, payment_date_col)
+    debitor_keys = df[portfolio_debitor_col].astype(str).str.strip()
+    df[SCHEDULE_LAST_PAYMENT_COL] = debitor_keys.map(last_pay_map)
+
+    # 5) حالة الجدولة: ≤ شهرين (60 يوم) منتظمة، أكثر متعثرة
+    _init_promises_today()
+    target_date = st.session_state[TODAY_KEY]
+
+    def _schedule_status(last_pay):
+        if last_pay is None or (isinstance(last_pay, float) and pd.isna(last_pay)):
+            return "بدون سداد", None
+        try:
+            days = (target_date - last_pay).days
+        except Exception:
+            return "بدون سداد", None
+        if days < 0:
+            days = 0
+        if days <= SCHEDULE_REGULAR_MAX_DAYS:
+            return "جدولة منتظمة", days
+        return "جدولة متعثرة", days
+
+    status_days = df[SCHEDULE_LAST_PAYMENT_COL].apply(_schedule_status)
+    df[SCHEDULE_STATUS_COL] = status_days.apply(lambda x: x[0])
+    df[SCHEDULE_DAYS_SINCE_COL] = status_days.apply(lambda x: x[1])
+
+    matched = int(df[SCHEDULE_LAST_PAYMENT_COL].notna().sum())
+    unmatched = len(df) - matched
+    regular_count = int((df[SCHEDULE_STATUS_COL] == "جدولة منتظمة").sum())
+    stalled_count = int((df[SCHEDULE_STATUS_COL] == "جدولة متعثرة").sum())
+    no_pay_count = int((df[SCHEDULE_STATUS_COL] == "بدون سداد").sum())
+
+    st.session_state[SCHEDULE_RESULT_KEY] = {
+        "df": df,
+        "file_hash": combined_hash,
+        "portfolio_name": portfolio_file.name,
+        "payments_name": payments_file.name,
+        "sales_col": sales_col,
+        "substate_col": substate_col,
+        "debitor_col": portfolio_debitor_col,
+        "net_col": net_col,
+        "target_date": target_date,
+        "total_in_portfolio": total_in_portfolio,
+        "after_filters": len(df),
+        "dropped_sales": dropped_sales,
+        "dropped_sub": dropped_sub,
+        "matched": matched,
+        "unmatched": unmatched,
+        "regular_count": regular_count,
+        "stalled_count": stalled_count,
+        "no_pay_count": no_pay_count,
+    }
+    return True
+
+
+def _show_schedule_stalled_results(df, meta):
+    sales_col = meta.get("sales_col")
+    net_col = meta.get("net_col")
+    debitor_col = meta.get("debitor_col")
+
+    total = len(df)
+    regular = meta.get("regular_count", 0)
+    stalled = meta.get("stalled_count", 0)
+    no_pay = meta.get("no_pay_count", 0)
+    matched = meta.get("matched", 0)
+
+    st.success(
+        f"✅ تم التحليل: {total:,} حالة جدولة بعد الفلترة · "
+        f"مطابقة سدادات: {matched:,} · بدون سداد: {no_pay:,}"
+    )
+    st.caption(
+        f"المحفظة: {meta.get('portfolio_name', '—')} · "
+        f"السدادات: {meta.get('payments_name', '—')} · "
+        f"تاريخ المرجع: {meta.get('target_date')}"
+    )
+
+    k1, k2, k3, k4 = st.columns(4)
+    k1.metric("📋 إجمالي الجدولة", f"{total:,}")
+    k2.metric("📗 جدولة منتظمة", f"{regular:,}")
+    k3.metric("📕 جدولة متعثرة", f"{stalled:,}")
+    k4.metric("⚪ بدون سداد", f"{no_pay:,}")
+
+    # فلتر عرض الحالة
+    status_filter = st.multiselect(
+        "تصفية حسب حالة الجدولة",
+        options=["جدولة منتظمة", "جدولة متعثرة", "بدون سداد"],
+        default=["جدولة منتظمة", "جدولة متعثرة", "بدون سداد"],
+        key="schedule_status_filter",
+    )
+    view = df[df[SCHEDULE_STATUS_COL].isin(status_filter)].copy() if status_filter else df.copy()
+
+    if total and sales_col and sales_col in df.columns:
+        st.markdown("#### 📈 توزيع حالات الجدولة حسب المحصّل")
+        agent_status = (
+            df.groupby([sales_col, SCHEDULE_STATUS_COL])
+            .size()
+            .reset_index(name="العدد")
+        )
+        agent_order = (
+            agent_status.groupby(sales_col)["العدد"]
+            .sum()
+            .sort_values(ascending=False)
+            .head(15)
+            .index.tolist()
+        )
+        agent_status = agent_status[agent_status[sales_col].isin(agent_order)]
+        fig = px.bar(
+            agent_status,
+            x="العدد",
+            y=sales_col,
+            color=SCHEDULE_STATUS_COL,
+            barmode="group",
+            orientation="h",
+            text="العدد",
+            color_discrete_map={
+                "جدولة منتظمة": COLOR_SUCCESS,
+                "جدولة متعثرة": COLOR_FAIL,
+                "بدون سداد": COLOR_WARN,
+            },
+            template=PLOTLY_TEMPLATE,
+        )
+        fig.update_layout(
+            **{
+                **PLOTLY_LAYOUT,
+                "title": "منتظمة / متعثرة / بدون سداد حسب المحصّل",
+                "xaxis_title": "العدد",
+                "yaxis_title": "",
+                "height": 480,
+                "legend_title_text": "",
+            }
+        )
+        fig.update_traces(texttemplate="%{x:,}", textposition="outside", cliponaxis=False)
+        st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG, key="schedule_by_agent")
+
+        pie_counts = df[SCHEDULE_STATUS_COL].value_counts().rename_axis("الحالة").reset_index(name="العدد")
+        pie = px.pie(
+            pie_counts,
+            values="العدد",
+            names="الحالة",
+            hole=0.55,
+            color="الحالة",
+            color_discrete_map={
+                "جدولة منتظمة": COLOR_SUCCESS,
+                "جدولة متعثرة": COLOR_FAIL,
+                "بدون سداد": COLOR_WARN,
+            },
+            template=PLOTLY_TEMPLATE,
+        )
+        pie.update_layout(**{**PLOTLY_LAYOUT, "title": "نسبة حالات الجدولة", "height": 380})
+        pie.update_traces(texttemplate="%{label}<br>%{value:,} (%{percent:.1%})", textinfo="text")
+        st.plotly_chart(pie, use_container_width=True, config=PLOTLY_CONFIG, key="schedule_status_pie")
+
+    # ملخص حسب المحصّل
+    if sales_col and sales_col in df.columns:
+        summary = (
+            df.groupby(sales_col)[SCHEDULE_STATUS_COL]
+            .value_counts()
+            .unstack(fill_value=0)
+            .reset_index()
+        )
+        for col in ["جدولة منتظمة", "جدولة متعثرة", "بدون سداد"]:
+            if col not in summary.columns:
+                summary[col] = 0
+        summary["الإجمالي"] = summary[["جدولة منتظمة", "جدولة متعثرة", "بدون سداد"]].sum(axis=1)
+        summary = summary.rename(columns={sales_col: "المحصّل"}).sort_values("الإجمالي", ascending=False)
+        st.subheader("📊 ملخص حسب المحصّل")
+        st.dataframe(summary, use_container_width=True, hide_index=True)
+
+    display_cols = [
+        c for c in [
+            sales_col,
+            debitor_col,
+            meta.get("substate_col"),
+            SCHEDULE_LAST_PAYMENT_COL,
+            SCHEDULE_DAYS_SINCE_COL,
+            SCHEDULE_STATUS_COL,
+            net_col,
+        ]
+        if c and c in view.columns
+    ]
+    st.subheader("📋 تفاصيل حالات الجدولة")
+    if display_cols:
+        st.dataframe(view[display_cols], use_container_width=True, hide_index=True)
+    else:
+        st.dataframe(view, use_container_width=True, hide_index=True)
+
+    # تحميل: الكل + المتعثرة فقط
+    def _excel_bytes(report_df, sheet_name):
+        buf = io.BytesIO()
+        with pd.ExcelWriter(buf, engine="openpyxl") as writer:
+            report_df.to_excel(writer, index=False, sheet_name=sheet_name)
+        return buf.getvalue()
+
+    report_date = datetime.now().strftime("%Y-%m-%d")
+    stalled_df = df[df[SCHEDULE_STATUS_COL] == "جدولة متعثرة"].copy()
+    regular_df = df[df[SCHEDULE_STATUS_COL] == "جدولة منتظمة"].copy()
+
+    d1, d2, d3 = st.columns(3)
+    with d1:
+        st.download_button(
+            "⬇️ تحميل كل حالات الجدولة",
+            data=_excel_bytes(df, "الجدولة"),
+            file_name=f"تقرير_الجدولة_كامل_{report_date}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            use_container_width=True,
+            type="primary",
+            key="schedule_download_all",
+            disabled=df.empty,
+        )
+    with d2:
+        st.download_button(
+            "⬇️ تحميل الجدولة المتعثرة فقط",
+            data=_excel_bytes(stalled_df, "متعثرة"),
+            file_name=f"تقرير_الجدولة_المتعثرة_{report_date}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            use_container_width=True,
+            type="primary",
+            key="schedule_download_stalled",
+            disabled=stalled_df.empty,
+        )
+    with d3:
+        st.download_button(
+            "⬇️ تحميل الجدولة المنتظمة فقط",
+            data=_excel_bytes(regular_df, "منتظمة"),
+            file_name=f"تقرير_الجدولة_المنتظمة_{report_date}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            use_container_width=True,
+            key="schedule_download_regular",
+            disabled=regular_df.empty,
+        )
+
+
+def page_schedule_stalled():
+    """صفحة الجدولة المتعثرة: محفظة حديثة + ملف السدادات → منتظمة / متعثرة."""
+    _init_promises_today()
+    page_header(
+        "STALLED SCHEDULES",
+        "📅 الجدولة المتعثرة",
+        "ارفع المحفظة الحديثة وملف السدادات لتحديد حالات الجدولة المنتظمة والمتعثرة (أكثر من شهرين بلا سداد)",
+    )
+
+    st.info(
+        "المنطق: فلترة المحفظة (استبعاد محصّلين محددين + Sub State = جدولة) ثم مطابقة "
+        "**Debitor** مع السدادات لجلب **تاريخ آخر سداد** (Date of Creation). "
+        f"≤ {SCHEDULE_REGULAR_MAX_DAYS} يوم = جدولة منتظمة · أكثر = جدولة متعثرة."
+    )
+
+    c1, c2 = st.columns(2)
+    with c1:
+        portfolio_file = st.file_uploader(
+            "📂 ارفع المحفظة الحديثة (Excel أو CSV)",
+            type=["xlsx", "xls", "csv"],
+            key="schedule_portfolio_upload",
+        )
+    with c2:
+        payments_file = st.file_uploader(
+            "📂 ارفع ملف السدادات (Excel أو CSV)",
+            type=["xlsx", "xls", "csv"],
+            key="schedule_payments_upload",
+        )
+
+    # مزامنة الكاش عند تغيير/إزالة الملفات
+    if portfolio_file is None or payments_file is None:
+        # لا نمسح النتيجة تلقائياً عند التنقل؛ نمسح فقط لو المستخدم شال الملفين والنتائج مش معروضة من كاش صالح
+        pass
+
+    if portfolio_file is not None and payments_file is not None:
+        st.caption(
+            f"المحفظة: {portfolio_file.name} · السدادات: {payments_file.name}"
+        )
+        with st.spinner("جارٍ تحليل الجدولة وربط السدادات..."):
+            _run_schedule_stalled_pipeline(portfolio_file, payments_file)
+
+    cached = st.session_state.get(SCHEDULE_RESULT_KEY)
+    if cached and cached.get("df") is not None:
+        if portfolio_file is None and payments_file is None:
+            st.success(
+                f"✅ نتيجة محفوظة من: {cached.get('portfolio_name', '—')} + "
+                f"{cached.get('payments_name', '—')}. لن تُحذف عند التنقل بين التبويبات."
+            )
+        _show_schedule_stalled_results(cached["df"], cached)
+    else:
+        st.info("📂 ارفع ملف المحفظة الحديثة وملف السدادات معاً لبدء التحليل.")
+
+
+
 # التنقل (Sidebar Navigation)
 # ==========================================================
 
@@ -3404,6 +3795,7 @@ PAGES = {
     "🎯 تصنيف المكالمات": page_classification,
     "📚 الوعود": page_promises,
     "⚠️ الإهمال والمتابعة": page_neglect,
+    "📅 الجدولة المتعثرة": page_schedule_stalled,
     "🧾 أخطاء الحالات": lambda: page_placeholder(
         "CASE ERRORS", "أخطاء الحالات", "الحالات اللي فيها أخطاء في التسجيل أو المتابعة", "🧾"
     ),

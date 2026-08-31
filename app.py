@@ -4030,14 +4030,15 @@ def _match_case_payment_state(value):
 def _detect_case_errors_for_row(sub_state, payment_amt, net_amt, original_amt=None):
     """إرجاع قائمة (قاعدة، سبب) لأخطاء الصف.
 
-    استثناءات (مش خطأ حالة):
-    - أصل المديونية = 0
-    - Net Amount < 50
+    استثناءات:
+    - أصل المديونية = 0 → مش خطأ حالة (الصف بالكامل).
+    - «سدد كامل المديونية» أو «جدولة مقفلة» + Net Amount < 50 → مش خطأ
+      (متبقي بسيط عند الإقفال مقبول).
+    - «سدد كامل المديونية بخصم» أو «جدولة مقفلة بخصم» + Net Amount = 0 → خطأ
+      (الاستثناء أعلاه لا ينطبق على حالات الخصم).
     """
-    # استثناء: أصل المديونية صفر أو متبقي بسيط (< 50) → مش خطأ
+    # استثناء: أصل المديونية صفر → مش خطأ
     if original_amt is not None and original_amt == 0:
-        return []
-    if net_amt < CASE_NET_AMOUNT_ERROR_MIN:
         return []
 
     errors = []
@@ -4066,16 +4067,18 @@ def _detect_case_errors_for_row(sub_state, payment_amt, net_amt, original_amt=No
             f"الحالة «{sub_state}» ليست حالة سداد لكن Net Amount = 0",
         ))
     # 4) قواعد خاصة بحالات السداد مع Net Amount
-    if matched == "سدد كامل المديونية" and net_amt > 0:
+    #    متبقي < 50 في سدد كامل / جدولة مقفلة → مقبول (مش خطأ)
+    if matched == "سدد كامل المديونية" and net_amt >= CASE_NET_AMOUNT_ERROR_MIN:
         errors.append((
             "متبقي بعد سداد كامل",
-            f"«سدد كامل المديونية» لكن Net Amount = {net_amt:,.2f} (يجب أن يكون صفر)",
+            f"«سدد كامل المديونية» لكن Net Amount = {net_amt:,.2f} (يجب أن يكون أقل من {CASE_NET_AMOUNT_ERROR_MIN:g} أو صفر)",
         ))
-    elif matched == "جدولة مقفلة" and net_amt > 0:
+    elif matched == "جدولة مقفلة" and net_amt >= CASE_NET_AMOUNT_ERROR_MIN:
         errors.append((
             "متبقي مع جدولة مقفلة",
-            f"«جدولة مقفلة» لكن Net Amount = {net_amt:,.2f} (يجب أن يكون صفر)",
+            f"«جدولة مقفلة» لكن Net Amount = {net_amt:,.2f} (يجب أن يكون أقل من {CASE_NET_AMOUNT_ERROR_MIN:g} أو صفر)",
         ))
+    # حالات الخصم: Net Amount = 0 → خطأ دائمًا (حتى لو أقل من 50)
     elif matched == "جدولة مقفلة بخصم" and net_amt == 0:
         errors.append((
             "Net Amount صفر مع جدولة مقفلة بخصم",
@@ -4461,13 +4464,13 @@ def page_case_errors():
         "• **جدولة / سدد كامل المديونية** + Payment = 0 → خطأ\n"
         "• حالة **غير سداد** + Payment > 0 → خطأ\n"
         "• حالة **غير سداد** + Net Amount = 0 → خطأ\n"
-        "• **سدد كامل المديونية / جدولة مقفلة** + Net Amount > 0 → خطأ\n"
+        f"• **سدد كامل المديونية / جدولة مقفلة** + Net Amount ≥ {CASE_NET_AMOUNT_ERROR_MIN:g} → خطأ\n"
         "• **جدولة مقفلة بخصم / سدد كامل المديونية بخصم** + Net Amount = 0 → خطأ\n"
         "• **جدولة** مع متبقي في Net Amount → طبيعي (ليس خطأ)\n"
         "\n"
         "استثناءات (ليست خطأ):\n"
         "• **أصل المديونية = 0** → مش خطأ حالة\n"
-        f"• **Net Amount < {CASE_NET_AMOUNT_ERROR_MIN:g}** → مش خطأ حالة"
+        f"• **سدد كامل المديونية / جدولة مقفلة** + Net Amount < {CASE_NET_AMOUNT_ERROR_MIN:g} → مقبول (مش خطأ)"
     )
 
     uploaded = st.file_uploader(

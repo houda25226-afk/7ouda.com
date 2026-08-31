@@ -137,6 +137,14 @@ CASE_PAYMENT_INDICATING_STATES = [
 ]
 # حالات قاعدة Payment = 0
 CASE_PAYMENT_MUST_BE_POSITIVE = ["جدولة", "سدد كامل المديونية"]
+# عمود أصل المديونية — لو = 0 مش بنعتبر الصف خطأ حالة
+CASE_ORIGINAL_DEBT_CANDIDATES = [
+    "أصل المديونية", "اصل المديونية", "Original Amount", "original amount",
+    "Original Debt", "original debt", "Principal", "principal",
+    "Principal Amount", "مبلغ أصل المديونية", "الأصل", "الاصل",
+]
+# حد Net Amount اللي تحتّه مش بنعتبر الصف خطأ حالة
+CASE_NET_AMOUNT_ERROR_MIN = 50.0
 
 
 def uploaded_file_hash(uploaded_file):
@@ -4019,8 +4027,19 @@ def _match_case_payment_state(value):
     return None
 
 
-def _detect_case_errors_for_row(sub_state, payment_amt, net_amt):
-    """إرجاع قائمة (قاعدة، سبب) لأخطاء الصف."""
+def _detect_case_errors_for_row(sub_state, payment_amt, net_amt, original_amt=None):
+    """إرجاع قائمة (قاعدة، سبب) لأخطاء الصف.
+
+    استثناءات (مش خطأ حالة):
+    - أصل المديونية = 0
+    - Net Amount < 50
+    """
+    # استثناء: أصل المديونية صفر أو متبقي بسيط (< 50) → مش خطأ
+    if original_amt is not None and original_amt == 0:
+        return []
+    if net_amt < CASE_NET_AMOUNT_ERROR_MIN:
+        return []
+
     errors = []
     matched = _match_case_payment_state(sub_state)
     is_payment_state = matched is not None
@@ -4093,6 +4112,7 @@ def _run_case_errors_pipeline(uploaded):
     substate_col = find_column(df, PROMISE_SUB_STATE_CANDIDATES)
     payment_col = find_column(df, CASE_PAYMENT_CANDIDATES)
     net_col = find_column(df, PROMISE_NET_AMOUNT_CANDIDATES)
+    original_col = find_column(df, CASE_ORIGINAL_DEBT_CANDIDATES)
 
     missing = []
     if not sales_col:
@@ -4119,6 +4139,7 @@ def _run_case_errors_pipeline(uploaded):
 
     payments = df[payment_col].apply(_to_amount)
     nets = df[net_col].apply(_to_amount)
+    originals = df[original_col].apply(_to_amount) if original_col else None
     sub_states = df[substate_col].astype(str).str.strip()
 
     error_rows = []
@@ -4127,7 +4148,8 @@ def _run_case_errors_pipeline(uploaded):
         sub = sub_states.loc[idx]
         pay = float(payments.loc[idx])
         net = float(nets.loc[idx])
-        found = _detect_case_errors_for_row(sub, pay, net)
+        orig = float(originals.loc[idx]) if originals is not None else None
+        found = _detect_case_errors_for_row(sub, pay, net, original_amt=orig)
         if not found:
             continue
         row = df.loc[idx].copy()
@@ -4152,6 +4174,7 @@ def _run_case_errors_pipeline(uploaded):
         "substate_col": substate_col,
         "payment_col": payment_col,
         "net_col": net_col,
+        "original_col": original_col,
         "total_in_file": total_in_file,
         "after_sales_filter": len(df),
         "dropped_sales": dropped_sales,
@@ -4440,7 +4463,11 @@ def page_case_errors():
         "• حالة **غير سداد** + Net Amount = 0 → خطأ\n"
         "• **سدد كامل المديونية / جدولة مقفلة** + Net Amount > 0 → خطأ\n"
         "• **جدولة مقفلة بخصم / سدد كامل المديونية بخصم** + Net Amount = 0 → خطأ\n"
-        "• **جدولة** مع متبقي في Net Amount → طبيعي (ليس خطأ)"
+        "• **جدولة** مع متبقي في Net Amount → طبيعي (ليس خطأ)\n"
+        "\n"
+        "استثناءات (ليست خطأ):\n"
+        "• **أصل المديونية = 0** → مش خطأ حالة\n"
+        f"• **Net Amount < {CASE_NET_AMOUNT_ERROR_MIN:g}** → مش خطأ حالة"
     )
 
     uploaded = st.file_uploader(

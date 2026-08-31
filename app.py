@@ -4033,45 +4033,40 @@ def _detect_case_errors_for_row(sub_state, payment_amt, net_amt, original_amt=No
     قواعد Payment:
       1) Sub State ∈ {جدولة، سدد كامل المديونية} و Payment = 0 → خطأ
       2) Sub State ∉ حالات السداد و Payment > 0 → خطأ
+         (Payment = 0 أو Net Amount = 0 مع حالة غير سداد → مش خطأ)
 
-    قواعد Net Amount:
-      3) Sub State ∉ حالات السداد و Net Amount = 0 → خطأ
-         استثناء: أصل المديونية = 0 مع Net Amount = 0 → مش خطأ
-      4) سدد كامل المديونية + Net Amount ≥ 50 → خطأ
+    قواعد Net Amount (حالات السداد فقط):
+      3) سدد كامل المديونية + Net Amount ≥ 50 → خطأ
          (متبقي < 50 مقبول)
-      5) جدولة مقفلة + Net Amount ≥ 50 → خطأ
+      4) جدولة مقفلة + Net Amount ≥ 50 → خطأ
          (متبقي < 50 مقبول)
-      6) جدولة مقفلة بخصم + Net Amount = 0 → خطأ
-      7) سدد كامل المديونية بخصم + Net Amount = 0 → خطأ
-      8) جدولة عادية مع متبقي في Net Amount → طبيعي (مش خطأ)
+      5) جدولة مقفلة بخصم + Net Amount = 0 → خطأ
+      6) سدد كامل المديونية بخصم + Net Amount = 0 → خطأ
+      7) جدولة عادية مع متبقي في Net Amount → طبيعي (مش خطأ)
+
+    ملاحظة: حالة غير سداد + (Payment = 0 أو Net Amount = 0 أو الاتنين) → مش خطأ حالة.
     """
     errors = []
     matched = _match_case_payment_state(sub_state)
     is_payment_state = matched is not None
 
-    # —— 1 & 2: قواعد Payment ——
+    # —— قواعد Payment ——
+    # 1) جدولة / سدد كامل المديونية + Payment = 0 → خطأ
     if matched in CASE_PAYMENT_MUST_BE_POSITIVE and payment_amt == 0:
         errors.append((
             "Payment صفر مع حالة سداد",
             f"الحالة «{matched}» تدل على سداد لكن Payment = 0",
         ))
+    # 2) حالة غير سداد + Payment > 0 → خطأ
+    #    (الصفر في Payment أو Net Amount مع غير سداد → مش خطأ)
     if not is_payment_state and payment_amt > 0:
         errors.append((
             "Payment أكبر من صفر بدون حالة سداد",
             f"الحالة «{sub_state}» لا تدل على سداد لكن Payment = {payment_amt:,.2f}",
         ))
 
-    # —— 3: غير سداد + Net Amount = 0 ——
-    if not is_payment_state and net_amt == 0:
-        # استثناء: أصل المديونية = 0 مع Net Amount = 0 → مش خطأ
-        original_is_zero = original_amt is not None and original_amt == 0
-        if not original_is_zero:
-            errors.append((
-                "Net Amount صفر بدون حالة سداد",
-                f"الحالة «{sub_state}» ليست حالة سداد لكن Net Amount = 0",
-            ))
-
-    # —— 4–7: حالات السداد مع Net Amount ——
+    # —— قواعد Net Amount (حالات السداد فقط) ——
+    # غير سداد + Net Amount = 0 → مش خطأ (متعمد)
     if matched == "سدد كامل المديونية" and net_amt >= CASE_NET_AMOUNT_ERROR_MIN:
         errors.append((
             "متبقي بعد سداد كامل",
@@ -4471,10 +4466,9 @@ def page_case_errors():
         "قواعد Payment:\n"
         "• **جدولة / سدد كامل المديونية** + Payment = 0 → خطأ\n"
         "• حالة **غير سداد** + Payment > 0 → خطأ\n"
+        "• حالة **غير سداد** + Payment = 0 أو Net Amount = 0 → مش خطأ\n"
         "\n"
         "قواعد Net Amount:\n"
-        "• حالة **غير سداد** + Net Amount = 0 → خطأ\n"
-        "  (استثناء: أصل المديونية = 0 مع Net Amount = 0 → مش خطأ)\n"
         f"• **سدد كامل المديونية** + Net Amount ≥ {CASE_NET_AMOUNT_ERROR_MIN:g} → خطأ\n"
         f"• **جدولة مقفلة** + Net Amount ≥ {CASE_NET_AMOUNT_ERROR_MIN:g} → خطأ\n"
         f"  (متبقي < {CASE_NET_AMOUNT_ERROR_MIN:g} مقبول في الحالتين)\n"

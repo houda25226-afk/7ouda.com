@@ -1011,6 +1011,14 @@ ACTIVITY_AGENT_PALETTE = [
 ACTIVITY_STATE_PALETTE = ["#2F6F73", "#628B8E", "#8095A2", "#A6B4B9"]
 ACTIVITY_OUTCOME_COLORS = {"ناجحة": "#2F6F73", "غير ناجحة": "#8095A2"}
 
+# لوحة الجدولة: 3 درجات فقط من نفس الهوية البصرية
+SCHEDULE_STATUS_COLORS = {
+    "جدولة منتظمة": COLOR_SUCCESS,
+    "جدولة متعثرة": COLOR_FAIL,
+    "بدون سداد": COLOR_ACCENT,
+}
+SCHEDULE_AGENT_SCALE = [COLOR_SUCCESS, COLOR_ACCENT, COLOR_FAIL]
+
 
 def _activity_agent_color_map(values):
     names = sorted({str(value) for value in values if pd.notna(value)})
@@ -3557,16 +3565,64 @@ def _run_schedule_stalled_pipeline(portfolio_file, payments_file):
     return True
 
 
+def render_schedule_kpi_dashboard(total, regular, stalled, no_pay, agent_count=None):
+    """كروت KPI للجدولة بنفس أسلوب كروت التصنيف (Plotly Indicators + زوايا دائرية)."""
+    cards = [
+        ("📋<br>إجمالي الجدولة", total, {"valueformat": ",d"}, THEME["text"]),
+        ("📗<br>جدولة منتظمة", regular, {"valueformat": ",d"}, SCHEDULE_STATUS_COLORS["جدولة منتظمة"]),
+        ("📕<br>جدولة متعثرة", stalled, {"valueformat": ",d"}, SCHEDULE_STATUS_COLORS["جدولة متعثرة"]),
+        ("⚪<br>بدون سداد", no_pay, {"valueformat": ",d"}, SCHEDULE_STATUS_COLORS["بدون سداد"]),
+    ]
+    if agent_count is not None:
+        cards.insert(1, ("👥<br>عدد المحصّلين", agent_count, {"valueformat": ",d"}, THEME["text"]))
+
+    figure = go.Figure()
+    count = len(cards)
+    gap = 0.018
+    width = (1 - gap * (count + 1)) / count
+    for index, (label, value, number_format, number_color) in enumerate(cards):
+        x0 = gap + index * (width + gap)
+        x1 = x0 + width
+        figure.add_shape(
+            type="path",
+            xref="paper",
+            yref="paper",
+            path=_rounded_rect_path(x0, x1, 0.06, 0.94, radius=0.022),
+            line={"color": THEME["border"], "width": 1},
+            fillcolor=THEME["surface"],
+            layer="below",
+        )
+        figure.add_trace(
+            go.Indicator(
+                mode="number",
+                value=float(value or 0),
+                domain={"x": [x0 + 0.012, x1 - 0.012], "y": [0.12, 0.88]},
+                title={"text": label, "font": {"size": 17, "color": THEME["text_dim"]}, "align": "center"},
+                number={"font": {"size": 30, "color": number_color}, **number_format},
+            )
+        )
+    figure.update_layout(
+        height=200,
+        template=PLOTLY_TEMPLATE,
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)",
+        font={"family": "Tajawal, sans-serif", "color": THEME["text"]},
+        margin={"t": 8, "b": 8, "l": 8, "r": 8},
+    )
+    st.plotly_chart(figure, use_container_width=True, config=PLOTLY_CONFIG, key="schedule_kpi_dashboard")
+
+
 def _show_schedule_stalled_results(df, meta):
     sales_col = meta.get("sales_col")
     net_col = meta.get("net_col")
     debitor_col = meta.get("debitor_col")
 
     total = len(df)
-    regular = meta.get("regular_count", 0)
-    stalled = meta.get("stalled_count", 0)
-    no_pay = meta.get("no_pay_count", 0)
-    matched = meta.get("matched", 0)
+    regular = int(meta.get("regular_count", 0) or 0)
+    stalled = int(meta.get("stalled_count", 0) or 0)
+    no_pay = int(meta.get("no_pay_count", 0) or 0)
+    matched = int(meta.get("matched", 0) or 0)
+    agent_count = int(df[sales_col].nunique()) if sales_col and sales_col in df.columns else 0
 
     st.success(
         f"✅ تم التحليل: {total:,} حالة جدولة بعد الفلترة · "
@@ -3578,11 +3634,8 @@ def _show_schedule_stalled_results(df, meta):
         f"تاريخ المرجع: {meta.get('target_date')}"
     )
 
-    k1, k2, k3, k4 = st.columns(4)
-    k1.metric("📋 إجمالي الجدولة", f"{total:,}")
-    k2.metric("📗 جدولة منتظمة", f"{regular:,}")
-    k3.metric("📕 جدولة متعثرة", f"{stalled:,}")
-    k4.metric("⚪ بدون سداد", f"{no_pay:,}")
+    st.subheader("📊 ملخص الجدولة")
+    render_schedule_kpi_dashboard(total, regular, stalled, no_pay, agent_count=agent_count)
 
     # فلتر عرض الحالة
     status_filter = st.multiselect(
@@ -3594,7 +3647,7 @@ def _show_schedule_stalled_results(df, meta):
     view = df[df[SCHEDULE_STATUS_COL].isin(status_filter)].copy() if status_filter else df.copy()
 
     if total and sales_col and sales_col in df.columns:
-        st.markdown("#### 📈 توزيع حالات الجدولة حسب المحصّل")
+        st.markdown("#### 📈 تحليلات الجدولة التفاعلية")
         agent_status = (
             df.groupby([sales_col, SCHEDULE_STATUS_COL])
             .size()
@@ -3607,52 +3660,122 @@ def _show_schedule_stalled_results(df, meta):
             .head(15)
             .index.tolist()
         )
-        agent_status = agent_status[agent_status[sales_col].isin(agent_order)]
-        fig = px.bar(
-            agent_status,
-            x="العدد",
-            y=sales_col,
-            color=SCHEDULE_STATUS_COL,
-            barmode="group",
-            orientation="h",
-            text="العدد",
-            color_discrete_map={
-                "جدولة منتظمة": COLOR_SUCCESS,
-                "جدولة متعثرة": COLOR_FAIL,
-                "بدون سداد": COLOR_WARN,
-            },
-            template=PLOTLY_TEMPLATE,
-        )
-        fig.update_layout(
-            **{
+        agent_status = agent_status[agent_status[sales_col].isin(agent_order)].copy()
+        agent_status["_sort"] = agent_status[sales_col].map({name: i for i, name in enumerate(agent_order)})
+        agent_status = agent_status.sort_values(["_sort", SCHEDULE_STATUS_COL], ascending=[True, True])
+
+        left, right = st.columns(2)
+        with left:
+            fig = px.bar(
+                agent_status,
+                x="العدد",
+                y=sales_col,
+                color=SCHEDULE_STATUS_COL,
+                barmode="group",
+                orientation="h",
+                text="العدد",
+                color_discrete_map=SCHEDULE_STATUS_COLORS,
+                template=PLOTLY_TEMPLATE,
+                category_orders={
+                    sales_col: agent_order,
+                    SCHEDULE_STATUS_COL: ["جدولة منتظمة", "جدولة متعثرة", "بدون سداد"],
+                },
+            )
+            fig.update_layout(**{
                 **PLOTLY_LAYOUT,
-                "title": "منتظمة / متعثرة / بدون سداد حسب المحصّل",
+                "title": "حالات الجدولة حسب المحصّل",
                 "xaxis_title": "العدد",
                 "yaxis_title": "",
-                "height": 480,
+                "height": 500,
                 "legend_title_text": "",
-            }
-        )
-        fig.update_traces(texttemplate="%{x:,}", textposition="outside", cliponaxis=False)
-        st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG, key="schedule_by_agent")
+                "margin": dict(t=78, b=62, l=170, r=70),
+                "xaxis": dict(tickformat=",.0f", automargin=True),
+                "uniformtext_minsize": 12,
+                "uniformtext_mode": "hide",
+            })
+            fig.update_traces(
+                texttemplate="%{x:,.0f}",
+                textposition="outside",
+                textfont=dict(size=14, color=THEME["text"]),
+                cliponaxis=False,
+                hovertemplate="<b>%{y}</b><br>%{fullData.name}: %{x:,.0f}<extra></extra>",
+            )
+            st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG, key="schedule_by_agent")
 
-        pie_counts = df[SCHEDULE_STATUS_COL].value_counts().rename_axis("الحالة").reset_index(name="العدد")
-        pie = px.pie(
-            pie_counts,
-            values="العدد",
-            names="الحالة",
-            hole=0.55,
-            color="الحالة",
-            color_discrete_map={
-                "جدولة منتظمة": COLOR_SUCCESS,
-                "جدولة متعثرة": COLOR_FAIL,
-                "بدون سداد": COLOR_WARN,
-            },
-            template=PLOTLY_TEMPLATE,
+        with right:
+            pie_counts = (
+                df[SCHEDULE_STATUS_COL]
+                .value_counts()
+                .reindex(["جدولة منتظمة", "جدولة متعثرة", "بدون سداد"], fill_value=0)
+                .rename_axis("الحالة")
+                .reset_index(name="العدد")
+            )
+            pie_counts = pie_counts[pie_counts["العدد"] > 0]
+            pie = px.pie(
+                pie_counts,
+                values="العدد",
+                names="الحالة",
+                hole=0.55,
+                color="الحالة",
+                color_discrete_map=SCHEDULE_STATUS_COLORS,
+                template=PLOTLY_TEMPLATE,
+            )
+            pie.update_layout(**{
+                **PLOTLY_LAYOUT,
+                "title": "توزيع حالات الجدولة",
+                "height": 500,
+                "legend_title_text": "",
+                "margin": dict(t=78, b=45, l=35, r=35),
+            })
+            pie.update_traces(
+                texttemplate="%{label}<br>%{value:,.0f} (%{percent:.1%})",
+                textfont=dict(size=15, color=THEME["text"]),
+                textinfo="text",
+                hovertemplate="<b>%{label}</b><br>العدد: %{value:,.0f}<br>النسبة: %{percent:.1%}<extra></extra>",
+                marker=dict(line=dict(color=THEME["surface"], width=2)),
+            )
+            st.plotly_chart(pie, use_container_width=True, config=PLOTLY_CONFIG, key="schedule_status_pie")
+
+        # شريط مكدّس بنسب المحصّلين (درجات نفس الألوان الثلاثة)
+        stacked = (
+            df.groupby([sales_col, SCHEDULE_STATUS_COL])
+            .size()
+            .unstack(fill_value=0)
         )
-        pie.update_layout(**{**PLOTLY_LAYOUT, "title": "نسبة حالات الجدولة", "height": 380})
-        pie.update_traces(texttemplate="%{label}<br>%{value:,} (%{percent:.1%})", textinfo="text")
-        st.plotly_chart(pie, use_container_width=True, config=PLOTLY_CONFIG, key="schedule_status_pie")
+        for col in ["جدولة منتظمة", "جدولة متعثرة", "بدون سداد"]:
+            if col not in stacked.columns:
+                stacked[col] = 0
+        stacked = stacked[["جدولة منتظمة", "جدولة متعثرة", "بدون سداد"]]
+        stacked["الإجمالي"] = stacked.sum(axis=1)
+        stacked = stacked.sort_values("الإجمالي", ascending=True).tail(15)
+        stack_fig = go.Figure()
+        for status_name in ["جدولة منتظمة", "جدولة متعثرة", "بدون سداد"]:
+            stack_fig.add_trace(
+                go.Bar(
+                    name=status_name,
+                    y=stacked.index.astype(str),
+                    x=stacked[status_name],
+                    orientation="h",
+                    marker_color=SCHEDULE_STATUS_COLORS[status_name],
+                    text=stacked[status_name].apply(lambda v: f"{v:,}" if v else ""),
+                    textposition="inside",
+                    insidetextanchor="middle",
+                    textfont=dict(size=12, color=THEME["chart_text"]),
+                    hovertemplate=f"<b>%{{y}}</b><br>{status_name}: %{{x:,}}<extra></extra>",
+                )
+            )
+        stack_fig.update_layout(**{
+            **PLOTLY_LAYOUT,
+            "title": "توزيع نسبي مكدّس حسب المحصّل",
+            "barmode": "stack",
+            "xaxis_title": "العدد",
+            "yaxis_title": "",
+            "height": 480,
+            "legend_title_text": "",
+            "margin": dict(t=78, b=50, l=170, r=40),
+            "xaxis": dict(tickformat=",.0f", automargin=True),
+        })
+        st.plotly_chart(stack_fig, use_container_width=True, config=PLOTLY_CONFIG, key="schedule_stacked_by_agent")
 
     # ملخص حسب المحصّل
     if sales_col and sales_col in df.columns:
@@ -3688,7 +3811,6 @@ def _show_schedule_stalled_results(df, meta):
     else:
         st.dataframe(view, use_container_width=True, hide_index=True)
 
-    # تحميل: الكل + المتعثرة فقط
     def _excel_bytes(report_df, sheet_name):
         buf = io.BytesIO()
         with pd.ExcelWriter(buf, engine="openpyxl") as writer:

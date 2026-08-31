@@ -1061,6 +1061,7 @@ PLOTLY_CONFIG = {
 
 CLASSIFICATION_AGENT_FILTER_KEY = "classification_selected_agent"
 PROMISES_AGENT_FILTER_KEY = "promises_selected_agent"
+SCHEDULE_AGENT_FILTER_KEY = "schedule_selected_agent"
 
 
 def _event_value(item, key, default=None):
@@ -1164,6 +1165,33 @@ def render_classification_filter_notice(df, sales_col):
     with c2:
         if st.button("إظهار الكل", key="clear_classification_agent_filter", use_container_width=True):
             st.session_state.pop(CLASSIFICATION_AGENT_FILTER_KEY, None)
+            st.rerun()
+
+
+def get_schedule_view(df, sales_col):
+    """تطبيق فلتر المحصّل المختار من الشارت على بيانات الجدولة."""
+    if not sales_col or sales_col not in df.columns:
+        return df
+    selected = st.session_state.get(SCHEDULE_AGENT_FILTER_KEY)
+    if not selected:
+        return df
+    mask = df[sales_col].astype(str).str.strip().eq(str(selected).strip())
+    if not mask.any():
+        st.session_state.pop(SCHEDULE_AGENT_FILTER_KEY, None)
+        return df
+    return df.loc[mask].copy()
+
+
+def render_schedule_filter_notice():
+    selected = st.session_state.get(SCHEDULE_AGENT_FILTER_KEY)
+    if not selected:
+        return
+    c1, c2 = st.columns([4, 1])
+    with c1:
+        st.info(f"🎯 الفلتر النشط: عرض كل مؤشرات ورسوم الجدولة للمحصّل «{selected}»")
+    with c2:
+        if st.button("إظهار الكل", key="clear_schedule_agent_filter", use_container_width=True):
+            st.session_state.pop(SCHEDULE_AGENT_FILTER_KEY, None)
             st.rerun()
 
 
@@ -3617,25 +3645,34 @@ def _show_schedule_stalled_results(df, meta):
     sales_col = meta.get("sales_col")
     net_col = meta.get("net_col")
     debitor_col = meta.get("debitor_col")
+    matched = int(meta.get("matched", 0) or 0)
+    no_pay_meta = int(meta.get("no_pay_count", 0) or 0)
+
+    # فلتر المحصّل من الضغط على الشارت
+    render_schedule_filter_notice()
+    df_all = df
+    df = get_schedule_view(df, sales_col)
 
     total = len(df)
-    regular = int(meta.get("regular_count", 0) or 0)
-    stalled = int(meta.get("stalled_count", 0) or 0)
-    no_pay = int(meta.get("no_pay_count", 0) or 0)
-    matched = int(meta.get("matched", 0) or 0)
+    regular = int((df[SCHEDULE_STATUS_COL] == "جدولة منتظمة").sum()) if SCHEDULE_STATUS_COL in df.columns else 0
+    stalled = int((df[SCHEDULE_STATUS_COL] == "جدولة متعثرة").sum()) if SCHEDULE_STATUS_COL in df.columns else 0
+    no_pay = int((df[SCHEDULE_STATUS_COL] == "بدون سداد").sum()) if SCHEDULE_STATUS_COL in df.columns else 0
     agent_count = int(df[sales_col].nunique()) if sales_col and sales_col in df.columns else 0
 
-    st.success(
-        f"✅ تم التحليل: {total:,} حالة جدولة بعد الفلترة · "
-        f"مطابقة سدادات: {matched:,} · بدون سداد: {no_pay:,}"
-    )
-    st.caption(
-        f"المحفظة: {meta.get('portfolio_name', '—')} · "
-        f"السدادات: {meta.get('payments_name', '—')} · "
-        f"تاريخ المرجع: {meta.get('target_date')}"
-    )
+    selected_agent = st.session_state.get(SCHEDULE_AGENT_FILTER_KEY)
+    if not selected_agent:
+        st.success(
+            f"✅ تم التحليل: {len(df_all):,} حالة جدولة بعد الفلترة · "
+            f"مطابقة سدادات: {matched:,} · بدون سداد: {no_pay_meta:,}"
+        )
+        st.caption(
+            f"المحفظة: {meta.get('portfolio_name', '—')} · "
+            f"السدادات: {meta.get('payments_name', '—')} · "
+            f"تاريخ المرجع: {meta.get('target_date')}"
+        )
+        st.caption("💡 اضغط على أي محصّل في الشارت لتصفية كل المؤشرات والرسوم عليه.")
 
-    st.subheader("📊 ملخص الجدولة")
+    st.subheader("📊 ملخص الجدولة" + (f" — {selected_agent}" if selected_agent else ""))
     render_schedule_kpi_dashboard(total, regular, stalled, no_pay, agent_count=agent_count)
 
     # فلتر عرض الحالة
@@ -3699,9 +3736,10 @@ def _show_schedule_stalled_results(df, meta):
                 textposition="outside",
                 textfont=dict(size=14, color=THEME["text"]),
                 cliponaxis=False,
+                customdata=agent_status[sales_col],
                 hovertemplate="<b>%{y}</b><br>%{fullData.name}: %{x:,.0f}<extra></extra>",
             )
-            st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG, key="schedule_by_agent")
+            render_selectable_chart(fig, "schedule_by_agent", filter_key=SCHEDULE_AGENT_FILTER_KEY)
 
         with right:
             pie_counts = (
@@ -3737,7 +3775,6 @@ def _show_schedule_stalled_results(df, meta):
             )
             st.plotly_chart(pie, use_container_width=True, config=PLOTLY_CONFIG, key="schedule_status_pie")
 
-        # شريط مكدّس بنسب المحصّلين (درجات نفس الألوان الثلاثة)
         stacked = (
             df.groupby([sales_col, SCHEDULE_STATUS_COL])
             .size()
@@ -3750,18 +3787,20 @@ def _show_schedule_stalled_results(df, meta):
         stacked["الإجمالي"] = stacked.sum(axis=1)
         stacked = stacked.sort_values("الإجمالي", ascending=True).tail(15)
         stack_fig = go.Figure()
+        agent_labels = stacked.index.astype(str).tolist()
         for status_name in ["جدولة منتظمة", "جدولة متعثرة", "بدون سداد"]:
             stack_fig.add_trace(
                 go.Bar(
                     name=status_name,
-                    y=stacked.index.astype(str),
-                    x=stacked[status_name],
+                    y=agent_labels,
+                    x=stacked[status_name].tolist(),
                     orientation="h",
                     marker_color=SCHEDULE_STATUS_COLORS[status_name],
-                    text=stacked[status_name].apply(lambda v: f"{v:,}" if v else ""),
+                    text=[f"{v:,}" if v else "" for v in stacked[status_name].tolist()],
                     textposition="inside",
                     insidetextanchor="middle",
                     textfont=dict(size=12, color="#F3F6FA"),
+                    customdata=agent_labels,
                     hovertemplate=f"<b>%{{y}}</b><br>{status_name}: %{{x:,}}<extra></extra>",
                 )
             )
@@ -3776,7 +3815,7 @@ def _show_schedule_stalled_results(df, meta):
             "margin": dict(t=78, b=50, l=170, r=40),
             "xaxis": dict(tickformat=",.0f", automargin=True),
         })
-        st.plotly_chart(stack_fig, use_container_width=True, config=PLOTLY_CONFIG, key="schedule_stacked_by_agent")
+        render_selectable_chart(stack_fig, "schedule_stacked_by_agent", filter_key=SCHEDULE_AGENT_FILTER_KEY)
 
     # ملخص حسب المحصّل
     if sales_col and sales_col in df.columns:
@@ -3819,20 +3858,21 @@ def _show_schedule_stalled_results(df, meta):
         return buf.getvalue()
 
     report_date = datetime.now().strftime("%Y-%m-%d")
-    stalled_df = df[df[SCHEDULE_STATUS_COL] == "جدولة متعثرة"].copy()
-    regular_df = df[df[SCHEDULE_STATUS_COL] == "جدولة منتظمة"].copy()
+    # التحميل يعتمد على العرض الحالي (بعد فلتر المحصّل + الحالة)
+    stalled_df = view[view[SCHEDULE_STATUS_COL] == "جدولة متعثرة"].copy() if SCHEDULE_STATUS_COL in view.columns else view.iloc[0:0].copy()
+    regular_df = view[view[SCHEDULE_STATUS_COL] == "جدولة منتظمة"].copy() if SCHEDULE_STATUS_COL in view.columns else view.iloc[0:0].copy()
 
     d1, d2, d3 = st.columns(3)
     with d1:
         st.download_button(
             "⬇️ تحميل كل حالات الجدولة",
-            data=_excel_bytes(df, "الجدولة"),
+            data=_excel_bytes(view, "الجدولة"),
             file_name=f"تقرير_الجدولة_كامل_{report_date}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             use_container_width=True,
             type="primary",
             key="schedule_download_all",
-            disabled=df.empty,
+            disabled=view.empty,
         )
     with d2:
         st.download_button(

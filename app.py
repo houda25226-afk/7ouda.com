@@ -1011,13 +1011,14 @@ ACTIVITY_AGENT_PALETTE = [
 ACTIVITY_STATE_PALETTE = ["#2F6F73", "#628B8E", "#8095A2", "#A6B4B9"]
 ACTIVITY_OUTCOME_COLORS = {"ناجحة": "#2F6F73", "غير ناجحة": "#8095A2"}
 
-# لوحة الجدولة: 3 درجات فقط من نفس الهوية البصرية
+# لوحة الجدولة: 3 درجات متقاربة من نفس العائلة اللونية (تيل هادئ)
+SCHEDULE_PALETTE = ["#2F6F73", "#5A8A8D", "#8FA8AB"]
 SCHEDULE_STATUS_COLORS = {
-    "جدولة منتظمة": COLOR_SUCCESS,
-    "جدولة متعثرة": COLOR_FAIL,
-    "بدون سداد": COLOR_ACCENT,
+    "جدولة منتظمة": SCHEDULE_PALETTE[0],   # أغمق
+    "جدولة متعثرة": SCHEDULE_PALETTE[1],   # متوسط
+    "بدون سداد": SCHEDULE_PALETTE[2],      # أفتح
 }
-SCHEDULE_AGENT_SCALE = [COLOR_SUCCESS, COLOR_ACCENT, COLOR_FAIL]
+SCHEDULE_AGENT_SCALE = list(SCHEDULE_PALETTE)
 
 
 def _activity_agent_color_map(values):
@@ -3760,7 +3761,7 @@ def _show_schedule_stalled_results(df, meta):
                     text=stacked[status_name].apply(lambda v: f"{v:,}" if v else ""),
                     textposition="inside",
                     insidetextanchor="middle",
-                    textfont=dict(size=12, color=THEME["chart_text"]),
+                    textfont=dict(size=12, color="#F3F6FA"),
                     hovertemplate=f"<b>%{{y}}</b><br>{status_name}: %{{x:,}}<extra></extra>",
                 )
             )

@@ -1032,13 +1032,16 @@ CLASSIFICATION_PRIMARY = COLOR_ACCENT
 CLASSIFICATION_SECONDARY = THEMES[THEME_NAME]["accent_strong"]
 CLASSIFICATION_HIGHLIGHT = COLOR_SUCCESS
 CLASSIFICATION_SCALE = [CLASSIFICATION_SECONDARY, CLASSIFICATION_PRIMARY, CLASSIFICATION_HIGHLIGHT]
-# Palette النشاط: ثلاث عائلات لونية هادئة فقط بدرجات متقاربة.
+# Palette النشاط: لونان أساسيان + درجة ثالثة (تيل + رمادي مزرق) بدرجاتهم فقط.
+ACTIVITY_PRIMARY = "#2F6F73"      # تيل غامق
+ACTIVITY_SECONDARY = "#6A9A9D"    # تيل متوسط
+ACTIVITY_MUTED = "#A8B8BC"        # رمادي مزرق فاتح
 ACTIVITY_AGENT_PALETTE = [
-    "#2F6F73", "#477F82", "#628B8E", "#7D9A9D", "#98AEB2", "#B2C1C3",
-    "#5F7D8C", "#8095A2", "#A6B4B9",
+    ACTIVITY_PRIMARY, "#3D7E82", ACTIVITY_SECONDARY, "#7EABAE",
+    ACTIVITY_MUTED, "#B8C5C8", "#4A888C", "#8FB4B7", "#C5D0D3",
 ]
-ACTIVITY_STATE_PALETTE = ["#2F6F73", "#628B8E", "#8095A2", "#A6B4B9"]
-ACTIVITY_OUTCOME_COLORS = {"ناجحة": "#2F6F73", "غير ناجحة": "#8095A2"}
+ACTIVITY_STATE_PALETTE = [ACTIVITY_PRIMARY, ACTIVITY_SECONDARY, ACTIVITY_MUTED, "#C5D0D3"]
+ACTIVITY_OUTCOME_COLORS = {"ناجحة": ACTIVITY_PRIMARY, "غير ناجحة": ACTIVITY_MUTED}
 
 # لوحة الجدولة: 3 درجات متقاربة من نفس العائلة اللونية (تيل هادئ)
 SCHEDULE_PALETTE = ["#2F6F73", "#5A8A8D", "#8FA8AB"]
@@ -1254,6 +1257,8 @@ def render_neglect_filter_notice(filter_key=NEGLECT_AGENT_FILTER_KEY, clear_key=
 
 
 DASHBOARD_AGENT_FILTER_KEY = "dashboard_selected_agent"
+DASHBOARD_DAY_FILTER_KEY = "dashboard_selected_day"
+DASHBOARD_OUTCOME_FILTER_KEY = "dashboard_selected_outcome"  # "ناجحة" | "غير ناجحة"
 
 ACTIVITY_NO_ANSWER_STATES = [
     "لا يرد",
@@ -1428,16 +1433,39 @@ def _build_activity_summary(df, class_col, sales_col, time_col, break_start=None
 
 
 def _activity_layout(**overrides):
-    return {**PLOTLY_LAYOUT, **overrides}
+    base = {
+        **PLOTLY_LAYOUT,
+        "title": {"x": 0.5, "xanchor": "center", "font": {"size": 17, "color": THEME["text"]}},
+        "margin": dict(t=70, b=60, l=60, r=28),
+        "legend": {
+            "orientation": "h",
+            "yanchor": "top",
+            "y": -0.18,
+            "x": 0.5,
+            "xanchor": "center",
+            "bgcolor": "rgba(0,0,0,0)",
+        },
+        "uniformtext_minsize": 11,
+        "uniformtext_mode": "hide",
+    }
+    overrides = dict(overrides)
+    title_x = overrides.pop("title_x", None)
+    if "title" in overrides and isinstance(overrides["title"], str):
+        overrides["title"] = {**base["title"], "text": overrides["title"]}
+    elif "title" in overrides and isinstance(overrides["title"], dict):
+        overrides["title"] = {**base["title"], **overrides["title"]}
+    if title_x is not None and isinstance(overrides.get("title"), dict):
+        overrides["title"]["x"] = title_x
+    return {**base, **overrides}
 
 
 def render_activity_kpi_cards(total, success, agent_count, success_rate, wasted_minutes):
     cards = [
         ("👥<br>عدد المحصّلين", agent_count, {"valueformat": ",d"}, THEME["text"]),
         ("📞<br>إجمالي المكالمات", total, {"valueformat": ",d"}, THEME["text"]),
-        ("✅<br>المكالمات الناجحة", success, {"valueformat": ",d"}, ACTIVITY_OUTCOME_COLORS["ناجحة"]),
-        ("📈<br>نسبة النجاح", success_rate, {"valueformat": ".1f", "suffix": "%"}, ACTIVITY_AGENT_PALETTE[1]),
-        ("⏱️<br>إجمالي الوقت المهدر", wasted_minutes, {"valueformat": ".1f", "suffix": " دقيقة"}, ACTIVITY_AGENT_PALETTE[3]),
+        ("✅<br>المكالمات الناجحة", success, {"valueformat": ",d"}, ACTIVITY_PRIMARY),
+        ("📈<br>نسبة النجاح", success_rate, {"valueformat": ".1f", "suffix": "%"}, ACTIVITY_SECONDARY),
+        ("⏱️<br>إجمالي الوقت المهدر", wasted_minutes, {"valueformat": ".1f", "suffix": " دقيقة"}, ACTIVITY_MUTED),
     ]
     figure = go.Figure()
     gap = 0.014
@@ -1466,27 +1494,57 @@ def render_activity_kpi_cards(total, success, agent_count, success_rate, wasted_
 
 
 def _render_dashboard_agent_filter_notice():
-    selected = st.session_state.get(DASHBOARD_AGENT_FILTER_KEY)
-    if not selected:
+    agent = st.session_state.get(DASHBOARD_AGENT_FILTER_KEY)
+    day = st.session_state.get(DASHBOARD_DAY_FILTER_KEY)
+    outcome = st.session_state.get(DASHBOARD_OUTCOME_FILTER_KEY)
+    if not agent and not day and not outcome:
         return
+    parts = []
+    if agent:
+        parts.append(f"محصّل: «{agent}»")
+    if day:
+        parts.append(f"يوم: «{day}»")
+    if outcome:
+        parts.append(f"نتيجة: «{outcome}»")
     c1, c2 = st.columns([4, 1])
     with c1:
-        st.info(f"🎯 الفلتر التفاعلي النشط: كل المؤشرات للمحصّل «{selected}»")
+        st.info("🎯 الفلتر التفاعلي النشط: " + " · ".join(parts))
     with c2:
         if st.button("إظهار الكل", key="clear_dashboard_agent_filter", use_container_width=True):
-            st.session_state.pop(DASHBOARD_AGENT_FILTER_KEY, None)
+            _clear_dashboard_chart_filter()
             st.rerun()
 
 
-def _dashboard_activity_view(df, sales_col):
-    selected = st.session_state.get(DASHBOARD_AGENT_FILTER_KEY)
-    if not selected or not sales_col or sales_col not in df.columns:
-        return df
-    mask = df[sales_col].fillna("غير محدد").astype(str).str.strip().eq(str(selected).strip())
-    if not mask.any():
-        st.session_state.pop(DASHBOARD_AGENT_FILTER_KEY, None)
-        return df
-    return df.loc[mask].copy()
+def _dashboard_activity_view(df, sales_col, class_col=None, time_col=None):
+    """تطبيق فلاتر الشارت التفاعلية: محصّل / يوم / نتيجة."""
+    view = df.copy()
+    agent = st.session_state.get(DASHBOARD_AGENT_FILTER_KEY)
+    day = st.session_state.get(DASHBOARD_DAY_FILTER_KEY)
+    outcome = st.session_state.get(DASHBOARD_OUTCOME_FILTER_KEY)
+
+    if agent and sales_col and sales_col in view.columns:
+        mask = view[sales_col].fillna("غير محدد").astype(str).str.strip().eq(str(agent).strip())
+        if mask.any():
+            view = view.loc[mask].copy()
+        else:
+            st.session_state.pop(DASHBOARD_AGENT_FILTER_KEY, None)
+
+    if day and time_col and time_col in view.columns:
+        ts = pd.to_datetime(view[time_col], errors="coerce")
+        day_mask = ts.dt.strftime("%Y-%m-%d").eq(str(day).strip())
+        if day_mask.any():
+            view = view.loc[day_mask].copy()
+        else:
+            st.session_state.pop(DASHBOARD_DAY_FILTER_KEY, None)
+
+    if outcome:
+        success_mask = _activity_success_mask(view, class_col)
+        if outcome == "ناجحة":
+            view = view.loc[success_mask].copy()
+        elif outcome == "غير ناجحة":
+            view = view.loc[~success_mask].copy()
+
+    return view
 
 
 def _render_activity_daily_chart(work, time_col, class_col=None):
@@ -1556,8 +1614,44 @@ def _render_activity_daily_chart(work, time_col, class_col=None):
         yaxis={"title": "عدد المكالمات", "rangemode": "tozero"},
         yaxis2={"title": "نسبة النجاح (%)", "overlaying": "y", "side": "right", "range": [0, 100], "ticksuffix": "%", "showgrid": False},
     ))
-    fig.update_traces(selector={"type": "bar"}, marker_line_width=0, hovertemplate="<b>%{x}</b><br>%{fullData.name}: %{y:,} مكالمة<extra></extra>")
-    render_selectable_chart(fig, "dashboard_activity_daily", filter_key=DASHBOARD_AGENT_FILTER_KEY)
+    fig.update_traces(
+        selector={"type": "bar"},
+        marker_line_width=0,
+        hovertemplate="<b>%{x}</b><br>%{fullData.name}: %{y:,} مكالمة<extra></extra>",
+    )
+    # تفاعل: اختيار المحصّل + اليوم من نفس الشارت
+    try:
+        event = st.plotly_chart(
+            fig, use_container_width=True, config=PLOTLY_CONFIG,
+            key="dashboard_activity_daily", on_select="rerun", selection_mode=("points",),
+        )
+        selection = _event_value(event, "selection") if event is not None else None
+        points = _event_value(selection, "points", []) if selection is not None else []
+        if points:
+            point = points[0]
+            agent_name = _event_value(point, "customdata")
+            if isinstance(agent_name, (list, tuple)):
+                agent_name = agent_name[0] if agent_name else None
+            if agent_name is None:
+                agent_name = _event_value(point, "fullData", {})
+                if isinstance(agent_name, dict):
+                    agent_name = agent_name.get("name")
+                else:
+                    agent_name = getattr(agent_name, "name", None)
+            day_val = _event_value(point, "x")
+            changed = False
+            if agent_name and str(agent_name).strip() and st.session_state.get(DASHBOARD_AGENT_FILTER_KEY) != str(agent_name).strip():
+                st.session_state[DASHBOARD_AGENT_FILTER_KEY] = str(agent_name).strip()
+                changed = True
+            if day_val is not None and str(day_val).strip():
+                day_str = str(day_val).strip()[:10]
+                if st.session_state.get(DASHBOARD_DAY_FILTER_KEY) != day_str:
+                    st.session_state[DASHBOARD_DAY_FILTER_KEY] = day_str
+                    changed = True
+            if changed:
+                st.rerun()
+    except TypeError:
+        st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG, key="dashboard_activity_daily")
 
 
 def _render_activity_hourly_chart(work, time_col):
@@ -1605,18 +1699,44 @@ def _render_activity_outcome_donut(work, class_col):
         donut_df, names="النتيجة", values="العدد", hole=0.62,
         color="النتيجة", color_discrete_map=ACTIVITY_OUTCOME_COLORS, template=PLOTLY_TEMPLATE,
     )
-    fig.update_traces(
-        textinfo="percent", textfont_size=15,
-        marker={"line": {"color": THEME["surface"], "width": 3}},
-        hovertemplate="<b>%{label}</b><br>العدد: %{value:,}<br>النسبة: %{percent}<extra></extra>",
-    )
     fig.update_layout(**_activity_layout(
-        title="🎯 الناجحة مقابل غير الناجحة", title_x=0.5, height=400,
-        legend={"orientation": "h", "yanchor": "top", "y": -0.12, "x": 0.5, "xanchor": "center"},
-        margin={"t": 62, "b": 62, "l": 16, "r": 16},
-        annotations=[{"text": f"{rate:.1f}%<br>نجاح", "x": 0.5, "y": 0.5, "font": {"size": 22, "color": COLOR_SUCCESS}, "showarrow": False}],
+        title="نتيجة المكالمات",
+        height=400,
+        margin={"t": 70, "b": 40, "l": 20, "r": 20},
+        legend_title_text="",
+        annotations=[{
+            "text": f"<b>{rate:.1f}%</b><br>نجاح",
+            "x": 0.5, "y": 0.5, "font": {"size": 20, "color": ACTIVITY_PRIMARY},
+            "showarrow": False,
+        }],
     ))
-    st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG, key="dashboard_outcome_donut")
+    fig.update_traces(
+        texttemplate="%{label}<br>%{value:,}<br>%{percent:.1%}",
+        textfont=dict(size=14, color=THEME["text"]),
+        textinfo="text",
+        customdata=donut_df["النتيجة"],
+        hovertemplate="<b>%{label}</b><br>العدد: %{value:,}<br>النسبة: %{percent:.1%}<extra></extra>",
+    )
+    try:
+        event = st.plotly_chart(
+            fig, use_container_width=True, config=PLOTLY_CONFIG,
+            key="dashboard_outcome_donut", on_select="rerun", selection_mode=("points",),
+        )
+        selection = _event_value(event, "selection") if event is not None else None
+        points = _event_value(selection, "points", []) if selection is not None else []
+        if points:
+            point = points[0]
+            selected = _event_value(point, "customdata")
+            if isinstance(selected, (list, tuple)):
+                selected = selected[0] if selected else None
+            if selected is None:
+                selected = _event_value(point, "label")
+            if selected in ("ناجحة", "غير ناجحة"):
+                if st.session_state.get(DASHBOARD_OUTCOME_FILTER_KEY) != selected:
+                    st.session_state[DASHBOARD_OUTCOME_FILTER_KEY] = selected
+                    st.rerun()
+    except TypeError:
+        st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG, key="dashboard_outcome_donut")
 
 
 def _render_activity_no_answer_chart(agent):
@@ -1666,7 +1786,7 @@ def render_activity_dashboard(df, class_col=None, sales_col=None, time_col=None,
         st.error("لا يوجد عمود واضح للمحصّل (Create By / Sales Person) في الملف.")
         return
     _render_dashboard_agent_filter_notice()
-    view = _dashboard_activity_view(df, sales_col)
+    view = _dashboard_activity_view(df, sales_col, class_col=class_col, time_col=time_col)
     agent, work, sub_col = _build_activity_summary(view, class_col, sales_col, time_col, break_start, break_end)
     if agent.empty:
         st.info("لا توجد مكالمات قابلة للعرض بعد تطبيق الفلاتر.")
@@ -1677,7 +1797,8 @@ def render_activity_dashboard(df, class_col=None, sales_col=None, time_col=None,
     wasted = float(pd.to_numeric(work.get(WASTED_TIME_COL, pd.Series(dtype=float)), errors="coerce").fillna(0).sum())
     st.subheader("📌 مؤشرات الأداء الرئيسية")
     render_activity_kpi_cards(total, success, int(agent["المحصّل"].nunique()), success_rate, wasted)
-    st.caption("اضغط على اسم أي محصل داخل الرسوم التفاعلية لتطبيق فلتر موحد على الكروت والرسوم والجدول.")
+    st.caption("لوحة موحّدة بثلاثة ألوان فقط · اضغط على الشارتات للفلترة التفاعلية (محصّل / يوم / نتيجة).")
+    st.caption("اضغط على أي عنصر في الشارتات (محصّل / يوم / نتيجة) لتطبيق فلتر تفاعلي على الكروت والرسوم والجدول. استخدم «إظهار الكل» للإلغاء.")
 
     daily_col, hourly_col = st.columns(2)
     with daily_col:
@@ -1777,13 +1898,31 @@ def build_dashboard_html(df, class_col, sales_col, time_col, source_name="", fil
     parts = [
         '<!doctype html><html lang="ar" dir="rtl"><head><meta charset="utf-8">'
         '<meta name="viewport" content="width=device-width, initial-scale=1">'
-        '<title>داشبورد تحليل نشاط المحصلين</title></head>',
-        f'<body style="margin:0;background:{background};color:{text};font-family:Tahoma,Arial,sans-serif;line-height:1.6">',
-        '<main style="max-width:1500px;margin:0 auto;padding:28px 30px">',
-        f'<header style="background:{surface};border:1px solid {border};border-radius:16px;padding:24px 28px;margin-bottom:22px">'
-        '<div style="font-size:13px;color:' + COLOR_ACCENT + ';letter-spacing:1px">ACTIVITY DASHBOARD</div>'
-        '<h1 style="margin:4px 0 2px;font-size:30px">📊 تحليل نشاط المحصلين</h1>'
-        f'<div style="color:{text_dim};font-size:14px">مصدر البيانات: {escape(source_name or "ملف النشاط")}</div>',
+        '<title>داشبورد تحليل نشاط المحصلين</title>'
+        f'<style>'
+        f'body{{margin:0;background:{background};color:{text};font-family:Tahoma,"Segoe UI",Arial,sans-serif;line-height:1.65}}'
+        f'main{{max-width:1440px;margin:0 auto;padding:28px 24px 40px}}'
+        f'header.hero{{background:{surface};border:1px solid {border};border-radius:18px;padding:28px 32px;margin-bottom:22px;text-align:center}}'
+        f'header.hero .eyebrow{{font-size:12px;letter-spacing:1.4px;color:{export_accent};margin-bottom:6px}}'
+        f'header.hero h1{{margin:0 0 8px;font-size:28px;color:{text}}}'
+        f'header.hero .meta{{color:{text_dim};font-size:14px}}'
+        f'h2.section-title{{margin:8px 0 14px;text-align:center;font-size:18px;color:{text}}}'
+        f'.card{{background:{surface};border:1px solid {border};border-radius:14px;padding:16px 18px;margin-bottom:16px}}'
+        f'.charts-grid{{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin:16px 0}}'
+        f'.chart-box{{background:{surface};border:1px solid {border};border-radius:14px;padding:14px 12px 8px;min-height:420px}}'
+        f'.chart-box h3{{margin:0 0 8px;text-align:center;font-size:15px;color:{text}}}'
+        f'#kpi-grid{{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;margin-bottom:18px}}'
+        f'.kpi{{background:{surface};border:1px solid {border};border-radius:14px;padding:16px 12px;text-align:center}}'
+        f'.kpi .label{{color:{text_dim};font-size:13px;margin-bottom:6px}}'
+        f'.kpi .value{{font-size:26px;font-weight:700;color:{text}}}'
+        f'@media (max-width:960px){{.charts-grid{{grid-template-columns:1fr}}}}'
+        f'</style></head>',
+        '<body>',
+        '<main>',
+        f'<header class="hero">'
+        '<div class="eyebrow">ACTIVITY DASHBOARD</div>'
+        '<h1>📊 تحليل نشاط المحصلين</h1>'
+        f'<div class="meta">مصدر البيانات: {escape(source_name or "ملف النشاط")}</div>',
     ]
     if filter_hint:
         parts.append(f'<div style="margin-top:12px;color:{text_dim};font-size:13px">الفلاتر النشطة: {escape(filter_hint)}</div>')
@@ -3741,6 +3880,8 @@ def _render_dashboard(df, class_col, sales_col, time_col, source_name, filter_hi
 
 def _clear_dashboard_chart_filter():
     st.session_state.pop(DASHBOARD_AGENT_FILTER_KEY, None)
+    st.session_state.pop(DASHBOARD_DAY_FILTER_KEY, None)
+    st.session_state.pop(DASHBOARD_OUTCOME_FILTER_KEY, None)
 
 
 def _render_native_multi_slicer(label, options, state_key, empty_label):

@@ -1689,20 +1689,47 @@ def _render_activity_no_answer_chart(agent):
     plot = plot.sort_values("إجمالي لا يرد", ascending=True)
     long = plot.melt(id_vars=["المحصّل"], value_vars=available, var_name="الحالة", value_name="العدد")
     fig = px.bar(
-        long, x="العدد", y="المحصّل", orientation="h", color="الحالة", barmode="stack", text_auto=True,
+        long, x="العدد", y="المحصّل", orientation="h", color="الحالة", barmode="stack",
         template=PLOTLY_TEMPLATE, category_orders={"الحالة": ACTIVITY_NO_ANSWER_STATES},
         color_discrete_sequence=ACTIVITY_STATE_PALETTE,
     )
-    fig.update_layout(**_activity_layout(
-        title="📵 حالات لا يرد لكل محصل (تشمل مغلق والتكرار)", title_x=0.5, xaxis_title="عدد الحالات", yaxis_title="",
-        height=ACTIVITY_PAIR_CHART_HEIGHT, legend_title_text="", legend={"orientation": "h", "yanchor": "top", "y": -0.18, "x": 0.5, "xanchor": "center"},
-        margin={"t": 56, "b": 88, "l": 120, "r": 20}, yaxis={"categoryorder": "total ascending", "automargin": True},
-    ))
     fig.update_traces(
         marker_line_width=0,
+        texttemplate="%{x}",
+        textposition="inside",
+        insidetextanchor="middle",
+        textfont_size=11,
         customdata=long["المحصّل"],
         hovertemplate="<b>%{y}</b><br>%{fullData.name}: %{x:,}<extra></extra>",
     )
+    row_totals = long.groupby("المحصّل", sort=False)["العدد"].sum()
+    fig.add_trace(go.Scatter(
+        x=row_totals.values,
+        y=row_totals.index.astype(str),
+        mode="text",
+        text=[f"{int(v)}" for v in row_totals.values],
+        textposition="middle right",
+        textfont={"size": 12, "color": THEME["text"]},
+        showlegend=False,
+        hoverinfo="skip",
+        cliponaxis=False,
+    ))
+    fig.update_layout(**_activity_layout(
+        title="حالات لا يرد / مغلق لكل محصل",
+        height=ACTIVITY_PAIR_CHART_HEIGHT,
+        legend_title_text="",
+        legend={"orientation": "h", "yanchor": "top", "y": -0.2, "x": 0.5, "xanchor": "center", "font": {"size": 11}},
+        margin={"t": 56, "b": 90, "l": 160, "r": 55},
+        xaxis={
+            "title": {"text": "عدد الحالات", "font": {"size": 13}},
+            "automargin": True,
+            "rangemode": "tozero",
+            "gridcolor": "rgba(128,145,170,0.18)",
+        },
+        yaxis={"title": "", "categoryorder": "total ascending", "automargin": True},
+        uniformtext_minsize=10,
+        uniformtext_mode="hide",
+    ))
     render_selectable_chart(fig, "dashboard_no_answer_states", filter_key=DASHBOARD_AGENT_FILTER_KEY)
 
 
@@ -1764,15 +1791,28 @@ def _render_activity_positive_states_chart(agent):
         texttemplate="%{x}",
         textposition="inside",
         insidetextanchor="middle",
+        textfont_size=11,
         customdata=long["المحصّل"],
         hovertemplate="<b>%{y}</b><br>%{fullData.name}: %{x:,}<extra></extra>",
     )
+    row_totals = long.groupby("المحصّل", sort=False)["العدد"].sum()
+    fig.add_trace(go.Scatter(
+        x=row_totals.values,
+        y=row_totals.index.astype(str),
+        mode="text",
+        text=[f"{int(v)}" for v in row_totals.values],
+        textposition="middle right",
+        textfont={"size": 12, "color": THEME["text"]},
+        showlegend=False,
+        hoverinfo="skip",
+        cliponaxis=False,
+    ))
     fig.update_layout(**_activity_layout(
         title="حالات الوعد والسداد لكل محصل",
         height=ACTIVITY_PAIR_CHART_HEIGHT,
         legend_title_text="",
         legend={"orientation": "h", "yanchor": "top", "y": -0.22, "x": 0.5, "xanchor": "center", "font": {"size": 11}},
-        margin={"t": 56, "b": 95, "l": 160, "r": 28},
+        margin={"t": 56, "b": 95, "l": 160, "r": 55},
         xaxis={
             "title": {"text": "عدد الحالات", "font": {"size": 13}},
             "automargin": True,
@@ -1780,6 +1820,8 @@ def _render_activity_positive_states_chart(agent):
             "gridcolor": "rgba(128,145,170,0.18)",
         },
         yaxis={"title": "", "categoryorder": "total ascending", "automargin": True},
+        uniformtext_minsize=10,
+        uniformtext_mode="hide",
     ))
     render_selectable_chart(fig, "dashboard_positive_states", filter_key=DASHBOARD_AGENT_FILTER_KEY)
 
@@ -2145,14 +2187,36 @@ def build_dashboard_html(df, class_col, sales_col, time_col, source_name="", fil
                     color_discrete_sequence=positive_state_colors,
                 )
                 pos_fig.update_layout(**export_layout(
-                    title="حالات الوعد والسداد", height=max(400, 34 * len(pos_plot) + 160),
+                    title="حالات الوعد والسداد", height=max(420, 36 * len(pos_plot) + 170),
                     xaxis_title="عدد الحالات", yaxis_title="",
-                    xaxis={"automargin": True}, yaxis={"automargin": True, "categoryorder": "total ascending"},
-                    margin=dict(t=60, b=95, l=170, r=28),
+                    xaxis={"automargin": True, "rangemode": "tozero", "title": {"text": "عدد الحالات", "font": {"size": 13}}},
+                    yaxis={"automargin": True, "categoryorder": "total ascending"},
+                    margin=dict(t=60, b=100, l=170, r=55),
                     showlegend=True,
                     legend=dict(orientation="h", y=-0.24, x=0.5, xanchor="center", font=dict(size=11), title_text=""),
+                    uniformtext_minsize=10,
+                    uniformtext_mode="hide",
                 ))
-                pos_fig.update_traces(marker_line_width=0, hovertemplate="<b>%{y}</b><br>%{fullData.name}: %{x:,}<extra></extra>")
+                pos_fig.update_traces(
+                    marker_line_width=0,
+                    texttemplate="%{x}",
+                    textposition="inside",
+                    insidetextanchor="middle",
+                    textfont_size=11,
+                    hovertemplate="<b>%{y}</b><br>%{fullData.name}: %{x:,}<extra></extra>",
+                )
+                pos_totals = pos_long.groupby("المحصّل", sort=False)["العدد"].sum()
+                pos_fig.add_trace(go.Scatter(
+                    x=pos_totals.values,
+                    y=pos_totals.index.astype(str),
+                    mode="text",
+                    text=[f"{int(v)}" for v in pos_totals.values],
+                    textposition="middle right",
+                    textfont={"size": 12, "color": text, "family": "Tahoma, Arial"},
+                    showlegend=False,
+                    hoverinfo="skip",
+                    cliponaxis=False,
+                ))
                 chart_specs.append(("states", "الوعد والسداد", pos_fig, "plot_positive"))
 
     if not agent_table.empty and "إجمالي الوقت المهدر (دقيقة)" in agent_table.columns:
@@ -2421,9 +2485,19 @@ function refreshDashboard() {
       type:'bar', orientation:'h', name:state,
       y:agents,
       x:agents.map(a => rows.filter(r => r.agent===a && r.state===state).length),
-      marker:{color: stateColors[state] || '#A8B8BC'}
+      marker:{color: stateColors[state] || '#A8B8BC'},
+      text:agents.map(a => { const v = rows.filter(r => r.agent===a && r.state===state).length; return v > 0 ? v : ''; }),
+      textposition:'inside', insidetextanchor:'middle', textfont:{size:11},
+      hovertemplate:'<b>%{y}</b><br>%{fullData.name}: %{x:,}<extra></extra>'
     }));
-    Plotly.react(statePlot, stateTraces, {...(statePlot.layout || {}), barmode:'stack'});
+    const stateTotals = agents.map(a => rows.filter(r => r.agent===a && stateNames.includes(r.state)).length);
+    stateTraces.push({
+      type:'scatter', mode:'text', y:agents, x:stateTotals,
+      text:stateTotals.map(v => v > 0 ? String(v) : ''),
+      textposition:'middle right', textfont:{size:12, color:'#1F2937'},
+      showlegend:false, hoverinfo:'skip', cliponaxis:false
+    });
+    Plotly.react(statePlot, stateTraces, {...(statePlot.layout || {}), barmode:'stack', margin:{...(statePlot.layout && statePlot.layout.margin || {}), r:55}});
   }
 
   if (positivePlot) {
@@ -2432,9 +2506,19 @@ function refreshDashboard() {
       type:'bar', orientation:'h', name:state,
       y:agents,
       x:agents.map(a => rows.filter(r => r.agent===a && r.state===state).length),
-      marker:{color: positiveStateColors[state] || '#6A9A9D'}
+      marker:{color: positiveStateColors[state] || '#6A9A9D'},
+      text:agents.map(a => { const v = rows.filter(r => r.agent===a && r.state===state).length; return v > 0 ? v : ''; }),
+      textposition:'inside', insidetextanchor:'middle', textfont:{size:11},
+      hovertemplate:'<b>%{y}</b><br>%{fullData.name}: %{x:,}<extra></extra>'
     }));
-    Plotly.react(positivePlot, positiveTraces, {...(positivePlot.layout || {}), barmode:'stack'});
+    const posTotals = agents.map(a => rows.filter(r => r.agent===a && posNames.includes(r.state)).length);
+    positiveTraces.push({
+      type:'scatter', mode:'text', y:agents, x:posTotals,
+      text:posTotals.map(v => v > 0 ? String(v) : ''),
+      textposition:'middle right', textfont:{size:12, color:'#1F2937'},
+      showlegend:false, hoverinfo:'skip', cliponaxis:false
+    });
+    Plotly.react(positivePlot, positiveTraces, {...(positivePlot.layout || {}), barmode:'stack', margin:{...(positivePlot.layout && positivePlot.layout.margin || {}), r:55}});
   }
 
   if (wastePlot) {

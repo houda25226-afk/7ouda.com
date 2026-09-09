@@ -2994,7 +2994,6 @@ def _normalize_match_id(val):
     text = str(val).strip()
     if text.lower() in {"nan", "none", "nat", ""}:
         return ""
-    # Excel أحيانًا يحوّل الرقم لـ float فيظهر 12345.0
     if text.endswith(".0"):
         try:
             float(text)
@@ -3005,10 +3004,11 @@ def _normalize_match_id(val):
 
 
 def _run_neglect_followup_pipeline(new_file, old_file):
-    """متابعة الإهمال — منطق XLOOKUP على Account Number:
+    """متابعة الإهمال — XLOOKUP على Account Number:
 
     1) من المحفظة الحديثة: Account Number → Follow up Last Date
-    2) يتضاف العمود على شيت الإهمال القديم باسم «تاريخ اخر متابعة»
+    2) لو شيت الإهمال فيه عمود تاريخ آخر متابعة موجود → نحدّثه
+       لو مش موجود → ننشئ «تاريخ اخر متابعة»
     3) فرق الأيام = تاريخ اليوم − تاريخ اخر متابعة
     4) أقل من 8 أيام = تم التغطية، غير كده = لم يتم التغطية
     """
@@ -3017,11 +3017,9 @@ def _run_neglect_followup_pipeline(new_file, old_file):
         df_new = read_uploaded_dataframe(new_file)
         df_old = read_uploaded_dataframe(old_file)
 
-        # المحفظة الحديثة: صف وهمي بعد العناوين
         if len(df_new) > 0:
             df_new = df_new.iloc[1:].reset_index(drop=True)
 
-        # تقرير الإهمال القديم: احذف الصف الأول فقط لو فاضي بالكامل
         if len(df_old) > 0:
             first_row = df_old.iloc[0]
             if first_row.isna().all() or all(
@@ -3029,15 +3027,12 @@ def _run_neglect_followup_pipeline(new_file, old_file):
             ):
                 df_old = df_old.iloc[1:].reset_index(drop=True)
 
-        # مفتاح الربط: Account Number (رقم المطالبة / رقم حساب العميل)
-        account_candidates = (
-            ACCOUNT_NUMBER_CANDIDATES
-            + CLAIM_CANDIDATES
-            + ID_CANDIDATES
-        )
+        account_candidates = ACCOUNT_NUMBER_CANDIDATES + CLAIM_CANDIDATES + ID_CANDIDATES
         acc_col_new = find_column(df_new, account_candidates)
         acc_col_old = find_column(df_old, account_candidates)
         last_date_new = find_column(df_new, NEGLECT_LAST_DATE_CANDIDATES)
+        # عمود التاريخ في شيت الإهمال (لو موجود نحدّثه بدل إنشاء عمود جديد)
+        last_date_old = find_column(df_old, NEGLECT_LAST_DATE_CANDIDATES)
 
         if not acc_col_new or not acc_col_old:
             st.error(
@@ -3053,13 +3048,11 @@ def _run_neglect_followup_pipeline(new_file, old_file):
             )
             return
 
-        # بناء خريطة: Account Number → أحدث Follow up Last Date
         work_new = pd.DataFrame({
             "_key": df_new[acc_col_new].map(_normalize_match_id),
             "_last": [parse_date_cell(v) for v in df_new[last_date_new]],
         })
         work_new = work_new[work_new["_key"] != ""]
-        # لو الحساب مكرر في المحفظة: ناخد أحدث تاريخ
         lookup_map = (
             work_new.dropna(subset=["_last"])
             .sort_values("_last")
@@ -3070,9 +3063,11 @@ def _run_neglect_followup_pipeline(new_file, old_file):
 
         result_df = df_old.copy()
         keys_old = result_df[acc_col_old].map(_normalize_match_id)
+        looked_up = keys_old.map(lookup_map)
 
-        # XLOOKUP: تاريخ اخر متابعة من المحفظة الحديثة
-        result_df["تاريخ اخر متابعة"] = keys_old.map(lookup_map)
+        # حدّث العمود الموجود، أو أنشئ «تاريخ اخر متابعة» لو مش موجود
+        target_last_col = last_date_old if last_date_old else "تاريخ اخر متابعة"
+        result_df[target_last_col] = looked_up
 
         target_date = st.session_state.get(TODAY_KEY, datetime.now().date())
 
@@ -3087,7 +3082,7 @@ def _run_neglect_followup_pipeline(new_file, old_file):
             except Exception:
                 return None
 
-        result_df["فرق_الأيام"] = result_df["تاريخ اخر متابعة"].apply(_days_since)
+        result_df["فرق_الأيام"] = result_df[target_last_col].apply(_days_since)
 
         def _coverage(days):
             if days is None or (isinstance(days, float) and pd.isna(days)):
@@ -3096,20 +3091,22 @@ def _run_neglect_followup_pipeline(new_file, old_file):
 
         result_df["الملاحظات"] = result_df["فرق_الأيام"].apply(_coverage)
 
-        # نسخة نصية للتاريخ للعرض/التصدير
-        result_df["تاريخ اخر متابعة"] = result_df["تاريخ اخر متابعة"].apply(
-            lambda d: d.strftime("%Y-%m-%d") if d is not None and pd.notna(d) and hasattr(d, "strftime") else (
-                "" if d is None or (isinstance(d, float) and pd.isna(d)) else str(d)
-            )
+        # تنسيق التاريخ للعرض/التصدير كنص YYYY-MM-DD مع الإبقاء على القيم الأصلية المفقودة فارغة
+        result_df[target_last_col] = result_df[target_last_col].apply(
+            lambda d: d.strftime("%Y-%m-%d")
+            if d is not None and pd.notna(d) and hasattr(d, "strftime")
+            else ("" if d is None or (isinstance(d, float) and pd.isna(d)) else str(d))
         )
 
-        matched = int((result_df["فرق_الأيام"].notna()).sum())
+        matched = int(result_df["فرق_الأيام"].notna().sum())
         st.session_state["neglect_followup_result"] = {
             "df": result_df,
             "meta": {
                 "acc_col_new": acc_col_new,
                 "acc_col_old": acc_col_old,
                 "last_date_new": last_date_new,
+                "target_last_col": target_last_col,
+                "updated_existing": bool(last_date_old),
                 "matched": matched,
                 "total_old": len(result_df),
                 "mapping_size": len(lookup_map),
@@ -3121,34 +3118,165 @@ def _run_neglect_followup_pipeline(new_file, old_file):
         st.error(f"خطأ في معالجة الملفات: {e}")
 
 
+def render_neglect_kpi_dashboard(cards, chart_key="neglect_kpi"):
+    """كروت KPI بنفس ستايل التصنيف (Plotly rounded cards)."""
+    figure = go.Figure()
+    count = len(cards)
+    gap = 0.018
+    width = (1 - gap * (count + 1)) / count
+    for index, (label, value, number_format, number_color) in enumerate(cards):
+        x0 = gap + index * (width + gap)
+        x1 = x0 + width
+        figure.add_shape(
+            type="path",
+            xref="paper",
+            yref="paper",
+            path=_rounded_rect_path(x0, x1, 0.06, 0.94, radius=0.022),
+            line={"color": THEME["border"], "width": 1},
+            fillcolor=THEME["surface"],
+            layer="below",
+        )
+        figure.add_trace(
+            go.Indicator(
+                mode="number",
+                value=float(value or 0),
+                domain={"x": [x0 + 0.012, x1 - 0.012], "y": [0.12, 0.88]},
+                title={"text": label, "font": {"size": 18, "color": THEME["text_dim"]}, "align": "center"},
+                number={"font": {"size": 32, "color": number_color}, **number_format},
+            )
+        )
+    figure.update_layout(
+        height=200,
+        template=PLOTLY_TEMPLATE,
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)",
+        font={"family": "Tajawal, sans-serif", "color": THEME["text"]},
+        margin={"t": 8, "b": 8, "l": 8, "r": 8},
+    )
+    st.plotly_chart(figure, use_container_width=True, config=PLOTLY_CONFIG, key=chart_key)
+
+
 def _show_neglect_followup_results(df, meta=None):
     st.subheader("📊 نتائج متابعة الإهمال")
     meta = meta or {}
     covered = int((df["الملاحظات"] == "تم التغطية").sum()) if "الملاحظات" in df.columns else 0
     not_covered = int((df["الملاحظات"] == "لم يتم التغطية").sum()) if "الملاحظات" in df.columns else 0
-    pct = covered / len(df) * 100 if len(df) else 0
+    total = len(df)
+    pct = covered / total * 100 if total else 0
     matched = meta.get("matched")
     if matched is None and "فرق_الأيام" in df.columns:
         matched = int(df["فرق_الأيام"].notna().sum())
+    target_last_col = meta.get("target_last_col") or (
+        find_column(df, NEGLECT_LAST_DATE_CANDIDATES) or "تاريخ اخر متابعة"
+    )
 
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric("✅ تم التغطية", f"{covered:,}")
-    c2.metric("❌ لم يتم التغطية", f"{not_covered:,}")
-    c3.metric("📈 نسبة التغطية", f"{pct:.1f}%")
-    c4.metric("🔗 حالات لها تاريخ", f"{matched:,}" if matched is not None else "—")
+    cards = [
+        ("📋<br>إجمالي الحالات", total, {"valueformat": ",d"}, THEME["text"]),
+        ("✅<br>تم التغطية", covered, {"valueformat": ",d"}, COLOR_SUCCESS),
+        ("❌<br>لم يتم التغطية", not_covered, {"valueformat": ",d"}, COLOR_FAIL),
+        ("📈<br>نسبة التغطية", pct, {"valueformat": ".1f", "suffix": "%"}, COLOR_ACCENT),
+        ("🔗<br>حالات لها تاريخ", matched or 0, {"valueformat": ",d"}, COLOR_WARN),
+    ]
+    render_neglect_kpi_dashboard(cards, chart_key="neglect_followup_kpi")
 
     if meta:
+        action = "تحديث العمود الموجود" if meta.get("updated_existing") else "إنشاء عمود جديد"
         st.caption(
-            f"XLOOKUP على: المحفظة[{meta.get('acc_col_new')}] ↔ الإهمال[{meta.get('acc_col_old')}] · "
+            f"{action}: «{target_last_col}» · "
+            f"XLOOKUP: المحفظة[{meta.get('acc_col_new')}] ↔ الإهمال[{meta.get('acc_col_old')}] · "
             f"المصدر: {meta.get('last_date_new')} · "
             f"حجم الخريطة: {meta.get('mapping_size', 0):,} · "
             f"تاريخ اليوم: {meta.get('target_date')}"
         )
 
+    if total and "الملاحظات" in df.columns:
+        st.markdown("#### 📈 تحليلات التغطية")
+        left, right = st.columns(2)
+        with left:
+            type_counts = (
+                df["الملاحظات"].value_counts()
+                .rename_axis("الحالة")
+                .reset_index(name="العدد")
+            )
+            fig = px.pie(
+                type_counts,
+                values="العدد",
+                names="الحالة",
+                hole=0.55,
+                color="الحالة",
+                color_discrete_map={
+                    "تم التغطية": COLOR_SUCCESS,
+                    "لم يتم التغطية": COLOR_FAIL,
+                },
+                template=PLOTLY_TEMPLATE,
+            )
+            fig.update_layout(
+                **{
+                    **PLOTLY_LAYOUT,
+                    "title": "توزيع التغطية",
+                    "height": 420,
+                    "legend_title_text": "",
+                    "margin": dict(t=78, b=45, l=35, r=35),
+                }
+            )
+            fig.update_traces(
+                texttemplate="%{label}<br>%{value:,.0f} (%{percent:.1%})",
+                textfont=dict(size=15, color=THEME["text"]),
+                textinfo="text",
+                hovertemplate="<b>%{label}</b><br>العدد: %{value:,.0f}<br>النسبة: %{percent:.1%}<extra></extra>",
+            )
+            st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG, key="neglect_followup_pie")
+        with right:
+            sales_col = find_column(df, SALES_PERSON_CANDIDATES)
+            if sales_col and sales_col in df.columns:
+                agent_type = (
+                    df.groupby([sales_col, "الملاحظات"]).size()
+                    .reset_index(name="العدد")
+                )
+                agent_order = (
+                    agent_type.groupby(sales_col)["العدد"].sum()
+                    .sort_values(ascending=False).head(15).index.tolist()
+                )
+                agent_type = agent_type[agent_type[sales_col].isin(agent_order)]
+                fig = px.bar(
+                    agent_type,
+                    x="العدد",
+                    y=sales_col,
+                    color="الملاحظات",
+                    barmode="group",
+                    orientation="h",
+                    text="العدد",
+                    color_discrete_map={
+                        "تم التغطية": COLOR_SUCCESS,
+                        "لم يتم التغطية": COLOR_FAIL,
+                    },
+                    template=PLOTLY_TEMPLATE,
+                    category_orders={sales_col: agent_order},
+                )
+                fig.update_layout(
+                    **{
+                        **PLOTLY_LAYOUT,
+                        "title": "التغطية حسب المحصّل",
+                        "xaxis_title": "عدد الحالات",
+                        "yaxis_title": "",
+                        "height": 420,
+                        "legend_title_text": "",
+                        "margin": dict(t=78, b=50, l=160, r=40),
+                    }
+                )
+                fig.update_traces(
+                    texttemplate="%{x:,.0f}",
+                    textposition="outside",
+                    cliponaxis=False,
+                )
+                st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG, key="neglect_followup_by_agent")
+            else:
+                st.info("لا يوجد عمود محصّل لعرض التوزيع.")
+
     preferred = [
         c for c in [
             "الملاحظات",
-            "تاريخ اخر متابعة",
+            target_last_col,
             "فرق_الأيام",
             meta.get("acc_col_old") if meta else None,
         ]
@@ -3156,6 +3284,7 @@ def _show_neglect_followup_results(df, meta=None):
     ]
     other_cols = [c for c in df.columns if c not in preferred]
     ordered = preferred + other_cols
+    st.subheader("📋 تفاصيل متابعة الإهمال")
     st.dataframe(df[ordered], use_container_width=True, hide_index=True)
 
     out_excel = io.BytesIO()
@@ -3317,42 +3446,118 @@ def _run_neglect_pipeline(uploaded):
         st.error(f"خطأ في معالجة الملف: {e}")
 
 def _show_neglect_results(df, meta):
-    sales_col = meta["sales_col"]
-    net_col = meta["net_col"]
+    sales_col = meta.get("sales_col")
+    net_col = meta.get("net_col")
     total = len(df)
-    total_amount = pd.to_numeric(df[net_col], errors="coerce").fillna(0).sum() if net_col and net_col in df.columns else 0
+    total_amount = (
+        pd.to_numeric(df[net_col], errors="coerce").fillna(0).sum()
+        if net_col and net_col in df.columns else 0
+    )
     agent_count = int(df[sales_col].nunique()) if sales_col and sales_col in df.columns else 0
-    avg_days = pd.to_numeric(df["فرق_الأيام"], errors="coerce").mean() if "فرق_الأيام" in df.columns else None
+    avg_days = (
+        float(pd.to_numeric(df["فرق_الأيام"], errors="coerce").mean())
+        if "فرق_الأيام" in df.columns else None
+    )
+    if avg_days is not None and pd.isna(avg_days):
+        avg_days = 0.0
 
     st.subheader("📊 ملخص الإهمال")
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric("⚠️ إجمالي الحالات", f"{total:,}")
-    c2.metric("👥 عدد المحصّلين", f"{agent_count:,}")
-    c3.metric("💰 إجمالي المديونية", f"{total_amount:,.0f}" if net_col else "—")
-    c4.metric("📅 متوسط فرق الأيام", f"{avg_days:.1f}" if avg_days is not None and pd.notna(avg_days) else "—")
+    cards = [
+        ("⚠️<br>إجمالي الحالات", total, {"valueformat": ",d"}, COLOR_WARN),
+        ("👥<br>عدد المحصّلين", agent_count, {"valueformat": ",d"}, THEME["text"]),
+        ("💰<br>إجمالي المديونية", total_amount, {"valueformat": ",.0f"}, COLOR_ACCENT),
+        ("📅<br>متوسط فرق الأيام", avg_days if avg_days is not None else 0, {"valueformat": ".1f", "suffix": " يوم"}, COLOR_FAIL),
+    ]
+    render_neglect_kpi_dashboard(cards, chart_key="neglect_main_kpi")
 
     if total and sales_col and sales_col in df.columns:
-        agent_counts = df[sales_col].value_counts().head(15).sort_values().reset_index()
-        agent_counts.columns = ["المحصّل", "عدد الحالات"]
-        fig = px.bar(
-            agent_counts, x="عدد الحالات", y="المحصّل", orientation="h",
-            title="أعلى المحصّلين في حالات الإهمال",
-            color="عدد الحالات", color_continuous_scale=[THEME["surface_2"], COLOR_WARN],
-            template=PLOTLY_TEMPLATE,
-        )
-        fig.update_layout(**PLOTLY_LAYOUT, height=420, yaxis_title="", coloraxis_showscale=False)
-        st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG)
+        st.markdown("#### 📈 تحليلات الإهمال")
+        left, right = st.columns(2)
+        with left:
+            agent_counts = (
+                df[sales_col].value_counts().head(15).sort_values().reset_index()
+            )
+            agent_counts.columns = ["المحصّل", "عدد الحالات"]
+            fig = px.bar(
+                agent_counts,
+                x="عدد الحالات",
+                y="المحصّل",
+                orientation="h",
+                text="عدد الحالات",
+                color="عدد الحالات",
+                color_continuous_scale=[THEME["surface_2"], COLOR_WARN],
+                template=PLOTLY_TEMPLATE,
+            )
+            fig.update_layout(
+                **{
+                    **PLOTLY_LAYOUT,
+                    "title": "أعلى المحصّلين في حالات الإهمال",
+                    "height": 430,
+                    "yaxis_title": "",
+                    "xaxis_title": "عدد الحالات",
+                    "coloraxis_showscale": False,
+                    "margin": dict(t=78, b=50, l=160, r=40),
+                }
+            )
+            fig.update_traces(
+                texttemplate="%{x:,.0f}",
+                textposition="outside",
+                cliponaxis=False,
+                hovertemplate="<b>%{y}</b><br>عدد الحالات: %{x:,}<extra></extra>",
+            )
+            st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG, key="neglect_by_agent")
+        with right:
+            sub_col = meta.get("substate_col")
+            if sub_col and sub_col in df.columns:
+                state_counts = (
+                    df[sub_col].astype(str).str.strip().value_counts()
+                    .head(10).reset_index()
+                )
+                state_counts.columns = ["الحالة", "العدد"]
+                fig = px.pie(
+                    state_counts,
+                    values="العدد",
+                    names="الحالة",
+                    hole=0.55,
+                    color_discrete_sequence=[COLOR_WARN, COLOR_ACCENT, COLOR_FAIL, COLOR_SUCCESS, THEME["text_dim"]],
+                    template=PLOTLY_TEMPLATE,
+                )
+                # use fixed palette from theme
+                fig.update_traces(
+                    marker=dict(colors=[COLOR_WARN, COLOR_ACCENT, COLOR_FAIL, COLOR_SUCCESS, THEME["text_dim"]] * 3),
+                    texttemplate="%{label}<br>%{value:,.0f} (%{percent:.1%})",
+                    textfont=dict(size=13, color=THEME["text"]),
+                    textinfo="text",
+                    hovertemplate="<b>%{label}</b><br>العدد: %{value:,.0f}<br>النسبة: %{percent:.1%}<extra></extra>",
+                )
+                fig.update_layout(
+                    **{
+                        **PLOTLY_LAYOUT,
+                        "title": "توزيع حالات Sub State",
+                        "height": 430,
+                        "legend_title_text": "",
+                        "margin": dict(t=78, b=45, l=35, r=35),
+                    }
+                )
+                st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG, key="neglect_by_state")
+            else:
+                st.info("لا يوجد عمود Sub State لعرض التوزيع.")
 
     st.subheader("📋 جدول حالات الإهمال التفصيلي")
-    display_cols = [c for c in [sales_col, meta["substate_col"], meta["duedate_col"], meta["lastdate_col"], "فرق_الأيام", net_col] if c and c in df.columns]
-    st.dataframe(df[display_cols], use_container_width=True, hide_index=True)
-
-    # التصدير يحتفظ بكل أعمدة المحفظة الأصلية، مع استبعاد أعمدة المعالجة المؤقتة
-    # وإضافة الأعمدة المحسوبة التي يحتاجها تقرير الإهمال.
-    export_cols = [
-        c for c in df.columns
-        if c not in {"temp_due", "temp_last"}
+    display_cols = [
+        c for c in [
+            sales_col,
+            meta.get("substate_col"),
+            meta.get("duedate_col"),
+            meta.get("lastdate_col"),
+            "فرق_الأيام",
+            net_col,
+        ]
+        if c and c in df.columns
     ]
+    st.dataframe(df[display_cols] if display_cols else df, use_container_width=True, hide_index=True)
+
+    export_cols = [c for c in df.columns if c not in {"temp_due", "temp_last"}]
     out_excel = io.BytesIO()
     with pd.ExcelWriter(out_excel, engine="openpyxl") as writer:
         df[export_cols].to_excel(writer, index=False, sheet_name="حالات الإهمال")

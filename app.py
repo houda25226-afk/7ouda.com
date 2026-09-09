@@ -2994,104 +2994,125 @@ def _normalize_match_id(val):
     text = str(val).strip()
     if text.lower() in {"nan", "none", "nat", ""}:
         return ""
+    # Excel أحيانًا يحوّل الرقم لـ float فيظهر 12345.0
     if text.endswith(".0"):
-        text = text[:-2]
+        try:
+            float(text)
+            text = text[:-2]
+        except ValueError:
+            pass
     return text.strip()
 
 
 def _run_neglect_followup_pipeline(new_file, old_file):
-    """يطابق تقرير الإهمال القديم مع المحفظة الحديثة.
+    """متابعة الإهمال — منطق XLOOKUP على Account Number:
 
-    - بياخد ``Follow up Last Date`` من المحفظة الحديثة.
-    - بيضيفه على شيت الإهمال القديم تحت اسم ``تاريخ_متابعة_حديث``.
-    - بيحدد تم التغطية / لم يتم التغطية حسب فرق الأيام (< 8 أيام = تمت التغطية).
+    1) من المحفظة الحديثة: Account Number → Follow up Last Date
+    2) يتضاف العمود على شيت الإهمال القديم باسم «تاريخ اخر متابعة»
+    3) فرق الأيام = تاريخ اليوم − تاريخ اخر متابعة
+    4) أقل من 8 أيام = تم التغطية، غير كده = لم يتم التغطية
     """
     try:
         _init_promises_today()
         df_new = read_uploaded_dataframe(new_file)
         df_old = read_uploaded_dataframe(old_file)
 
-        # حذف أول صف (صف البيانات الفارغ بعد العناوين في ملفات المحفظة)
+        # المحفظة الحديثة: صف وهمي بعد العناوين
         if len(df_new) > 0:
             df_new = df_new.iloc[1:].reset_index(drop=True)
+
+        # تقرير الإهمال القديم: احذف الصف الأول فقط لو فاضي بالكامل
         if len(df_old) > 0:
-            # تقرير الإهمال المُصدَّر من التطبيق لا يحتاج حذف صف إلا لو الصف الأول فاضي بالكامل
             first_row = df_old.iloc[0]
-            if first_row.isna().all() or all(str(v).strip() in {"", "nan", "None"} for v in first_row.values):
+            if first_row.isna().all() or all(
+                str(v).strip() in {"", "nan", "None"} for v in first_row.values
+            ):
                 df_old = df_old.iloc[1:].reset_index(drop=True)
 
-        # أعمدة المطابقة: Account ID ثم رقم الحساب ثم Claim
-        id_candidates = ID_CANDIDATES + ACCOUNT_NUMBER_CANDIDATES + CLAIM_CANDIDATES
-        id_col_new = find_column(df_new, id_candidates)
-        id_col_old = find_column(df_old, id_candidates)
+        # مفتاح الربط: Account Number (رقم المطالبة / رقم حساب العميل)
+        account_candidates = (
+            ACCOUNT_NUMBER_CANDIDATES
+            + CLAIM_CANDIDATES
+            + ID_CANDIDATES
+        )
+        acc_col_new = find_column(df_new, account_candidates)
+        acc_col_old = find_column(df_old, account_candidates)
         last_date_new = find_column(df_new, NEGLECT_LAST_DATE_CANDIDATES)
 
-        if not id_col_new or not id_col_old:
+        if not acc_col_new or not acc_col_old:
             st.error(
-                "تعذر العثور على عمود الرقم التعريفي للمطابقة في أحد الملفين.\n\n"
+                "تعذر العثور على عمود Account Number (رقم المطالبة) للمطابقة.\n\n"
                 f"أعمدة المحفظة الحديثة: {', '.join(map(str, df_new.columns))}\n\n"
                 f"أعمدة تقرير الإهمال: {', '.join(map(str, df_old.columns))}"
             )
             return
         if not last_date_new:
             st.error(
-                "تعذر العثور على عمود تاريخ آخر متابعة (Follow up Last Date) في المحفظة الحديثة.\n\n"
+                "تعذر العثور على عمود Follow up Last Date في المحفظة الحديثة.\n\n"
                 f"الأعمدة الموجودة: {', '.join(map(str, df_new.columns))}"
             )
             return
 
-        # توحيد المعرفات
-        new_ids = df_new[id_col_new].map(_normalize_match_id)
-        old_ids = df_old[id_col_old].map(_normalize_match_id)
-
-        # أحدث Follow up Last Date لكل معرف في المحفظة الحديثة
+        # بناء خريطة: Account Number → أحدث Follow up Last Date
         work_new = pd.DataFrame({
-            "_id": new_ids,
+            "_key": df_new[acc_col_new].map(_normalize_match_id),
             "_last": [parse_date_cell(v) for v in df_new[last_date_new]],
         })
-        work_new = work_new[work_new["_id"] != ""]
-        mapping = (
+        work_new = work_new[work_new["_key"] != ""]
+        # لو الحساب مكرر في المحفظة: ناخد أحدث تاريخ
+        lookup_map = (
             work_new.dropna(subset=["_last"])
             .sort_values("_last")
-            .groupby("_id", sort=False)["_last"]
+            .groupby("_key", sort=False)["_last"]
             .max()
             .to_dict()
         )
 
         result_df = df_old.copy()
-        result_df["_match_id"] = old_ids
-        result_df["تاريخ_متابعة_حديث"] = result_df["_match_id"].map(mapping)
-        result_df["Follow up Last Date (حديث)"] = result_df["تاريخ_متابعة_حديث"].apply(
-            lambda d: d.strftime("%Y-%m-%d") if d is not None and pd.notna(d) else ""
-        )
+        keys_old = result_df[acc_col_old].map(_normalize_match_id)
+
+        # XLOOKUP: تاريخ اخر متابعة من المحفظة الحديثة
+        result_df["تاريخ اخر متابعة"] = keys_old.map(lookup_map)
 
         target_date = st.session_state.get(TODAY_KEY, datetime.now().date())
 
-        def check_coverage(val):
+        def _days_since(val):
             if val is None or (isinstance(val, float) and pd.isna(val)):
-                return "لم يتم التغطية"
+                return None
             d = val if hasattr(val, "year") else parse_date_cell(val)
             if d is None:
-                return "لم يتم التغطية"
+                return None
             try:
-                diff = (target_date - d).days
+                return (target_date - d).days
             except Exception:
+                return None
+
+        result_df["فرق_الأيام"] = result_df["تاريخ اخر متابعة"].apply(_days_since)
+
+        def _coverage(days):
+            if days is None or (isinstance(days, float) and pd.isna(days)):
                 return "لم يتم التغطية"
-            return "تم التغطية" if diff < 8 else "لم يتم التغطية"
+            return "تم التغطية" if int(days) < 8 else "لم يتم التغطية"
 
-        result_df["الملاحظات"] = result_df["تاريخ_متابعة_حديث"].apply(check_coverage)
-        result_df = result_df.drop(columns=["_match_id"], errors="ignore")
+        result_df["الملاحظات"] = result_df["فرق_الأيام"].apply(_coverage)
 
-        matched = int(result_df["تاريخ_متابعة_حديث"].notna().sum())
+        # نسخة نصية للتاريخ للعرض/التصدير
+        result_df["تاريخ اخر متابعة"] = result_df["تاريخ اخر متابعة"].apply(
+            lambda d: d.strftime("%Y-%m-%d") if d is not None and pd.notna(d) and hasattr(d, "strftime") else (
+                "" if d is None or (isinstance(d, float) and pd.isna(d)) else str(d)
+            )
+        )
+
+        matched = int((result_df["فرق_الأيام"].notna()).sum())
         st.session_state["neglect_followup_result"] = {
             "df": result_df,
             "meta": {
-                "id_col_new": id_col_new,
-                "id_col_old": id_col_old,
+                "acc_col_new": acc_col_new,
+                "acc_col_old": acc_col_old,
                 "last_date_new": last_date_new,
                 "matched": matched,
                 "total_old": len(result_df),
-                "mapping_size": len(mapping),
+                "mapping_size": len(lookup_map),
                 "target_date": target_date,
             },
         }
@@ -3107,30 +3128,29 @@ def _show_neglect_followup_results(df, meta=None):
     not_covered = int((df["الملاحظات"] == "لم يتم التغطية").sum()) if "الملاحظات" in df.columns else 0
     pct = covered / len(df) * 100 if len(df) else 0
     matched = meta.get("matched")
-    if matched is None and "تاريخ_متابعة_حديث" in df.columns:
-        matched = int(df["تاريخ_متابعة_حديث"].notna().sum())
+    if matched is None and "فرق_الأيام" in df.columns:
+        matched = int(df["فرق_الأيام"].notna().sum())
 
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("✅ تم التغطية", f"{covered:,}")
     c2.metric("❌ لم يتم التغطية", f"{not_covered:,}")
     c3.metric("📈 نسبة التغطية", f"{pct:.1f}%")
-    c4.metric("🔗 حالات لها تاريخ حديث", f"{matched:,}" if matched is not None else "—")
+    c4.metric("🔗 حالات لها تاريخ", f"{matched:,}" if matched is not None else "—")
 
     if meta:
         st.caption(
-            f"مطابقة على: المحفظة[{meta.get('id_col_new')}] ↔ الإهمال[{meta.get('id_col_old')}] · "
-            f"عمود التاريخ: {meta.get('last_date_new')} · "
-            f"حجم خريطة التواريخ: {meta.get('mapping_size', 0):,} · "
-            f"تاريخ المرجع: {meta.get('target_date')}"
+            f"XLOOKUP على: المحفظة[{meta.get('acc_col_new')}] ↔ الإهمال[{meta.get('acc_col_old')}] · "
+            f"المصدر: {meta.get('last_date_new')} · "
+            f"حجم الخريطة: {meta.get('mapping_size', 0):,} · "
+            f"تاريخ اليوم: {meta.get('target_date')}"
         )
 
     preferred = [
         c for c in [
             "الملاحظات",
-            "تاريخ_متابعة_حديث",
-            "Follow up Last Date (حديث)",
-            meta.get("id_col_old") if meta else None,
+            "تاريخ اخر متابعة",
             "فرق_الأيام",
+            meta.get("acc_col_old") if meta else None,
         ]
         if c and c in df.columns
     ]

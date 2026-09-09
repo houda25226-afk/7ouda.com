@@ -1827,12 +1827,20 @@ def _render_activity_positive_states_chart(agent):
 
 
 def _render_activity_hours_efficiency_chart(agent):
-    """مقارنة إجمالي ساعات عمل كل محصّل بالوقت المهدر لديه."""
+    """مقارنة إجمالي ساعات عمل كل محصّل بالوقت المهدر لديه — عرض نظيف بدون تداخل أرقام."""
     if agent.empty or "إجمالي ساعات العمل" not in agent.columns:
         st.info("لا تتوفر بيانات ساعات عمل كافية لعرض الإنتاجية.")
         return
     plot = agent[["المحصّل", "إجمالي ساعات العمل", "إجمالي الوقت المهدر (دقيقة)"]].copy()
+    plot["إجمالي ساعات العمل"] = pd.to_numeric(plot["إجمالي ساعات العمل"], errors="coerce").fillna(0)
+    plot["إجمالي الوقت المهدر (دقيقة)"] = pd.to_numeric(plot["إجمالي الوقت المهدر (دقيقة)"], errors="coerce").fillna(0)
     plot = plot.sort_values("إجمالي ساعات العمل", ascending=True)
+
+    labels = [
+        f"{h:.1f} س  |  {w:.0f} د"
+        for h, w in zip(plot["إجمالي ساعات العمل"], plot["إجمالي الوقت المهدر (دقيقة)"])
+    ]
+
     fig = go.Figure()
     fig.add_trace(go.Bar(
         y=plot["المحصّل"],
@@ -1840,44 +1848,36 @@ def _render_activity_hours_efficiency_chart(agent):
         orientation="h",
         marker_color=ACTIVITY_PRIMARY,
         name="ساعات العمل",
-        text=plot["إجمالي ساعات العمل"].map(lambda v: f"{float(v):.1f}"),
+        text=labels,
         textposition="outside",
+        textfont={"size": 12, "color": THEME["text"]},
         cliponaxis=False,
-        customdata=plot["المحصّل"],
-        hovertemplate="<b>%{y}</b><br>ساعات العمل: %{x:.1f}<extra></extra>",
-    ))
-    fig.add_trace(go.Scatter(
-        y=plot["المحصّل"],
-        x=plot["إجمالي الوقت المهدر (دقيقة)"],
-        mode="markers+text",
-        xaxis="x2",
-        marker={"color": ACTIVITY_MUTED, "size": 10, "symbol": "diamond"},
-        name="الوقت المهدر (دقيقة)",
-        text=plot["إجمالي الوقت المهدر (دقيقة)"].map(lambda v: f"{float(v):.0f}"),
-        textposition="middle left",
-        customdata=plot["المحصّل"],
-        hovertemplate="<b>%{y}</b><br>الوقت المهدر: %{x:.1f} دقيقة<extra></extra>",
+        customdata=list(zip(plot["المحصّل"], plot["إجمالي الوقت المهدر (دقيقة)"])),
+        hovertemplate="<b>%{y}</b><br>ساعات العمل: %{x:.1f}<br>الوقت المهدر: %{customdata[1]:.0f} دقيقة<extra></extra>",
     ))
     fig.update_layout(**_activity_layout(
         title="ساعات العمل مقابل الوقت المهدر",
-        height=ACTIVITY_PAIR_CHART_HEIGHT,
-        legend={"orientation": "h", "yanchor": "top", "y": -0.2, "x": 0.5, "xanchor": "center", "title_text": ""},
-        margin={"t": 56, "b": 90, "l": 160, "r": 70},
+        height=max(420, 36 * len(plot) + 140),
+        showlegend=False,
+        margin={"t": 64, "b": 56, "l": 170, "r": 120},
         xaxis={
             "title": {"text": "ساعات العمل", "font": {"size": 13}},
             "rangemode": "tozero",
             "automargin": True,
             "gridcolor": "rgba(128,145,170,0.18)",
-        },
-        xaxis2={
-            "title": {"text": "الوقت المهدر (دقيقة)", "font": {"size": 12}},
-            "overlaying": "x",
-            "side": "top",
-            "showgrid": False,
-            "automargin": True,
+            # مساحة يمين عشان نص القيم برا العمود ميتداخلش مع حدود الشارت
+            "range": [0, max(plot["إجمالي ساعات العمل"].max() * 1.28, 1)],
         },
         yaxis={"title": "", "automargin": True},
+        # مفيش محور علوي عشان متعملش تداخل مع العنوان
     ))
+    # توضيح مفتاح القراءة تحت الشارت
+    fig.add_annotation(
+        text="القيم بجانب كل عمود: ساعات العمل (س)  |  الوقت المهدر بالدقيقة (د)",
+        xref="paper", yref="paper", x=0.5, y=-0.12,
+        showarrow=False, font={"size": 12, "color": THEME["text_dim"]},
+        xanchor="center",
+    )
     render_selectable_chart(fig, "dashboard_hours_efficiency", filter_key=DASHBOARD_AGENT_FILTER_KEY)
 
 

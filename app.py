@@ -1494,6 +1494,27 @@ def render_activity_kpi_cards(total, success, agent_count, success_rate, wasted_
     st.plotly_chart(figure, use_container_width=True, config=PLOTLY_CONFIG, key="activity_kpi_cards")
 
 
+def _render_agent_legend_chips(agent_color_map):
+    """شريط ألوان ثابت الارتفاع لكل محصّل، يحل محل الليجندات المتغيّرة الارتفاع داخل كل شارت."""
+    if not agent_color_map:
+        return
+    from html import escape as _esc
+    chips = "".join(
+        f'<span style="display:inline-flex;align-items:center;gap:6px;padding:4px 10px;margin:3px;'
+        f'border-radius:999px;background:{THEME["surface"]};border:1px solid {THEME["border"]};'
+        f'font-size:12px;color:{THEME["text_dim"]}">'
+        f'<span style="width:10px;height:10px;border-radius:50%;background:{color};display:inline-block"></span>'
+        f'{_esc(str(name))}</span>'
+        for name, color in agent_color_map.items()
+    )
+    st.markdown(
+        f'<div style="max-height:84px;overflow-y:auto;padding:6px 4px;display:flex;flex-wrap:wrap;'
+        f'justify-content:center;border:1px solid {THEME["border"]};border-radius:12px;'
+        f'background:transparent;margin-bottom:10px">{chips}</div>',
+        unsafe_allow_html=True,
+    )
+
+
 def _render_dashboard_agent_filter_notice():
     agent = st.session_state.get(DASHBOARD_AGENT_FILTER_KEY)
     day = st.session_state.get(DASHBOARD_DAY_FILTER_KEY)
@@ -1609,8 +1630,8 @@ def _render_activity_daily_chart(work, time_col, class_col=None):
         title="📊 Combo Chart يومي: المكالمات ونسبة النجاح", title_x=0.5,
         xaxis_title="اليوم", yaxis_title="عدد المكالمات", height=400, bargap=0.14,
         legend_title_text="", hovermode="x unified",
-        legend={"orientation": "h", "yanchor": "top", "y": -0.16, "x": 0.5, "xanchor": "center"},
-        margin={"t": 62, "b": 78, "l": 50, "r": 55},
+        legend={"orientation": "h", "yanchor": "top", "y": -0.14, "x": 0.5, "xanchor": "center"},
+        margin={"t": 62, "b": 46, "l": 50, "r": 55},
         xaxis={"type": "category", "categoryorder": "array", "categoryarray": ordered_days, "tickangle": -25},
         yaxis={"title": "عدد المكالمات", "rangemode": "tozero"},
         yaxis2={"title": "نسبة النجاح (%)", "overlaying": "y", "side": "right", "range": [0, 100], "ticksuffix": "%", "showgrid": False},
@@ -1618,6 +1639,7 @@ def _render_activity_daily_chart(work, time_col, class_col=None):
     fig.update_traces(
         selector={"type": "bar"},
         marker_line_width=0,
+        showlegend=False,
         hovertemplate="<b>%{x}</b><br>%{fullData.name}: %{y:,} مكالمة<extra></extra>",
     )
     # تفاعل: اختيار المحصّل + اليوم من نفس الشارت
@@ -1676,9 +1698,9 @@ def _render_activity_hourly_chart(work, time_col):
     )
     fig.update_layout(**_activity_layout(
         title="🕒 Histogram ساعي لنشاط المحصلين", title_x=0.5, xaxis_title="ساعة اليوم", yaxis_title="عدد المكالمات",
-        xaxis={"dtick": 1, "tickvals": list(range(hour_min, hour_max + 1)), "range": [max(-0.5, hour_min - 0.5), min(23.5, hour_max + 0.5)]}, height=400, bargap=0.06, legend_title_text="",
-        legend={"orientation": "h", "yanchor": "top", "y": -0.16, "x": 0.5, "xanchor": "center"},
-        margin={"t": 62, "b": 78, "l": 50, "r": 16},
+        xaxis={"dtick": 1, "tickvals": list(range(hour_min, hour_max + 1)), "range": [max(-0.5, hour_min - 0.5), min(23.5, hour_max + 0.5)]}, height=400, bargap=0.06,
+        showlegend=False,
+        margin={"t": 62, "b": 46, "l": 50, "r": 16},
     ))
     fig.update_traces(
         marker_line_width=0,
@@ -1902,6 +1924,8 @@ def render_activity_dashboard(df, class_col=None, sales_col=None, time_col=None,
     st.caption("اضغط على أي عنصر في الشارتات (محصّل / يوم / نتيجة) لتطبيق فلتر تفاعلي على الكروت والرسوم والجدول. استخدم «إظهار الكل» للإلغاء.")
 
     st.markdown("#### 🕒 الاتجاهات الزمنية")
+    st.caption("الألوان أدناه موحّدة لكل محصّل في شارتات الاتجاه اليومي والساعي.")
+    _render_agent_legend_chips(_activity_agent_color_map(work["_agent_display"]))
     daily_col, hourly_col = st.columns(2)
     with daily_col:
         with st.container(border=True):
@@ -2102,8 +2126,8 @@ def build_dashboard_html(df, class_col, sales_col, time_col, source_name="", fil
             daily_totals = daily_totals.sort_values("اليوم")
             day_fig = px.bar(daily, x="اليوم", y="عدد المكالمات", color="_agent_display", barmode="group", text_auto=True, custom_data=["_agent_display"], template=export_template, labels={"_agent_display":"المحصل"}, color_discrete_sequence=ACTIVITY_AGENT_PALETTE)
             day_fig.add_trace(go.Scatter(x=daily_totals["اليوم"].astype(str), y=daily_totals["نسبة النجاح (%)"], name="نسبة النجاح", mode="lines+markers+text", text=daily_totals["نسبة النجاح (%)"].map(lambda value: f"{value:.1f}%"), textposition="top center", line={"color": export_accent, "width": 3}, marker={"color": export_accent, "size": 9}, yaxis="y2", hovertemplate="<b>%{x}</b><br>نسبة النجاح: %{y:.1f}%<extra></extra>"))
-            day_fig.update_layout(**_activity_layout(title="📊 Combo Chart يومي: المكالمات ونسبة النجاح", title_x=0.5, xaxis_title="اليوم", yaxis_title="عدد المكالمات", height=430, bargap=0.18, margin={"t":68,"b":95,"l":55,"r":65}, xaxis={"type":"category","categoryorder":"array","categoryarray":ordered_days,"tickangle":-25}, yaxis={"rangemode":"tozero"}, yaxis2={"title":"نسبة النجاح (%)","overlaying":"y","side":"right","range":[0,100],"ticksuffix":"%","showgrid":False}, legend={"orientation":"h","y":-0.2,"x":0.5,"xanchor":"center"}))
-            day_fig.update_traces(selector={"type":"bar"}, marker_line_width=0, hovertemplate="<b>%{x}</b><br>%{fullData.name}: %{y:,} مكالمة<extra></extra>")
+            day_fig.update_layout(**_activity_layout(title="📊 Combo Chart يومي: المكالمات ونسبة النجاح", title_x=0.5, xaxis_title="اليوم", yaxis_title="عدد المكالمات", height=430, bargap=0.18, margin={"t":68,"b":58,"l":55,"r":65}, xaxis={"type":"category","categoryorder":"array","categoryarray":ordered_days,"tickangle":-25}, yaxis={"rangemode":"tozero"}, yaxis2={"title":"نسبة النجاح (%)","overlaying":"y","side":"right","range":[0,100],"ticksuffix":"%","showgrid":False}, legend={"orientation":"h","y":-0.16,"x":0.5,"xanchor":"center"}))
+            day_fig.update_traces(selector={"type":"bar"}, marker_line_width=0, showlegend=False, hovertemplate="<b>%{x}</b><br>%{fullData.name}: %{y:,} مكالمة<extra></extra>")
             figs.append(("📊 Combo Chart النشاط اليومي", day_fig))
 
             timed["الساعة"] = timed["_activity_time"].dt.hour
@@ -2111,7 +2135,7 @@ def build_dashboard_html(df, class_col, sales_col, time_col, source_name="", fil
             hour_max = int(timed["الساعة"].max())
             hourly = timed.groupby(["الساعة", "_agent_display"], as_index=False).size().rename(columns={"size":"عدد المكالمات"})
             hour_fig = px.bar(hourly, x="الساعة", y="عدد المكالمات", color="_agent_display", barmode="stack", text_auto=True, custom_data=["_agent_display"], template=export_template, labels={"_agent_display":"المحصل"}, color_discrete_sequence=ACTIVITY_AGENT_PALETTE)
-            hour_fig.update_layout(**_activity_layout(title="🕒 Histogram ساعي لنشاط المحصلين", title_x=0.5, xaxis_title="ساعة اليوم", yaxis_title="عدد المكالمات", height=430, bargap=0.08, margin={"t":68,"b":95,"l":55,"r":20}, xaxis={"dtick":1,"tickvals":list(range(hour_min, hour_max + 1)),"range":[max(-0.5, hour_min - 0.5), min(23.5, hour_max + 0.5)]}, legend={"orientation":"h","y":-0.2,"x":0.5,"xanchor":"center"}))
+            hour_fig.update_layout(**_activity_layout(title="🕒 Histogram ساعي لنشاط المحصلين", title_x=0.5, xaxis_title="ساعة اليوم", yaxis_title="عدد المكالمات", height=430, bargap=0.08, margin={"t":68,"b":58,"l":55,"r":20}, xaxis={"dtick":1,"tickvals":list(range(hour_min, hour_max + 1)),"range":[max(-0.5, hour_min - 0.5), min(23.5, hour_max + 0.5)]}, showlegend=False))
             hour_fig.update_traces(marker_line_width=0, hovertemplate="<b>الساعة %{x}:00</b><br>%{fullData.name}: %{y:,} مكالمة<extra></extra>")
             figs.append(("🕒 Histogram النشاط الساعي", hour_fig))
 
@@ -2163,6 +2187,20 @@ def build_dashboard_html(df, class_col, sales_col, time_col, source_name="", fil
 
     group_bounds["time"] = len(figs)  # نهاية مجموعة "الإنتاجية والوقت"
 
+    agent_chip_map = _activity_agent_color_map(work["_agent_display"])
+    agent_chips_html = "".join(
+        f'<span style="display:inline-flex;align-items:center;gap:6px;padding:4px 10px;margin:3px;'
+        f'border-radius:999px;background:{surface};border:1px solid {border};font-size:12px;color:{text_dim}">'
+        f'<span style="width:10px;height:10px;border-radius:50%;background:{color};display:inline-block"></span>'
+        f'{escape(str(name))}</span>'
+        for name, color in agent_chip_map.items()
+    )
+    agent_legend_html = (
+        f'<div style="max-height:84px;overflow-y:auto;padding:6px 4px;display:flex;flex-wrap:wrap;'
+        f'justify-content:center;border:1px solid {border};border-radius:12px;background:{surface};margin:4px 0 14px">'
+        f'{agent_chips_html}</div>'
+    )
+
     section_groups = [
         ("main", "🎯 نتائج المكالمات والاتجاهات الزمنية", 0),
         ("ranking", "🏆 مقارنة أداء المحصلين", group_bounds.get("main", 0)),
@@ -2175,7 +2213,10 @@ def build_dashboard_html(df, class_col, sales_col, time_col, source_name="", fil
         if end_index <= start_index:
             continue
         parts.append(f'<h2 class="section-title">{group_title}</h2>')
-        parts.append('<section style="display:grid;grid-template-columns:repeat(auto-fit,minmax(460px,1fr));gap:18px;margin-bottom:22px">')
+        if group_key == "main" and agent_chip_map:
+            parts.append(f'<div style="text-align:center;color:{text_dim};font-size:12px;margin-bottom:4px">🎨 ألوان المحصلين (موحّدة في كل الشارتات)</div>')
+            parts.append(agent_legend_html)
+        parts.append('<section style="display:grid;grid-template-columns:repeat(auto-fit,minmax(420px,1fr));gap:18px;margin-bottom:22px">')
         for index in range(start_index, end_index):
             heading, fig = figs[index]
             parts.append(f'<article id="chart-card-{index}" style="background:{surface};border:1px solid {border};border-radius:16px;padding:10px 14px 4px;min-width:0"><h2 style="font-size:17px;margin:8px 10px;color:{text};text-align:center">{heading}</h2>')
@@ -2270,6 +2311,12 @@ document.querySelector('.select-all-state')?.addEventListener('change', event =>
 document.getElementById('reset-filters')?.addEventListener('click', () => { document.querySelectorAll('.agent-option,.state-option,.select-all-agent,.select-all-state').forEach(option => option.checked=false); document.getElementById('filter-class').value=''; document.getElementById('filter-date-from').value='__DATE_MIN__'; document.getElementById('filter-date-to').value='__DATE_MAX__'; updateMultiLabels(); refreshDashboard(); });
 updateMultiLabels();
 refreshDashboard();
+function _resizeAllPlots() {
+  document.querySelectorAll('.js-plotly-plot').forEach(div => { try { Plotly.Plots.resize(div); } catch (e) {} });
+}
+window.addEventListener('load', () => { _resizeAllPlots(); setTimeout(_resizeAllPlots, 150); setTimeout(_resizeAllPlots, 500); });
+window.addEventListener('resize', _resizeAllPlots);
+_resizeAllPlots();
 </script>
 """.replace('__ACTIVITY_DATA__', raw_records_json).replace('__AGENT_COLORS__', agent_color_json).replace('__STATE_COLORS__', state_color_json).replace('__POSITIVE_STATE_COLORS__', positive_state_color_json).replace('__ACCENT__', json.dumps(export_accent)).replace('__SUCCESS__', json.dumps(export_success)).replace('__FAIL__', json.dumps(export_fail)).replace('__WARN__', json.dumps(export_warn)).replace('__DATE_MIN__', export_date_min).replace('__DATE_MAX__', export_date_max)
     parts.append(interactive_js)

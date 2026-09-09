@@ -1572,98 +1572,6 @@ def _dashboard_activity_view(df, sales_col, class_col=None, time_col=None):
     return view
 
 
-def _render_activity_daily_chart(work, time_col, class_col=None):
-    if not time_col or time_col not in work.columns:
-        st.info("يلزم وجود عمود Created On لعرض النشاط على مدار الأيام.")
-        return
-    trend = work.copy()
-    trend["_activity_time"] = pd.to_datetime(trend[time_col], errors="coerce")
-    trend = trend.dropna(subset=["_activity_time"])
-    if trend.empty:
-        st.info("لا توجد تواريخ صالحة لعرض النشاط اليومي.")
-        return
-    trend["اليوم"] = trend["_activity_time"].dt.strftime("%Y-%m-%d")
-    trend["_success_for_day"] = _activity_success_mask(trend, class_col)
-    daily = trend.groupby(["اليوم", "_agent_display"], as_index=False).agg(
-        **{"عدد المكالمات": ("_agent_display", "size"), "المكالمات الناجحة": ("_success_for_day", "sum")}
-    )
-    daily_totals = daily.groupby("اليوم", as_index=False).agg(
-        **{"إجمالي المكالمات": ("عدد المكالمات", "sum"), "إجمالي الناجحة": ("المكالمات الناجحة", "sum")}
-    )
-    daily_totals["نسبة النجاح (%)"] = (
-        daily_totals["إجمالي الناجحة"] / daily_totals["إجمالي المكالمات"].replace(0, pd.NA) * 100
-    ).fillna(0).round(1)
-
-    sort_mode = st.session_state.get("activity_daily_sort_mode", "date")
-    if sort_mode == "calls":
-        ordered_days = daily_totals.sort_values(["إجمالي المكالمات", "اليوم"], ascending=[False, True])["اليوم"].tolist()
-    elif sort_mode == "success_rate":
-        ordered_days = daily_totals.sort_values(
-            ["نسبة النجاح (%)", "إجمالي المكالمات", "اليوم"], ascending=[False, False, True]
-        )["اليوم"].tolist()
-    else:
-        ordered_days = sorted(daily_totals["اليوم"].tolist())
-
-    daily["اليوم"] = pd.Categorical(daily["اليوم"], categories=ordered_days, ordered=True)
-    daily = daily.sort_values(["اليوم", "_agent_display"])
-    daily_totals["اليوم"] = pd.Categorical(daily_totals["اليوم"], categories=ordered_days, ordered=True)
-    daily_totals = daily_totals.sort_values("اليوم")
-
-    # شارت مجمّع واضح: إجمالي اليوم + نسبة النجاح (من غير تكسير ليچند)
-    fig = go.Figure()
-    fig.add_trace(go.Bar(
-        x=daily_totals["اليوم"].astype(str),
-        y=daily_totals["إجمالي المكالمات"],
-        name="عدد المكالمات",
-        marker_color=ACTIVITY_SECONDARY,
-        text=daily_totals["إجمالي المكالمات"],
-        textposition="outside",
-        cliponaxis=False,
-        hovertemplate="<b>%{x}</b><br>المكالمات: %{y:,}<extra></extra>",
-    ))
-    fig.add_trace(go.Scatter(
-        x=daily_totals["اليوم"].astype(str),
-        y=daily_totals["نسبة النجاح (%)"],
-        name="نسبة النجاح",
-        mode="lines+markers",
-        line={"color": ACTIVITY_PRIMARY, "width": 3},
-        marker={"color": ACTIVITY_PRIMARY, "size": 8, "line": {"color": THEME["surface"], "width": 2}},
-        yaxis="y2",
-        hovertemplate="<b>%{x}</b><br>نسبة النجاح: %{y:.1f}%<extra></extra>",
-    ))
-    fig.update_layout(**_activity_layout(
-        title="النشاط اليومي + نسبة النجاح",
-        height=ACTIVITY_TIME_CHART_HEIGHT,
-        bargap=0.28,
-        showlegend=True,
-        legend={"orientation": "h", "yanchor": "top", "y": -0.22, "x": 0.5, "xanchor": "center", "title_text": ""},
-        margin={"t": 56, "b": 88, "l": 52, "r": 56},
-        xaxis={"title": "اليوم", "type": "category", "categoryorder": "array",
-               "categoryarray": [str(d) for d in ordered_days], "tickangle": -30, "automargin": True},
-        yaxis={"title": "عدد المكالمات", "rangemode": "tozero", "automargin": True},
-        yaxis2={"title": "نسبة النجاح (%)", "overlaying": "y", "side": "right",
-                "range": [0, 100], "ticksuffix": "%", "showgrid": False, "automargin": True},
-        hovermode="x unified",
-    ))
-    try:
-        event = st.plotly_chart(
-            fig, use_container_width=True, config=PLOTLY_CONFIG,
-            key="dashboard_activity_daily", on_select="rerun", selection_mode=("points",),
-        )
-        selection = _event_value(event, "selection") if event is not None else None
-        points = _event_value(selection, "points", []) if selection is not None else []
-        if points:
-            point = points[0]
-            day_val = _event_value(point, "x")
-            if day_val is not None and str(day_val).strip():
-                day_str = str(day_val).strip()[:10]
-                if st.session_state.get(DASHBOARD_DAY_FILTER_KEY) != day_str:
-                    st.session_state[DASHBOARD_DAY_FILTER_KEY] = day_str
-                    st.rerun()
-    except TypeError:
-        st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG, key="dashboard_activity_daily")
-
-
 def _render_activity_hourly_chart(work, time_col):
     if not time_col or time_col not in work.columns:
         st.info("يلزم وجود عمود Created On لعرض النشاط حسب الساعة.")
@@ -1677,30 +1585,44 @@ def _render_activity_hourly_chart(work, time_col):
     trend["الساعة"] = trend["_activity_time"].dt.hour
     hour_min = int(trend["الساعة"].min())
     hour_max = int(trend["الساعة"].max())
-    # مجمّع حسب الساعة فقط — نفس ارتفاع الشارت اليومي
     hourly = trend.groupby("الساعة", as_index=False).size().rename(columns={"size": "عدد المكالمات"})
+    # ملء الساعات الفارغة بين min/max بصفر عشان المحور يبقى متصل وواضح
+    full_hours = pd.DataFrame({"الساعة": list(range(hour_min, hour_max + 1))})
+    hourly = full_hours.merge(hourly, on="الساعة", how="left").fillna(0)
+    hourly["عدد المكالمات"] = hourly["عدد المكالمات"].astype(int)
+
     fig = go.Figure()
     fig.add_trace(go.Bar(
-        x=hourly["الساعة"], y=hourly["عدد المكالمات"],
+        x=hourly["الساعة"],
+        y=hourly["عدد المكالمات"],
         marker_color=ACTIVITY_PRIMARY,
         text=hourly["عدد المكالمات"],
+        texttemplate="%{text:,}",
         textposition="outside",
         cliponaxis=False,
-        hovertemplate="<b>ساعة %{x}</b><br>المكالمات: %{y:,}<extra></extra>",
+        hovertemplate="<b>الساعة %{x}:00</b><br>عدد المكالمات: %{y:,}<extra></extra>",
     ))
     fig.update_layout(**_activity_layout(
         title="النشاط حسب ساعة اليوم",
-        height=ACTIVITY_TIME_CHART_HEIGHT,
-        bargap=0.15,
+        height=420,
+        bargap=0.18,
         showlegend=False,
-        margin={"t": 56, "b": 88, "l": 52, "r": 56},
+        margin={"t": 56, "b": 70, "l": 60, "r": 28},
         xaxis={
-            "title": "ساعة اليوم", "dtick": 1,
+            "title": {"text": "ساعة اليوم", "font": {"size": 13}},
+            "dtick": 1,
             "tickvals": list(range(hour_min, hour_max + 1)),
-            "range": [max(-0.5, hour_min - 0.5), min(23.5, hour_max + 0.5)],
+            "ticktext": [f"{h}:00" for h in range(hour_min, hour_max + 1)],
+            "range": [hour_min - 0.5, hour_max + 0.5],
             "automargin": True,
+            "showgrid": False,
         },
-        yaxis={"title": "عدد المكالمات", "rangemode": "tozero", "automargin": True},
+        yaxis={
+            "title": {"text": "عدد المكالمات", "font": {"size": 13}},
+            "rangemode": "tozero",
+            "automargin": True,
+            "gridcolor": "rgba(128,145,170,0.18)",
+        },
     ))
     st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG, key="dashboard_activity_hourly")
 
@@ -1785,44 +1707,44 @@ def _render_activity_no_answer_chart(agent):
 
 
 def _render_activity_leaderboard_chart(agent):
-    """ترتيب المحصلين: إجمالي المكالمات (أعمدة) مقابل نسبة النجاح (خط) في نفس الشارت."""
     if agent.empty:
-        st.info("لا توجد بيانات كافية لعرض ترتيب المحصلين.")
+        st.info("لا توجد بيانات محصلين للعرض.")
         return
     plot = agent[["المحصّل", "إجمالي المكالمات", "نسبة النجاح (%)"]].copy()
     plot = plot.sort_values("إجمالي المكالمات", ascending=True)
-    color_map = _activity_agent_color_map(plot["المحصّل"])
-    colors = [color_map.get(name, ACTIVITY_PRIMARY) for name in plot["المحصّل"]]
     fig = go.Figure()
     fig.add_trace(go.Bar(
-        y=plot["المحصّل"], x=plot["إجمالي المكالمات"], orientation="h",
-        marker_color=colors, name="إجمالي المكالمات", text=plot["إجمالي المكالمات"],
-        texttemplate="%{text:,}", textposition="outside", customdata=plot["المحصّل"],
-        hovertemplate="<b>%{y}</b><br>إجمالي المكالمات: %{x:,}<extra></extra>",
-    ))
-    fig.add_trace(go.Scatter(
-        y=plot["المحصّل"], x=plot["نسبة النجاح (%)"], mode="markers+text",
-        xaxis="x2", marker={"color": ACTIVITY_SECONDARY, "size": 12, "symbol": "diamond",
-                             "line": {"color": THEME["surface"], "width": 1.5}},
-        text=plot["نسبة النجاح (%)"].map(lambda value: f"{value:.0f}%"), textposition="middle right",
-        textfont={"size": 11, "color": ACTIVITY_SECONDARY},
-        name="نسبة النجاح", customdata=plot["المحصّل"],
-        hovertemplate="<b>%{y}</b><br>نسبة النجاح: %{x:.1f}%<extra></extra>",
+        y=plot["المحصّل"],
+        x=plot["إجمالي المكالمات"],
+        orientation="h",
+        marker_color=ACTIVITY_SECONDARY,
+        text=[f"{int(c):,}  |  {float(r):.0f}%" for c, r in zip(plot["إجمالي المكالمات"], plot["نسبة النجاح (%)"])],
+        textposition="outside",
+        cliponaxis=False,
+        customdata=plot["المحصّل"],
+        hovertemplate="<b>%{y}</b><br>المكالمات: %{x:,}<br>نسبة النجاح ضمن النص<extra></extra>",
     ))
     fig.update_layout(**_activity_layout(
-        title="🏆 ترتيب المحصلين: إجمالي المكالمات ونسبة النجاح", title_x=0.5,
-        xaxis_title="إجمالي المكالمات", yaxis_title="",
-        height=max(360, 46 * len(plot) + 150), legend_title_text="",
-        legend={"orientation": "h", "yanchor": "top", "y": -0.1, "x": 0.5, "xanchor": "center"},
-        margin={"t": 66, "b": 55, "l": 120, "r": 65},
-        xaxis2={"overlaying": "x", "side": "top", "range": [0, 105], "ticksuffix": "%",
-                "showgrid": False, "title": "نسبة النجاح (%)"},
+        title="ترتيب المحصلين (المكالمات | نسبة النجاح %)",
+        height=max(400, 34 * len(plot) + 140),
+        showlegend=False,
+        margin={"t": 56, "b": 56, "l": 170, "r": 90},
+        xaxis={
+            "title": {"text": "عدد المكالمات", "font": {"size": 13}},
+            "rangemode": "tozero",
+            "automargin": True,
+            "gridcolor": "rgba(128,145,170,0.18)",
+        },
+        yaxis={
+            "title": "",
+            "automargin": True,
+        },
     ))
-    render_selectable_chart(fig, "dashboard_activity_leaderboard", filter_key=DASHBOARD_AGENT_FILTER_KEY)
+    render_selectable_chart(fig, "dashboard_leaderboard", filter_key=DASHBOARD_AGENT_FILTER_KEY)
 
 
 def _render_activity_positive_states_chart(agent):
-    """حالات الوعد بالسداد والسداد الفعلي/الجدولة لكل محصّل (الوجه الإيجابي المقابل لشارت لا يرد)."""
+    """حالات الوعد بالسداد والسداد الفعلي/الجدولة لكل محصّل."""
     available = [state for state in ACTIVITY_POSITIVE_STATES if state in agent.columns]
     if not available:
         st.info("يلزم وجود عمود Sub State لعرض حالات الوعد والسداد.")
@@ -1833,55 +1755,88 @@ def _render_activity_positive_states_chart(agent):
     long = plot.melt(id_vars=["المحصّل"], value_vars=available, var_name="الحالة", value_name="العدد")
     palette = (ACTIVITY_AGENT_PALETTE * 2)[: len(available)]
     fig = px.bar(
-        long, x="العدد", y="المحصّل", orientation="h", color="الحالة", barmode="stack", text_auto=True,
+        long, x="العدد", y="المحصّل", orientation="h", color="الحالة", barmode="stack",
         template=PLOTLY_TEMPLATE, category_orders={"الحالة": ACTIVITY_POSITIVE_STATES},
         color_discrete_sequence=palette,
     )
-    fig.update_layout(**_activity_layout(
-        title="💰 حالات الوعد بالسداد والسداد لكل محصّل", title_x=0.5, xaxis_title="عدد الحالات", yaxis_title="",
-        height=400, legend_title_text="", legend={"orientation": "h", "yanchor": "top", "y": -0.24, "x": 0.5, "xanchor": "center"},
-        margin={"t": 62, "b": 98, "l": 110, "r": 16}, yaxis={"categoryorder": "total ascending"},
-    ))
     fig.update_traces(
         marker_line_width=0,
+        texttemplate="%{x}",
+        textposition="inside",
+        insidetextanchor="middle",
         customdata=long["المحصّل"],
         hovertemplate="<b>%{y}</b><br>%{fullData.name}: %{x:,}<extra></extra>",
     )
+    fig.update_layout(**_activity_layout(
+        title="حالات الوعد والسداد لكل محصل",
+        height=ACTIVITY_PAIR_CHART_HEIGHT,
+        legend_title_text="",
+        legend={"orientation": "h", "yanchor": "top", "y": -0.22, "x": 0.5, "xanchor": "center", "font": {"size": 11}},
+        margin={"t": 56, "b": 95, "l": 160, "r": 28},
+        xaxis={
+            "title": {"text": "عدد الحالات", "font": {"size": 13}},
+            "automargin": True,
+            "rangemode": "tozero",
+            "gridcolor": "rgba(128,145,170,0.18)",
+        },
+        yaxis={"title": "", "categoryorder": "total ascending", "automargin": True},
+    ))
     render_selectable_chart(fig, "dashboard_positive_states", filter_key=DASHBOARD_AGENT_FILTER_KEY)
 
 
 def _render_activity_hours_efficiency_chart(agent):
-    """مقارنة إجمالي ساعات عمل كل محصّل بالوقت المهدر لديه — رؤية الإنتاجية الحقيقية."""
+    """مقارنة إجمالي ساعات عمل كل محصّل بالوقت المهدر لديه."""
     if agent.empty or "إجمالي ساعات العمل" not in agent.columns:
         st.info("لا تتوفر بيانات ساعات عمل كافية لعرض الإنتاجية.")
         return
     plot = agent[["المحصّل", "إجمالي ساعات العمل", "إجمالي الوقت المهدر (دقيقة)"]].copy()
-    plot = plot.sort_values("إجمالي ساعات العمل", ascending=False)
-    color_map = _activity_agent_color_map(plot["المحصّل"])
-    colors = [color_map.get(name, ACTIVITY_PRIMARY) for name in plot["المحصّل"]]
+    plot = plot.sort_values("إجمالي ساعات العمل", ascending=True)
     fig = go.Figure()
     fig.add_trace(go.Bar(
-        x=plot["المحصّل"], y=plot["إجمالي ساعات العمل"], marker_color=colors,
-        name="إجمالي ساعات العمل", text=plot["إجمالي ساعات العمل"], texttemplate="%{text:.1f}",
-        textposition="outside", customdata=plot["المحصّل"],
-        hovertemplate="<b>%{x}</b><br>إجمالي ساعات العمل: %{y:.1f} ساعة<extra></extra>",
+        y=plot["المحصّل"],
+        x=plot["إجمالي ساعات العمل"],
+        orientation="h",
+        marker_color=ACTIVITY_PRIMARY,
+        name="ساعات العمل",
+        text=plot["إجمالي ساعات العمل"].map(lambda v: f"{float(v):.1f}"),
+        textposition="outside",
+        cliponaxis=False,
+        customdata=plot["المحصّل"],
+        hovertemplate="<b>%{y}</b><br>ساعات العمل: %{x:.1f}<extra></extra>",
     ))
     fig.add_trace(go.Scatter(
-        x=plot["المحصّل"], y=plot["إجمالي الوقت المهدر (دقيقة)"], mode="lines+markers",
-        yaxis="y2", line={"color": ACTIVITY_MUTED, "width": 3},
-        marker={"color": ACTIVITY_MUTED, "size": 9, "line": {"color": THEME["surface"], "width": 1.5}},
-        name="الوقت المهدر (دقيقة)", customdata=plot["المحصّل"],
-        hovertemplate="<b>%{x}</b><br>الوقت المهدر: %{y:.1f} دقيقة<extra></extra>",
+        y=plot["المحصّل"],
+        x=plot["إجمالي الوقت المهدر (دقيقة)"],
+        mode="markers+text",
+        xaxis="x2",
+        marker={"color": ACTIVITY_MUTED, "size": 10, "symbol": "diamond"},
+        name="الوقت المهدر (دقيقة)",
+        text=plot["إجمالي الوقت المهدر (دقيقة)"].map(lambda v: f"{float(v):.0f}"),
+        textposition="middle left",
+        customdata=plot["المحصّل"],
+        hovertemplate="<b>%{y}</b><br>الوقت المهدر: %{x:.1f} دقيقة<extra></extra>",
     ))
     fig.update_layout(**_activity_layout(
-        title="⏱️ ساعات العمل مقابل الوقت المهدر لكل محصّل", title_x=0.5,
-        xaxis_title="", yaxis_title="إجمالي ساعات العمل", height=400,
-        legend_title_text="", legend={"orientation": "h", "yanchor": "top", "y": -0.22, "x": 0.5, "xanchor": "center"},
-        margin={"t": 62, "b": 95, "l": 55, "r": 55},
-        xaxis={"tickangle": -25},
-        yaxis2={"title": "الوقت المهدر (دقيقة)", "overlaying": "y", "side": "right", "showgrid": False},
+        title="ساعات العمل مقابل الوقت المهدر",
+        height=ACTIVITY_PAIR_CHART_HEIGHT,
+        legend={"orientation": "h", "yanchor": "top", "y": -0.2, "x": 0.5, "xanchor": "center", "title_text": ""},
+        margin={"t": 56, "b": 90, "l": 160, "r": 70},
+        xaxis={
+            "title": {"text": "ساعات العمل", "font": {"size": 13}},
+            "rangemode": "tozero",
+            "automargin": True,
+            "gridcolor": "rgba(128,145,170,0.18)",
+        },
+        xaxis2={
+            "title": {"text": "الوقت المهدر (دقيقة)", "font": {"size": 12}},
+            "overlaying": "x",
+            "side": "top",
+            "showgrid": False,
+            "automargin": True,
+        },
+        yaxis={"title": "", "automargin": True},
     ))
-    render_selectable_chart(fig, "dashboard_activity_hours_efficiency", filter_key=DASHBOARD_AGENT_FILTER_KEY)
+    render_selectable_chart(fig, "dashboard_hours_efficiency", filter_key=DASHBOARD_AGENT_FILTER_KEY)
 
 
 def _render_activity_table(agent):
@@ -1917,26 +1872,9 @@ def render_activity_dashboard(df, class_col=None, sales_col=None, time_col=None,
     render_activity_kpi_cards(total, success, int(agent["المحصّل"].nunique()), success_rate, wasted)
     st.caption("اضغط على أي عنصر في الشارتات (محصّل / يوم / نتيجة) للفلترة · «إظهار الكل» للإلغاء · الألوان موحّدة على 3 درجات.")
 
-    st.markdown("#### 🕒 الاتجاهات الزمنية")
-    sort_options = {
-        "التاريخ تصاعديًا": "date",
-        "إجمالي المكالمات تنازليًا": "calls",
-        "نسبة النجاح تنازليًا": "success_rate",
-    }
-    sort_label = st.selectbox(
-        "ترتيب الشارت اليومي",
-        list(sort_options.keys()),
-        key="activity_daily_sort_v2",
-        help="يؤثر على ترتيب الأيام في الشارت اليومي فقط.",
-    )
-    st.session_state["activity_daily_sort_mode"] = sort_options[sort_label]
-    daily_col, hourly_col = st.columns(2, gap="medium")
-    with daily_col:
-        with st.container(border=True):
-            _render_activity_daily_chart(work, time_col, class_col)
-    with hourly_col:
-        with st.container(border=True):
-            _render_activity_hourly_chart(work, time_col)
+    st.markdown("#### 🕒 النشاط حسب الساعة")
+    with st.container(border=True):
+        _render_activity_hourly_chart(work, time_col)
 
     st.markdown("#### 🏆 مقارنة أداء المحصلين")
     with st.container(border=True):
@@ -2105,69 +2043,40 @@ def build_dashboard_html(df, class_col, sales_col, time_col, source_name="", fil
         work["_activity_time"] = pd.to_datetime(work[time_col], errors="coerce")
         timed = work.dropna(subset=["_activity_time"]).copy()
         if not timed.empty:
-            timed["اليوم"] = timed["_activity_time"].dt.strftime("%Y-%m-%d")
-            # شارت يومي مُجمَّع (بدون تكسير حسب المحصل) عشان يبقى واضح
-            daily_totals = timed.groupby("اليوم", as_index=False).agg(
-                **{
-                    "عدد المكالمات": ("_agent_display", "size"),
-                    "المكالمات الناجحة": ("_success_bool", "sum"),
-                }
-            )
-            daily_totals["نسبة النجاح (%)"] = (
-                daily_totals["المكالمات الناجحة"] / daily_totals["عدد المكالمات"].replace(0, pd.NA) * 100
-            ).fillna(0).round(1)
-            ordered_days = sorted(daily_totals["اليوم"].tolist())
-            day_fig = go.Figure()
-            day_fig.add_trace(go.Bar(
-                x=daily_totals["اليوم"], y=daily_totals["عدد المكالمات"],
-                name="عدد المكالمات", marker_color=export_accent,
-                text=daily_totals["عدد المكالمات"], textposition="outside",
-                hovertemplate="<b>%{x}</b><br>المكالمات: %{y:,}<extra></extra>",
-            ))
-            day_fig.add_trace(go.Scatter(
-                x=daily_totals["اليوم"], y=daily_totals["نسبة النجاح (%)"],
-                name="نسبة النجاح", mode="lines+markers", yaxis="y2",
-                line={"color": export_success, "width": 3},
-                marker={"size": 8, "color": export_success},
-                hovertemplate="<b>%{x}</b><br>نسبة النجاح: %{y:.1f}%<extra></extra>",
-            ))
-            day_fig.update_layout(**export_layout(
-                title="النشاط اليومي ونسبة النجاح", height=420, bargap=0.28,
-                xaxis={
-                    "type": "category", "categoryorder": "array", "categoryarray": ordered_days,
-                    "tickangle": -35, "title": "اليوم", "automargin": True,
-                },
-                yaxis={"title": "عدد المكالمات", "rangemode": "tozero", "automargin": True},
-                yaxis2={
-                    "title": "نسبة النجاح %", "overlaying": "y", "side": "right",
-                    "range": [0, 100], "ticksuffix": "%", "showgrid": False, "automargin": True,
-                },
-                margin=dict(t=60, b=100, l=55, r=60),
-                showlegend=True,
-                legend=dict(orientation="h", y=-0.28, x=0.5, xanchor="center", font=dict(size=12)),
-            ))
-            chart_specs.append(("main", "النشاط اليومي", day_fig, "plot_daily"))
-
             timed["الساعة"] = timed["_activity_time"].dt.hour
             hourly = timed.groupby("الساعة", as_index=False).size().rename(columns={"size": "عدد المكالمات"})
             hour_min = int(hourly["الساعة"].min())
             hour_max = int(hourly["الساعة"].max())
+            full_hours = pd.DataFrame({"الساعة": list(range(hour_min, hour_max + 1))})
+            hourly = full_hours.merge(hourly, on="الساعة", how="left").fillna(0)
+            hourly["عدد المكالمات"] = hourly["عدد المكالمات"].astype(int)
             hour_fig = go.Figure()
             hour_fig.add_trace(go.Bar(
                 x=hourly["الساعة"], y=hourly["عدد المكالمات"],
                 marker_color=export_success,
-                text=hourly["عدد المكالمات"], textposition="outside",
-                hovertemplate="<b>ساعة %{x}</b><br>المكالمات: %{y:,}<extra></extra>",
+                text=hourly["عدد المكالمات"],
+                texttemplate="%{text:,}",
+                textposition="outside",
+                cliponaxis=False,
+                hovertemplate="<b>الساعة %{x}:00</b><br>عدد المكالمات: %{y:,}<extra></extra>",
             ))
             hour_fig.update_layout(**export_layout(
-                title="النشاط حسب ساعة اليوم", height=400, bargap=0.15,
+                title="النشاط حسب ساعة اليوم", height=420, bargap=0.18,
                 xaxis={
-                    "dtick": 1, "tickvals": list(range(hour_min, hour_max + 1)),
-                    "range": [max(-0.5, hour_min - 0.5), min(23.5, hour_max + 0.5)],
-                    "title": "ساعة اليوم", "automargin": True,
+                    "dtick": 1,
+                    "tickvals": list(range(hour_min, hour_max + 1)),
+                    "ticktext": [f"{h}:00" for h in range(hour_min, hour_max + 1)],
+                    "range": [hour_min - 0.5, hour_max + 0.5],
+                    "title": {"text": "ساعة اليوم", "font": {"size": 13}},
+                    "automargin": True,
+                    "showgrid": False,
                 },
-                yaxis={"title": "عدد المكالمات", "rangemode": "tozero", "automargin": True},
-                margin=dict(t=60, b=70, l=55, r=24),
+                yaxis={
+                    "title": {"text": "عدد المكالمات", "font": {"size": 13}},
+                    "rangemode": "tozero",
+                    "automargin": True,
+                },
+                margin=dict(t=60, b=80, l=60, r=28),
                 showlegend=False,
             ))
             chart_specs.append(("main", "النشاط الساعي", hour_fig, "plot_hourly"))
@@ -2351,7 +2260,7 @@ def build_dashboard_html(df, class_col, sales_col, time_col, source_name="", fil
     parts.append("</section>")
 
     section_titles = {
-        "main": "النتائج والاتجاهات الزمنية",
+        "main": "النتائج والنشاط",
         "rank": "مقارنة أداء المحصلين",
         "states": "تفاصيل حالات المتابعة",
         "ops": "كفاءة التشغيل",
@@ -2406,7 +2315,6 @@ const agentColors = __AGENT_COLORS__;
 const stateColors = __STATE_COLORS__;
 const positiveStateColors = __POSITIVE_STATE_COLORS__;
 const donutPlot = document.getElementById('plot_donut');
-const dailyPlot = document.getElementById('plot_daily');
 const hourlyPlot = document.getElementById('plot_hourly');
 const leaderboardPlot = document.getElementById('plot_leaderboard');
 const statePlot = document.getElementById('plot_no_answer');
@@ -2456,33 +2364,24 @@ function refreshDashboard() {
   const status = document.getElementById('filter-status');
   if (status) status.textContent = `عرض ${fmt(rows.length)} مكالمة من أصل ${fmt(activityData.length)} — ${fmt(agents.length)} محصل`;
 
-  const days = [...new Set(rows.filter(r => r.time).map(r => r.time.slice(0,10)))].sort();
-  if (dailyPlot) {
-    const dayCounts = days.map(day => rows.filter(r => r.time && r.time.slice(0,10)===day).length);
-    const dayRates = days.map(day => {
-      const d = rows.filter(r => r.time && r.time.slice(0,10)===day);
-      return d.length ? d.filter(r => r.success).length / d.length * 100 : 0;
-    });
-    Plotly.react(dailyPlot, [
-      {type:'bar', name:'عدد المكالمات', x:days, y:dayCounts, marker:{color:'__ACCENT__'}, text:dayCounts, textposition:'outside', hovertemplate:'<b>%{x}</b><br>المكالمات: %{y:,}<extra></extra>'},
-      {type:'scatter', mode:'lines+markers', name:'نسبة النجاح', x:days, y:dayRates, yaxis:'y2', line:{color:'__SUCCESS__', width:3}, marker:{color:'__SUCCESS__', size:8}, hovertemplate:'<b>%{x}</b><br>نسبة النجاح: %{y:.1f}%<extra></extra>'}
-    ], {
-      ...(dailyPlot.layout || {}),
-      xaxis:{...(dailyPlot.layout && dailyPlot.layout.xaxis || {}), type:'category', categoryarray:days, title:'اليوم', tickangle:-35, automargin:true},
-      yaxis:{...(dailyPlot.layout && dailyPlot.layout.yaxis || {}), title:'عدد المكالمات', rangemode:'tozero', automargin:true},
-      yaxis2:{...(dailyPlot.layout && dailyPlot.layout.yaxis2 || {}), range:[0,100], ticksuffix:'%', title:'نسبة النجاح %', overlaying:'y', side:'right', showgrid:false}
-    });
-  }
-
   if (hourlyPlot) {
-    const hours = Array.from({length:24}, (_,i)=>i);
+    const present = rows.filter(r => r.time).map(r => new Date(r.time).getHours());
+    let hourMin = 0, hourMax = 23;
+    if (present.length) { hourMin = Math.min(...present); hourMax = Math.max(...present); }
+    const hours = [];
+    for (let h = hourMin; h <= hourMax; h++) hours.push(h);
     const hourCounts = hours.map(h => rows.filter(r => r.time && new Date(r.time).getHours()===h).length);
     Plotly.react(hourlyPlot, [{
-      type:'bar', x:hours, y:hourCounts, marker:{color:'__SUCCESS__'}, text:hourCounts, textposition:'outside',
-      hovertemplate:'<b>ساعة %{x}</b><br>المكالمات: %{y:,}<extra></extra>'
+      type:'bar', x:hours, y:hourCounts, marker:{color:'__SUCCESS__'},
+      text:hourCounts, texttemplate:'%{text:,}', textposition:'outside', cliponaxis:false,
+      hovertemplate:'<b>الساعة %{x}:00</b><br>عدد المكالمات: %{y:,}<extra></extra>'
     }], {
       ...(hourlyPlot.layout || {}),
-      xaxis:{...(hourlyPlot.layout && hourlyPlot.layout.xaxis || {}), dtick:1, range:[-0.5,23.5], title:'ساعة اليوم', automargin:true},
+      xaxis:{
+        ...(hourlyPlot.layout && hourlyPlot.layout.xaxis || {}),
+        dtick:1, tickvals:hours, ticktext:hours.map(h => h + ':00'),
+        range:[hourMin-0.5, hourMax+0.5], title:'ساعة اليوم', automargin:true, showgrid:false
+      },
       yaxis:{...(hourlyPlot.layout && hourlyPlot.layout.yaxis || {}), title:'عدد المكالمات', rangemode:'tozero', automargin:true},
       showlegend:false
     });

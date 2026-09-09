@@ -1920,8 +1920,7 @@ def render_activity_dashboard(df, class_col=None, sales_col=None, time_col=None,
     wasted = float(pd.to_numeric(work.get(WASTED_TIME_COL, pd.Series(dtype=float)), errors="coerce").fillna(0).sum())
     st.subheader("📌 مؤشرات الأداء الرئيسية")
     render_activity_kpi_cards(total, success, int(agent["المحصّل"].nunique()), success_rate, wasted)
-    st.caption("لوحة موحّدة بثلاثة ألوان فقط · اضغط على الشارتات للفلترة التفاعلية (محصّل / يوم / نتيجة).")
-    st.caption("اضغط على أي عنصر في الشارتات (محصّل / يوم / نتيجة) لتطبيق فلتر تفاعلي على الكروت والرسوم والجدول. استخدم «إظهار الكل» للإلغاء.")
+    st.caption("اضغط على أي عنصر في الشارتات (محصّل / يوم / نتيجة) للفلترة · «إظهار الكل» للإلغاء · الألوان موحّدة على 3 درجات.")
 
     st.markdown("#### 🕒 الاتجاهات الزمنية")
     st.caption("الألوان أدناه موحّدة لكل محصّل في شارتات الاتجاه اليومي والساعي.")
@@ -1973,21 +1972,45 @@ def render_full_dashboard(df, class_col=None, sales_col=None, time_col=None, bre
 
 
 def build_dashboard_html(df, class_col, sales_col, time_col, source_name="", filter_hint="", filter_summary=None) -> str:
-    """إنشاء نسخة HTML مستقلة من Dashboard النشاط بنفس التسلسل والألوان والرسوم الأساسية."""
+    """إنشاء نسخة HTML مستقلة من Dashboard النشاط — تنسيق واضح وشارتات بـ IDs ثابتة."""
     from html import escape
     import json
 
-    # التقرير المصدّر له Light Mode مستقل حتى يظل واضحًا عند فتحه في أي متصفح.
-    background = "#F5F7FB"
+    background = "#F4F7FB"
     surface = "#FFFFFF"
-    border = "#D9E2EC"
+    border = "#D7E0EA"
     text = "#1F2937"
-    text_dim = "#526174"
+    text_dim = "#5B6B7C"
     export_success = "#2F6F73"
-    export_fail = "#8095A2"
-    export_accent = "#477F82"
-    export_warn = "#628B8E"
+    export_fail = "#A8B8BC"
+    export_accent = "#3D7E82"
+    export_warn = "#6A9A9D"
     export_template = "plotly_white"
+
+    def export_layout(**overrides):
+        base = {
+            "template": export_template,
+            "paper_bgcolor": "rgba(0,0,0,0)",
+            "plot_bgcolor": "rgba(0,0,0,0)",
+            "font": {"family": "Tahoma, Segoe UI, Arial, sans-serif", "color": text, "size": 13},
+            "title": {"x": 0.5, "xanchor": "center", "font": {"size": 16, "color": text}},
+            "margin": dict(t=64, b=72, l=60, r=36),
+            "legend": {
+                "orientation": "h", "yanchor": "top", "y": -0.2,
+                "x": 0.5, "xanchor": "center", "bgcolor": "rgba(0,0,0,0)",
+            },
+            "hoverlabel": {"bgcolor": surface, "font": {"color": text, "family": "Tahoma, Arial"}},
+        }
+        overrides = dict(overrides)
+        title_x = overrides.pop("title_x", None)
+        if "title" in overrides and isinstance(overrides["title"], str):
+            overrides["title"] = {**base["title"], "text": overrides["title"]}
+        elif "title" in overrides and isinstance(overrides["title"], dict):
+            overrides["title"] = {**base["title"], **overrides["title"]}
+        if title_x is not None and isinstance(overrides.get("title"), dict):
+            overrides["title"]["x"] = title_x
+        return {**base, **overrides}
+
     work = df.copy()
     if sales_col and sales_col in work.columns:
         work["_agent_display"] = work[sales_col].fillna("غير محدد").astype(str).str.strip()
@@ -1997,19 +2020,20 @@ def build_dashboard_html(df, class_col, sales_col, time_col, source_name="", fil
     sub_col_for_export = find_column(work, PROMISE_SUB_STATE_CANDIDATES)
     if sub_col_for_export:
         work["_activity_state"] = work[sub_col_for_export].map(_classify_activity_sub_state)
+    else:
+        work["_activity_state"] = ""
+
     total = len(work)
     success = int(work["_success_bool"].sum())
     rate = success / total * 100 if total else 0
-    wasted = pd.to_numeric(work.get(WASTED_TIME_COL, pd.Series(dtype=float)), errors="coerce").fillna(0).sum()
+    wasted = float(pd.to_numeric(work.get(WASTED_TIME_COL, pd.Series(dtype=float)), errors="coerce").fillna(0).sum())
     agent_count = int(work["_agent_display"].nunique()) if total else 0
-    filter_summary = filter_summary or {}
-    filter_items = [
-        ("👤 المحصل", filter_summary.get("المحصل", "كل المحصلين")),
-        ("📊 الحالة الفرعية", filter_summary.get("الحالة الفرعية", "كل الحالات")),
-        ("📅 التاريخ", filter_summary.get("التاريخ", "كل التواريخ")),
-        ("🏷️ التصنيف", filter_summary.get("التصنيف", "الكل")),
-    ]
-    timed_source = pd.to_datetime(work[time_col], errors="coerce") if time_col and time_col in work.columns else pd.Series(pd.NaT, index=work.index)
+
+    timed_source = (
+        pd.to_datetime(work[time_col], errors="coerce")
+        if time_col and time_col in work.columns
+        else pd.Series(pd.NaT, index=work.index)
+    )
     raw_records = []
     for row_index, row in work.iterrows():
         timestamp = timed_source.loc[row_index] if row_index in timed_source.index else pd.NaT
@@ -2018,229 +2042,342 @@ def build_dashboard_html(df, class_col, sales_col, time_col, source_name="", fil
             "time": timestamp.isoformat() if pd.notna(timestamp) else "",
             "success": bool(row.get("_success_bool", False)),
             "wasted": float(pd.to_numeric(row.get(WASTED_TIME_COL, 0), errors="coerce") or 0),
-            "state": str(_classify_activity_sub_state(row.get(find_column(work, PROMISE_SUB_STATE_CANDIDATES), ""))) if find_column(work, PROMISE_SUB_STATE_CANDIDATES) else "",
+            "state": str(row.get("_activity_state", "") or ""),
         })
-    raw_records_json = json.dumps(raw_records, ensure_ascii=False).replace("</", "<\\/")
-    date_values = sorted({record["time"][:10] for record in raw_records if record.get("time")})
-    export_date_min = date_values[0] if date_values else ""
-    export_date_max = date_values[-1] if date_values else ""
-    agent_color_json = json.dumps(_activity_agent_color_map(work["_agent_display"]), ensure_ascii=False)
+
+    agent_color_map = _activity_agent_color_map(work["_agent_display"])
+    agent_color_json = json.dumps(agent_color_map, ensure_ascii=False)
     state_color_json = json.dumps(dict(zip(ACTIVITY_NO_ANSWER_STATES, ACTIVITY_STATE_PALETTE)), ensure_ascii=False)
-    positive_state_colors = [export_success, export_accent, export_warn, "#A6B4B9", "#7FA8AB"]
+    positive_state_colors = [export_success, export_accent, export_warn, "#7EABAE", "#8FB4B7"]
     positive_state_color_json = json.dumps(dict(zip(ACTIVITY_POSITIVE_STATES, positive_state_colors)), ensure_ascii=False)
+    raw_records_json = json.dumps(raw_records, ensure_ascii=False)
+
     agent_table = pd.DataFrame()
-    if sales_col and sales_col in df.columns:
-        agent_table, _, _ = _build_activity_summary(df, class_col, sales_col, time_col)
+    if sales_col and sales_col in work.columns:
+        agent_table, _, _ = _build_activity_summary(work, class_col, sales_col, time_col)
+
+    export_date_min = export_date_max = ""
+    if timed_source.notna().any():
+        export_date_min = timed_source.min().strftime("%Y-%m-%d")
+        export_date_max = timed_source.max().strftime("%Y-%m-%d")
 
     def metric_card(card_id, label, value, color):
         return (
-            f'<div id="{card_id}" style="background:{surface};border:1px solid {border};border-radius:14px;'
-            f'padding:22px 14px;text-align:center;min-height:112px;box-sizing:border-box">'
-            f'<div style="color:{text_dim};font-size:15px;margin-bottom:12px">{label}</div>'
-            f'<div data-role="value" style="color:{color};font-size:28px;font-weight:700;line-height:1.2">{value}</div></div>'
+            f'<div class="kpi" id="{card_id}">'
+            f'<div class="label">{label}</div>'
+            f'<div class="value" data-role="value" style="color:{color}">{value}</div></div>'
         )
 
-    parts = [
-        '<!doctype html><html lang="ar" dir="rtl"><head><meta charset="utf-8">'
-        '<meta name="viewport" content="width=device-width, initial-scale=1">'
-        '<title>داشبورد تحليل نشاط المحصلين</title>'
-        f'<style>'
-        f'body{{margin:0;background:{background};color:{text};font-family:Tahoma,"Segoe UI",Arial,sans-serif;line-height:1.65}}'
-        f'main{{max-width:1440px;margin:0 auto;padding:28px 24px 40px}}'
-        f'header.hero{{background:{surface};border:1px solid {border};border-radius:18px;padding:28px 32px;margin-bottom:22px;text-align:center}}'
-        f'header.hero .eyebrow{{font-size:12px;letter-spacing:1.4px;color:{export_accent};margin-bottom:6px}}'
-        f'header.hero h1{{margin:0 0 8px;font-size:28px;color:{text}}}'
-        f'header.hero .meta{{color:{text_dim};font-size:14px}}'
-        f'h2.section-title{{margin:8px 0 14px;text-align:center;font-size:18px;color:{text}}}'
-        f'.card{{background:{surface};border:1px solid {border};border-radius:14px;padding:16px 18px;margin-bottom:16px}}'
-        f'.charts-grid{{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin:16px 0}}'
-        f'.chart-box{{background:{surface};border:1px solid {border};border-radius:14px;padding:14px 12px 8px;min-height:420px}}'
-        f'.chart-box h3{{margin:0 0 8px;text-align:center;font-size:15px;color:{text}}}'
-        f'#kpi-grid{{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;margin-bottom:18px}}'
-        f'.kpi{{background:{surface};border:1px solid {border};border-radius:14px;padding:16px 12px;text-align:center}}'
-        f'.kpi .label{{color:{text_dim};font-size:13px;margin-bottom:6px}}'
-        f'.kpi .value{{font-size:26px;font-weight:700;color:{text}}}'
-        f'@media (max-width:960px){{.charts-grid{{grid-template-columns:1fr}}}}'
-        f'</style></head>',
-        '<body>',
-        '<main>',
-        f'<header class="hero">'
-        '<div class="eyebrow">ACTIVITY DASHBOARD</div>'
-        '<h1>📊 تحليل نشاط المحصلين</h1>'
-        f'<div class="meta">مصدر البيانات: {escape(source_name or "ملف النشاط")}</div>',
-    ]
-    if filter_hint:
-        parts.append(f'<div style="margin-top:12px;color:{text_dim};font-size:13px">الفلاتر النشطة: {escape(filter_hint)}</div>')
-    agent_options = sorted(work["_agent_display"].dropna().astype(str).unique().tolist())
-    state_options = sorted(work["_activity_state"].dropna().astype(str).unique().tolist()) if "_activity_state" in work.columns else []
-    parts.extend([
-        '</header>',
-        f'<section style="background:{surface};border:0;border-radius:12px;padding:8px 0;margin-bottom:14px">',
-        f'<h2 style="margin:0 0 8px;text-align:center;font-size:18px;color:{text}">🎚️ فلاتر التقرير التفاعلية</h2>',
-        '<section id="interactive-filters" style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:9px;align-items:end">',
-        f'<div style="position:relative;display:flex;flex-direction:column;gap:7px;color:{text_dim};font-size:13px"><span>👤 المحصلون</span><button type="button" class="multi-trigger" data-target="agent-menu" style="background:{background};color:{text};border:1px solid {border};border-radius:9px;padding:8px;font-size:13px;text-align:right;cursor:pointer"><span id="agent-label">كل المحصلين</span>⌄</button><div id="agent-menu" class="multi-menu" style="display:none;position:absolute;z-index:20;top:74px;right:0;left:0;background:#FFFFFF;color:{text};border:1px solid {border};border-radius:10px;padding:8px;box-shadow:0 10px 24px rgba(15,23,42,.16);max-height:230px;overflow-y:auto"><label style="display:block;padding:8px;border-bottom:1px solid {border};font-weight:700"><input type="checkbox" class="select-all-agent"> كل المحصلين</label>',
-    ])
-    for value in agent_options:
-        parts.append(f'<label style="display:block;padding:8px 6px;border-radius:7px;cursor:pointer"><input type="checkbox" class="agent-option" value="{escape(value, quote=True)}"> {escape(value)}</label>')
-    parts.extend([
-        f'</div></div><div style="position:relative;display:flex;flex-direction:column;gap:7px;color:{text_dim};font-size:13px"><span>📊 الحالات الفرعية</span><button type="button" class="multi-trigger" data-target="state-menu" style="background:{background};color:{text};border:1px solid {border};border-radius:9px;padding:8px;font-size:13px;text-align:right;cursor:pointer"><span id="state-label">كل الحالات</span>⌄</button><div id="state-menu" class="multi-menu" style="display:none;position:absolute;z-index:20;top:74px;right:0;left:0;background:#FFFFFF;color:{text};border:1px solid {border};border-radius:10px;padding:8px;box-shadow:0 10px 24px rgba(15,23,42,.16);max-height:230px;overflow-y:auto"><label style="display:block;padding:8px;border-bottom:1px solid {border};font-weight:700"><input type="checkbox" class="select-all-state"> كل الحالات</label>',
-    ])
-    for value in state_options:
-        parts.append(f'<label style="display:block;padding:8px 6px;border-radius:7px;cursor:pointer"><input type="checkbox" class="state-option" value="{escape(value, quote=True)}"> {escape(value)}</label>')
-    parts.extend([
-        f'</div></div><label style="display:flex;flex-direction:column;gap:7px;color:{text_dim};font-size:13px"><span>🏷️ التصنيف</span><select id="filter-class" style="background:{background};color:{text};border:1px solid {border};border-radius:9px;padding:8px;font-size:13px"><option value="">الكل</option><option value="success">ناجحة</option><option value="failure">غير ناجحة</option></select></label>',
-        f'<label style="display:flex;flex-direction:column;gap:7px;color:{text_dim};font-size:13px"><span>📅 من تاريخ</span><input id="filter-date-from" type="date" value="{export_date_min}" min="{export_date_min}" max="{export_date_max}" style="background:{background};color:{text};border:1px solid {border};border-radius:9px;padding:8px;font-size:13px"></label>',
-        f'<label style="display:flex;flex-direction:column;gap:7px;color:{text_dim};font-size:13px"><span>📅 إلى تاريخ</span><input id="filter-date-to" type="date" value="{export_date_max}" min="{export_date_min}" max="{export_date_max}" style="background:{background};color:{text};border:1px solid {border};border-radius:9px;padding:8px;font-size:13px"></label>',
-        f'<div style="display:flex;gap:8px;align-items:end"><button id="reset-filters" type="button" style="flex:1;background:{export_accent};color:#fff;border:0;border-radius:9px;padding:8px;font-size:13px;cursor:pointer">↺ إعادة ضبط</button></div>',
-        '</section><div id="filter-status" style="text-align:center;color:' + text_dim + ';font-size:12px;margin-top:12px">عرض كل البيانات</div></section>',
-        '<section id="kpi-grid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:14px;margin-bottom:18px">',
-        metric_card("kpi-agents", "👥 عدد المحصلين", f"{agent_count:,}", text),
-        metric_card("kpi-total", "📞 إجمالي المكالمات", f"{total:,}", text),
-        metric_card("kpi-success", "✅ المكالمات الناجحة", f"{success:,}", export_success),
-        metric_card("kpi-rate", "📈 نسبة النجاح", f"{rate:.1f}%", export_accent),
-        metric_card("kpi-wasted", "⏱️ إجمالي الوقت المهدر", f"{wasted:,.1f} دقيقة", export_warn),
-        '</section>',
-    ])
+    # ---- بناء الشارتات بـ IDs ثابتة ----
+    chart_specs = []  # (section, title, fig, plot_id)
 
-    figs = []
     if class_col and class_col in work.columns:
-        donut_df = pd.DataFrame({"النتيجة": ["ناجحة", "غير ناجحة"], "العدد": [success, total - success]})
-        fig = px.pie(donut_df, names="النتيجة", values="العدد", hole=0.62, color="النتيجة", color_discrete_map={"ناجحة": export_success, "غير ناجحة": export_fail}, template=export_template)
-        fig.update_traces(textinfo="percent", textfont_size=15, marker={"line": {"color": surface, "width": 3}}, hovertemplate="<b>%{label}</b><br>العدد: %{value:,}<br>النسبة: %{percent}<extra></extra>")
-        fig.update_layout(**_activity_layout(title="🎯 الناجحة مقابل غير الناجحة", title_x=0.5, height=410, margin={"t":68,"b":65,"l":20,"r":20}, legend={"orientation":"h","y":-0.1,"x":0.5,"xanchor":"center"}, annotations=[{"text":f"{rate:.1f}%<br>نجاح","x":0.5,"y":0.5,"font":{"size":22,"color":export_success},"showarrow":False}]))
-        figs.append(("🎯 توزيع نتائج المكالمات", fig))
+        donut_df = pd.DataFrame({"النتيجة": ["ناجحة", "غير ناجحة"], "العدد": [success, max(total - success, 0)]})
+        fig = px.pie(
+            donut_df, names="النتيجة", values="العدد", hole=0.62,
+            color="النتيجة",
+            color_discrete_map={"ناجحة": export_success, "غير ناجحة": export_fail},
+            template=export_template,
+        )
+        fig.update_traces(
+            textinfo="label+value+percent", textfont_size=13,
+            marker={"line": {"color": surface, "width": 2}},
+            hovertemplate="<b>%{label}</b><br>العدد: %{value:,}<br>النسبة: %{percent}<extra></extra>",
+        )
+        fig.update_layout(**export_layout(
+            title="توزيع نتائج المكالمات", height=400,
+            margin=dict(t=60, b=40, l=20, r=20),
+            annotations=[{"text": f"<b>{rate:.1f}%</b><br>نجاح", "x": 0.5, "y": 0.5,
+                          "font": {"size": 18, "color": export_success}, "showarrow": False}],
+        ))
+        chart_specs.append(("main", "🎯 توزيع نتائج المكالمات", fig, "plot_donut"))
 
     if time_col and time_col in work.columns:
         work["_activity_time"] = pd.to_datetime(work[time_col], errors="coerce")
         timed = work.dropna(subset=["_activity_time"]).copy()
         if not timed.empty:
             timed["اليوم"] = timed["_activity_time"].dt.strftime("%Y-%m-%d")
-            timed["_success_for_day"] = _activity_success_mask(timed, class_col)
-            daily = timed.groupby(["اليوم", "_agent_display"], as_index=False).agg(**{"عدد المكالمات": ("_agent_display", "size"), "المكالمات الناجحة": ("_success_for_day", "sum")})
-            daily_totals = daily.groupby("اليوم", as_index=False).agg(**{"إجمالي المكالمات": ("عدد المكالمات", "sum"), "إجمالي الناجحة": ("المكالمات الناجحة", "sum")})
-            daily_totals["نسبة النجاح (%)"] = (daily_totals["إجمالي الناجحة"] / daily_totals["إجمالي المكالمات"].replace(0, pd.NA) * 100).fillna(0).round(1)
+            timed["_success_for_day"] = timed["_success_bool"]
+            daily = timed.groupby(["اليوم", "_agent_display"], as_index=False).agg(
+                **{"عدد المكالمات": ("_agent_display", "size"), "المكالمات الناجحة": ("_success_for_day", "sum")}
+            )
+            daily_totals = daily.groupby("اليوم", as_index=False).agg(
+                **{"إجمالي المكالمات": ("عدد المكالمات", "sum"), "إجمالي الناجحة": ("المكالمات الناجحة", "sum")}
+            )
+            daily_totals["نسبة النجاح (%)"] = (
+                daily_totals["إجمالي الناجحة"] / daily_totals["إجمالي المكالمات"].replace(0, pd.NA) * 100
+            ).fillna(0).round(1)
             ordered_days = sorted(daily_totals["اليوم"].tolist())
-            daily["اليوم"] = pd.Categorical(daily["اليوم"], categories=ordered_days, ordered=True)
-            daily = daily.sort_values(["اليوم", "_agent_display"])
-            daily_totals["اليوم"] = pd.Categorical(daily_totals["اليوم"], categories=ordered_days, ordered=True)
-            daily_totals = daily_totals.sort_values("اليوم")
-            day_fig = px.bar(daily, x="اليوم", y="عدد المكالمات", color="_agent_display", barmode="group", text_auto=True, custom_data=["_agent_display"], template=export_template, labels={"_agent_display":"المحصل"}, color_discrete_sequence=ACTIVITY_AGENT_PALETTE)
-            day_fig.add_trace(go.Scatter(x=daily_totals["اليوم"].astype(str), y=daily_totals["نسبة النجاح (%)"], name="نسبة النجاح", mode="lines+markers+text", text=daily_totals["نسبة النجاح (%)"].map(lambda value: f"{value:.1f}%"), textposition="top center", line={"color": export_accent, "width": 3}, marker={"color": export_accent, "size": 9}, yaxis="y2", hovertemplate="<b>%{x}</b><br>نسبة النجاح: %{y:.1f}%<extra></extra>"))
-            day_fig.update_layout(**_activity_layout(title="📊 Combo Chart يومي: المكالمات ونسبة النجاح", title_x=0.5, xaxis_title="اليوم", yaxis_title="عدد المكالمات", height=430, bargap=0.18, margin={"t":68,"b":58,"l":55,"r":65}, xaxis={"type":"category","categoryorder":"array","categoryarray":ordered_days,"tickangle":-25}, yaxis={"rangemode":"tozero"}, yaxis2={"title":"نسبة النجاح (%)","overlaying":"y","side":"right","range":[0,100],"ticksuffix":"%","showgrid":False}, legend={"orientation":"h","y":-0.16,"x":0.5,"xanchor":"center"}))
-            day_fig.update_traces(selector={"type":"bar"}, marker_line_width=0, showlegend=False, hovertemplate="<b>%{x}</b><br>%{fullData.name}: %{y:,} مكالمة<extra></extra>")
-            figs.append(("📊 Combo Chart النشاط اليومي", day_fig))
+            day_fig = px.bar(
+                daily, x="اليوم", y="عدد المكالمات", color="_agent_display", barmode="group",
+                text_auto=True, template=export_template, labels={"_agent_display": "المحصل"},
+                color_discrete_sequence=ACTIVITY_AGENT_PALETTE,
+            )
+            day_fig.add_trace(go.Scatter(
+                x=daily_totals["اليوم"], y=daily_totals["نسبة النجاح (%)"],
+                mode="lines+markers", name="نسبة النجاح", yaxis="y2",
+                line={"color": export_accent, "width": 3},
+                marker={"size": 8, "color": export_accent},
+                hovertemplate="<b>%{x}</b><br>نسبة النجاح: %{y:.1f}%<extra></extra>",
+            ))
+            day_fig.update_layout(**export_layout(
+                title="النشاط اليومي + نسبة النجاح", height=440, bargap=0.18,
+                xaxis={"type": "category", "categoryorder": "array", "categoryarray": ordered_days, "tickangle": -30},
+                yaxis={"title": "عدد المكالمات", "rangemode": "tozero"},
+                yaxis2={"title": "نسبة النجاح %", "overlaying": "y", "side": "left" if False else "right",
+                        "range": [0, 100], "ticksuffix": "%", "showgrid": False},
+                margin=dict(t=64, b=90, l=50, r=55),
+                showlegend=True,
+            ))
+            day_fig.update_traces(selector={"type": "bar"}, marker_line_width=0,
+                                  hovertemplate="<b>%{x}</b><br>%{fullData.name}: %{y:,}<extra></extra>")
+            chart_specs.append(("main", "📊 النشاط اليومي", day_fig, "plot_daily"))
 
             timed["الساعة"] = timed["_activity_time"].dt.hour
+            hourly = timed.groupby(["الساعة", "_agent_display"], as_index=False).size().rename(columns={"size": "عدد المكالمات"})
+            hour_fig = px.bar(
+                hourly, x="الساعة", y="عدد المكالمات", color="_agent_display", barmode="stack",
+                text_auto=True, template=export_template, labels={"_agent_display": "المحصل"},
+                color_discrete_sequence=ACTIVITY_AGENT_PALETTE,
+            )
             hour_min = int(timed["الساعة"].min())
             hour_max = int(timed["الساعة"].max())
-            hourly = timed.groupby(["الساعة", "_agent_display"], as_index=False).size().rename(columns={"size":"عدد المكالمات"})
-            hour_fig = px.bar(hourly, x="الساعة", y="عدد المكالمات", color="_agent_display", barmode="stack", text_auto=True, custom_data=["_agent_display"], template=export_template, labels={"_agent_display":"المحصل"}, color_discrete_sequence=ACTIVITY_AGENT_PALETTE)
-            hour_fig.update_layout(**_activity_layout(title="🕒 Histogram ساعي لنشاط المحصلين", title_x=0.5, xaxis_title="ساعة اليوم", yaxis_title="عدد المكالمات", height=430, bargap=0.08, margin={"t":68,"b":58,"l":55,"r":20}, xaxis={"dtick":1,"tickvals":list(range(hour_min, hour_max + 1)),"range":[max(-0.5, hour_min - 0.5), min(23.5, hour_max + 0.5)]}, showlegend=False))
-            hour_fig.update_traces(marker_line_width=0, hovertemplate="<b>الساعة %{x}:00</b><br>%{fullData.name}: %{y:,} مكالمة<extra></extra>")
-            figs.append(("🕒 Histogram النشاط الساعي", hour_fig))
-
-    group_bounds = {"main": len(figs)}  # نهاية مجموعة "النتائج والاتجاهات الزمنية"
+            hour_fig.update_layout(**export_layout(
+                title="النشاط حسب ساعة اليوم", height=440, bargap=0.08,
+                xaxis={"dtick": 1, "tickvals": list(range(hour_min, hour_max + 1)),
+                       "range": [max(-0.5, hour_min - 0.5), min(23.5, hour_max + 0.5)],
+                       "title": "ساعة اليوم"},
+                yaxis={"title": "عدد المكالمات"},
+                margin=dict(t=64, b=80, l=50, r=20),
+                showlegend=True,
+            ))
+            hour_fig.update_traces(marker_line_width=0,
+                                   hovertemplate="<b>ساعة %{x}</b><br>%{fullData.name}: %{y:,}<extra></extra>")
+            chart_specs.append(("main", "🕒 النشاط الساعي", hour_fig, "plot_hourly"))
 
     if not agent_table.empty:
-        board = agent_table[["المحصّل", "إجمالي المكالمات", "نسبة النجاح (%)"]].copy().sort_values("إجمالي المكالمات", ascending=True)
+        board = agent_table[["المحصّل", "إجمالي المكالمات", "نسبة النجاح (%)"]].copy()
+        board = board.sort_values("إجمالي المكالمات", ascending=True)
         board_fig = go.Figure()
-        board_fig.add_trace(go.Bar(y=board["المحصّل"], x=board["إجمالي المكالمات"], orientation="h", marker_color=export_accent, name="إجمالي المكالمات", text=board["إجمالي المكالمات"], texttemplate="%{text:,}", textposition="outside", hovertemplate="<b>%{y}</b><br>إجمالي المكالمات: %{x:,}<extra></extra>"))
-        board_fig.add_trace(go.Scatter(y=board["المحصّل"], x=board["نسبة النجاح (%)"], mode="markers+text", xaxis="x2", marker={"color": export_success, "size": 12, "symbol": "diamond"}, text=board["نسبة النجاح (%)"].map(lambda v: f"{v:.0f}%"), textposition="middle right", name="نسبة النجاح", hovertemplate="<b>%{y}</b><br>نسبة النجاح: %{x:.1f}%<extra></extra>"))
-        board_fig.update_layout(**_activity_layout(title="🏆 ترتيب المحصلين: المكالمات ونسبة النجاح", title_x=0.5, xaxis_title="إجمالي المكالمات", yaxis_title="", height=max(360, 46 * len(board) + 150), margin={"t":66,"b":55,"l":130,"r":65}, legend={"orientation":"h","y":-0.1,"x":0.5,"xanchor":"center"}, xaxis2={"overlaying":"x","side":"top","range":[0,105],"ticksuffix":"%","showgrid":False,"title":"نسبة النجاح (%)"}))
-        figs.append(("🏆 ترتيب أداء المحصلين", board_fig))
+        board_fig.add_trace(go.Bar(
+            y=board["المحصّل"], x=board["إجمالي المكالمات"], orientation="h",
+            marker_color=export_accent, name="إجمالي المكالمات",
+            text=board["إجمالي المكالمات"], texttemplate="%{text:,}", textposition="outside",
+            hovertemplate="<b>%{y}</b><br>المكالمات: %{x:,}<extra></extra>",
+        ))
+        board_fig.add_trace(go.Scatter(
+            y=board["المحصّل"], x=board["نسبة النجاح (%)"], mode="markers+text", xaxis="x2",
+            marker={"color": export_success, "size": 11, "symbol": "diamond"},
+            text=board["نسبة النجاح (%)"].map(lambda v: f"{float(v):.0f}%"),
+            textposition="middle left", name="نسبة النجاح",
+            hovertemplate="<b>%{y}</b><br>نسبة النجاح: %{x:.1f}%<extra></extra>",
+        ))
+        board_fig.update_layout(**export_layout(
+            title="ترتيب المحصلين", height=max(380, 42 * len(board) + 140),
+            xaxis_title="إجمالي المكالمات", yaxis_title="",
+            margin=dict(t=64, b=60, l=140, r=70),
+            xaxis2={"overlaying": "x", "side": "top", "range": [0, 105], "ticksuffix": "%", "showgrid": False},
+        ))
+        chart_specs.append(("rank", "🏆 ترتيب أداء المحصلين", board_fig, "plot_leaderboard"))
 
-    group_bounds["ranking"] = len(figs)  # نهاية مجموعة "مقارنة الأداء"
-
-    sub_col = find_column(work, PROMISE_SUB_STATE_CANDIDATES)
-    if sub_col:
-        work["_activity_state"] = work[sub_col].map(_classify_activity_sub_state)
+    if sub_col_for_export:
         state_counts = work.pivot_table(index="_agent_display", columns="_activity_state", aggfunc="size", fill_value=0)
         for state_name in ACTIVITY_NO_ANSWER_STATES:
             if state_name not in state_counts.columns:
                 state_counts[state_name] = 0
-        state_counts = state_counts.reindex(columns=ACTIVITY_NO_ANSWER_STATES, fill_value=0).reset_index().rename(columns={"_agent_display":"المحصّل"})
+        state_counts = state_counts.reindex(columns=ACTIVITY_NO_ANSWER_STATES, fill_value=0).reset_index()
+        state_counts = state_counts.rename(columns={"_agent_display": "المحصّل"})
         state_long = state_counts.melt(id_vars=["المحصّل"], var_name="الحالة", value_name="العدد")
-        no_fig = px.bar(state_long, x="العدد", y="المحصّل", orientation="h", color="الحالة", barmode="stack", text_auto=True, template=export_template, category_orders={"الحالة":ACTIVITY_NO_ANSWER_STATES}, color_discrete_sequence=[export_success, export_accent, export_warn, "#A6B4B9"])
-        no_fig.update_layout(**_activity_layout(title="📵 حالات لا يرد لكل محصل", title_x=0.5, xaxis_title="عدد الحالات", yaxis_title="", height=430, margin={"t":68,"b":80,"l":105,"r":20}, legend={"orientation":"h","y":-0.18,"x":0.5,"xanchor":"center"}, yaxis={"categoryorder":"total ascending"}))
-        no_fig.update_traces(hovertemplate="<b>%{y}</b><br>%{fullData.name}: %{x:,}<extra></extra>")
-        figs.append(("📵 تحليل حالات Sub State", no_fig))
+        if not state_long.empty and state_long["العدد"].sum() > 0:
+            no_fig = px.bar(
+                state_long, x="العدد", y="المحصّل", orientation="h", color="الحالة", barmode="stack",
+                text_auto=True, template=export_template,
+                category_orders={"الحالة": ACTIVITY_NO_ANSWER_STATES},
+                color_discrete_sequence=ACTIVITY_STATE_PALETTE,
+            )
+            no_fig.update_layout(**export_layout(
+                title="حالات لا يرد / مغلق", height=430,
+                xaxis_title="عدد الحالات", yaxis_title="",
+                margin=dict(t=64, b=90, l=120, r=20),
+                yaxis={"categoryorder": "total ascending"},
+            ))
+            no_fig.update_traces(hovertemplate="<b>%{y}</b><br>%{fullData.name}: %{x:,}<extra></extra>")
+            chart_specs.append(("states", "📵 حالات لا يرد", no_fig, "plot_no_answer"))
 
-        available_positive = [state for state in ACTIVITY_POSITIVE_STATES if state in agent_table.columns] if not agent_table.empty else []
+        available_positive = [s for s in ACTIVITY_POSITIVE_STATES if s in agent_table.columns] if not agent_table.empty else []
         if available_positive:
             pos_plot = agent_table[["المحصّل"] + available_positive].copy()
             pos_plot["_ترتيب"] = pos_plot[available_positive].sum(axis=1)
             pos_plot = pos_plot.sort_values("_ترتيب", ascending=True)
             pos_long = pos_plot.melt(id_vars=["المحصّل"], value_vars=available_positive, var_name="الحالة", value_name="العدد")
-            pos_fig = px.bar(pos_long, x="العدد", y="المحصّل", orientation="h", color="الحالة", barmode="stack", text_auto=True, template=export_template, category_orders={"الحالة": ACTIVITY_POSITIVE_STATES}, color_discrete_sequence=[export_success, export_accent, export_warn, "#A6B4B9", "#7FA8AB"])
-            pos_fig.update_layout(**_activity_layout(title="💰 حالات الوعد والسداد لكل محصل", title_x=0.5, xaxis_title="عدد الحالات", yaxis_title="", height=430, margin={"t":68,"b":95,"l":105,"r":20}, legend={"orientation":"h","y":-0.22,"x":0.5,"xanchor":"center"}, yaxis={"categoryorder":"total ascending"}))
-            pos_fig.update_traces(hovertemplate="<b>%{y}</b><br>%{fullData.name}: %{x:,}<extra></extra>")
-            figs.append(("💰 حالات الوعد والسداد", pos_fig))
-
-    group_bounds["states"] = len(figs)  # نهاية مجموعة "تفاصيل الحالات"
+            if pos_long["العدد"].sum() > 0:
+                pos_fig = px.bar(
+                    pos_long, x="العدد", y="المحصّل", orientation="h", color="الحالة", barmode="stack",
+                    text_auto=True, template=export_template,
+                    category_orders={"الحالة": ACTIVITY_POSITIVE_STATES},
+                    color_discrete_sequence=positive_state_colors,
+                )
+                pos_fig.update_layout(**export_layout(
+                    title="حالات الوعد والسداد", height=430,
+                    xaxis_title="عدد الحالات", yaxis_title="",
+                    margin=dict(t=64, b=95, l=120, r=20),
+                    yaxis={"categoryorder": "total ascending"},
+                ))
+                pos_fig.update_traces(hovertemplate="<b>%{y}</b><br>%{fullData.name}: %{x:,}<extra></extra>")
+                chart_specs.append(("states", "💰 الوعد والسداد", pos_fig, "plot_positive"))
 
     if not agent_table.empty and "إجمالي الوقت المهدر (دقيقة)" in agent_table.columns:
-        waste_plot = agent_table[["المحصّل", "إجمالي الوقت المهدر (دقيقة)"]].copy().sort_values("إجمالي الوقت المهدر (دقيقة)", ascending=False)
-        waste_fig = px.bar(waste_plot, x="المحصّل", y="إجمالي الوقت المهدر (دقيقة)", text_auto=".1f", template=export_template, color_discrete_sequence=[export_warn])
-        waste_fig.update_layout(**_activity_layout(title="⏱️ إجمالي الوقت المهدر لكل محصّل (دقيقة)", title_x=0.5, xaxis_title="", yaxis_title="دقيقة", height=400, margin={"t":66,"b":90,"l":55,"r":20}, xaxis={"tickangle":-25}, showlegend=False))
-        waste_fig.update_traces(marker_line_width=0, hovertemplate="<b>%{x}</b><br>الوقت المهدر: %{y:.1f} دقيقة<extra></extra>")
-        figs.append(("⏱️ الوقت المهدر لكل محصّل", waste_fig))
+        waste_df = agent_table[["المحصّل", "إجمالي الوقت المهدر (دقيقة)"]].copy()
+        waste_df = waste_df.sort_values("إجمالي الوقت المهدر (دقيقة)", ascending=True)
+        waste_fig = px.bar(
+            waste_df, x="إجمالي الوقت المهدر (دقيقة)", y="المحصّل", orientation="h",
+            text="إجمالي الوقت المهدر (دقيقة)", template=export_template,
+            color_discrete_sequence=[export_warn],
+        )
+        waste_fig.update_layout(**export_layout(
+            title="الوقت المهدر حسب المحصل", height=max(360, 40 * len(waste_df) + 120),
+            xaxis_title="دقيقة", yaxis_title="",
+            margin=dict(t=64, b=50, l=140, r=40), showlegend=False,
+        ))
+        waste_fig.update_traces(
+            texttemplate="%{x:,.0f}", textposition="outside",
+            hovertemplate="<b>%{y}</b><br>الوقت المهدر: %{x:,.1f} دقيقة<extra></extra>",
+        )
+        chart_specs.append(("ops", "⏱️ الوقت المهدر", waste_fig, "plot_waste"))
 
-    group_bounds["time"] = len(figs)  # نهاية مجموعة "الإنتاجية والوقت"
+    agent_options = sorted(work["_agent_display"].dropna().astype(str).unique().tolist())
+    state_options = sorted({str(s) for s in work["_activity_state"].dropna().astype(str).tolist() if str(s).strip()})
 
-    agent_chip_map = _activity_agent_color_map(work["_agent_display"])
-    agent_chips_html = "".join(
-        f'<span style="display:inline-flex;align-items:center;gap:6px;padding:4px 10px;margin:3px;'
-        f'border-radius:999px;background:{surface};border:1px solid {border};font-size:12px;color:{text_dim}">'
-        f'<span style="width:10px;height:10px;border-radius:50%;background:{color};display:inline-block"></span>'
-        f'{escape(str(name))}</span>'
-        for name, color in agent_chip_map.items()
-    )
-    agent_legend_html = (
-        f'<div style="max-height:84px;overflow-y:auto;padding:6px 4px;display:flex;flex-wrap:wrap;'
-        f'justify-content:center;border:1px solid {border};border-radius:12px;background:{surface};margin:4px 0 14px">'
-        f'{agent_chips_html}</div>'
-    )
-
-    section_groups = [
-        ("main", "🎯 نتائج المكالمات والاتجاهات الزمنية", 0),
-        ("ranking", "🏆 مقارنة أداء المحصلين", group_bounds.get("main", 0)),
-        ("states", "📊 تفاصيل الحالات لكل محصل", group_bounds.get("ranking", 0)),
-        ("time", "⏱️ الإنتاجية والوقت المهدر", group_bounds.get("states", 0)),
+    parts = [
+        "<!doctype html><html lang='ar' dir='rtl'><head><meta charset='utf-8'>",
+        "<meta name='viewport' content='width=device-width, initial-scale=1'>",
+        "<title>داشبورد تحليل نشاط المحصلين</title>",
+        "<style>",
+        f"body{{margin:0;background:{background};color:{text};font-family:Tahoma,'Segoe UI',Arial,sans-serif;line-height:1.65}}",
+        "main{max-width:1400px;margin:0 auto;padding:24px 18px 48px}",
+        f"header.hero{{background:{surface};border:1px solid {border};border-radius:18px;padding:26px 28px;margin-bottom:18px;text-align:center;box-shadow:0 6px 18px rgba(15,23,42,.04)}}",
+        f".eyebrow{{font-size:12px;letter-spacing:1.5px;color:{export_accent};margin-bottom:6px}}",
+        f"header.hero h1{{margin:0 0 8px;font-size:26px;color:{text}}}",
+        f".meta{{color:{text_dim};font-size:13px}}",
+        f".panel{{background:{surface};border:1px solid {border};border-radius:16px;padding:16px 16px 12px;margin-bottom:16px}}",
+        f"h2.section-title{{margin:4px 0 12px;text-align:center;font-size:17px;color:{text}}}",
+        "#interactive-filters{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px;align-items:end}",
+        f".filter-field{{display:flex;flex-direction:column;gap:6px;color:{text_dim};font-size:12px}}",
+        f".filter-field input,.filter-field select,.filter-field button.multi-trigger{{background:{background};color:{text};border:1px solid {border};border-radius:10px;padding:9px 10px;font-size:13px;text-align:right}}",
+        f".multi-menu{{display:none;position:absolute;z-index:30;top:70px;right:0;left:0;background:#fff;border:1px solid {border};border-radius:10px;padding:8px;box-shadow:0 10px 24px rgba(15,23,42,.14);max-height:220px;overflow:auto}}",
+        f"#kpi-grid{{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin:16px 0}}",
+        f".kpi{{background:{surface};border:1px solid {border};border-radius:14px;padding:16px 10px;text-align:center;min-height:100px}}",
+        f".kpi .label{{color:{text_dim};font-size:13px;margin-bottom:8px}}",
+        f".kpi .value{{font-size:24px;font-weight:700}}",
+        f"#filter-status{{text-align:center;color:{text_dim};font-size:12px;margin-top:10px}}",
+        ".charts-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(420px,1fr));gap:16px;margin:12px 0 20px}",
+        f".chart-card{{background:{surface};border:1px solid {border};border-radius:16px;padding:12px 12px 6px;min-width:0;overflow:hidden}}",
+        f".chart-card h3{{margin:6px 8px 4px;text-align:center;font-size:15px;color:{text}}}",
+        f"table{{width:100%;border-collapse:collapse;font-size:13px}} th,td{{padding:9px 8px;border-bottom:1px solid {border};text-align:right;white-space:nowrap}}",
+        f"th{{color:{text_dim};font-weight:600}}",
+        f"footer{{color:{text_dim};font-size:12px;text-align:center;margin-top:22px}}",
+        f".btn-reset{{background:{export_accent};color:#fff;border:0;border-radius:10px;padding:10px 12px;font-size:13px;cursor:pointer}}",
+        "@media (max-width:900px){.charts-grid{grid-template-columns:1fr}}",
+        "</style></head><body><main>",
+        "<header class='hero'>",
+        "<div class='eyebrow'>ACTIVITY DASHBOARD</div>",
+        "<h1>📊 تحليل نشاط المحصلين</h1>",
+        f"<div class='meta'>مصدر البيانات: {escape(source_name or 'ملف النشاط')}</div>",
     ]
-    include_js = True
-    for group_key, group_title, start_index in section_groups:
-        end_index = group_bounds.get(group_key, len(figs))
-        if end_index <= start_index:
-            continue
-        parts.append(f'<h2 class="section-title">{group_title}</h2>')
-        if group_key == "main" and agent_chip_map:
-            parts.append(f'<div style="text-align:center;color:{text_dim};font-size:12px;margin-bottom:4px">🎨 ألوان المحصلين (موحّدة في كل الشارتات)</div>')
-            parts.append(agent_legend_html)
-        parts.append('<section style="display:grid;grid-template-columns:repeat(auto-fit,minmax(420px,1fr));gap:18px;margin-bottom:22px">')
-        for index in range(start_index, end_index):
-            heading, fig = figs[index]
-            parts.append(f'<article id="chart-card-{index}" style="background:{surface};border:1px solid {border};border-radius:16px;padding:10px 14px 4px;min-width:0"><h2 style="font-size:17px;margin:8px 10px;color:{text};text-align:center">{heading}</h2>')
-            parts.append(pio.to_html(fig, full_html=False, include_plotlyjs=include_js, config=PLOTLY_CONFIG, div_id=f"activity_plot_{index}", default_width="100%", default_height=f"{max(fig.layout.height or 430, 450)}px"))
-            parts.append('</article>')
-            include_js = False
-        parts.append('</section>')
+    if filter_hint:
+        parts.append(f"<div class='meta' style='margin-top:8px'>الفلاتر عند التصدير: {escape(filter_hint)}</div>")
+    parts.append("</header>")
 
-    if sales_col and sales_col in df.columns and not agent_table.empty:
-        columns = ["المحصّل", "إجمالي المكالمات", "المكالمات الناجحة", "نسبة النجاح (%)", "نسبة من إجمالي المكالمات (%)", "واعد بالسداد", "إجمالي لا يرد", "أيام النشاط", "متوسط ساعات العمل/اليوم", "إجمالي ساعات العمل", "إجمالي الوقت المهدر (دقيقة)"]
-        columns = [column for column in columns if column in agent_table.columns]
-        parts.append(f'<section id="activity-summary-table" style="background:{surface};border:1px solid {border};border-radius:16px;padding:18px;margin-top:18px"><h2 style="font-size:19px;margin:0 0 12px;text-align:center">📋 ملخص أداء كل محصل</h2><div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:13px"><thead><tr>')
+    # فلاتر
+    parts.append("<section class='panel'><h2 class='section-title'>🎚️ فلاتر التقرير</h2>")
+    parts.append("<div id='interactive-filters'>")
+    # agents
+    parts.append("<div class='filter-field' style='position:relative'><span>👤 المحصلون</span>")
+    parts.append("<button type='button' class='multi-trigger' data-target='agent-menu'><span id='agent-label'>كل المحصلين</span> ⌄</button>")
+    parts.append("<div id='agent-menu' class='multi-menu'><label style='display:block;padding:6px;font-weight:700'><input type='checkbox' class='select-all-agent'> كل المحصلين</label>")
+    for value in agent_options:
+        parts.append(f"<label style='display:block;padding:6px'><input type='checkbox' class='agent-option' value='{escape(value, quote=True)}'> {escape(value)}</label>")
+    parts.append("</div></div>")
+    # states
+    parts.append("<div class='filter-field' style='position:relative'><span>📊 الحالات</span>")
+    parts.append("<button type='button' class='multi-trigger' data-target='state-menu'><span id='state-label'>كل الحالات</span> ⌄</button>")
+    parts.append("<div id='state-menu' class='multi-menu'><label style='display:block;padding:6px;font-weight:700'><input type='checkbox' class='select-all-state'> كل الحالات</label>")
+    for value in state_options:
+        parts.append(f"<label style='display:block;padding:6px'><input type='checkbox' class='state-option' value='{escape(value, quote=True)}'> {escape(value)}</label>")
+    parts.append("</div></div>")
+    parts.append(
+        "<div class='filter-field'><span>🏷️ التصنيف</span>"
+        "<select id='filter-class'><option value=''>الكل</option>"
+        "<option value='success'>ناجحة</option><option value='failure'>غير ناجحة</option></select></div>"
+    )
+    parts.append(
+        f"<div class='filter-field'><span>📅 من</span>"
+        f"<input id='filter-date-from' type='date' value='{export_date_min}' min='{export_date_min}' max='{export_date_max}'></div>"
+    )
+    parts.append(
+        f"<div class='filter-field'><span>📅 إلى</span>"
+        f"<input id='filter-date-to' type='date' value='{export_date_max}' min='{export_date_min}' max='{export_date_max}'></div>"
+    )
+    parts.append("<div class='filter-field'><span>&nbsp;</span><button id='reset-filters' class='btn-reset' type='button'>↺ إعادة ضبط</button></div>")
+    parts.append("</div><div id='filter-status'>عرض كل البيانات</div></section>")
+
+    # KPI
+    parts.append("<section id='kpi-grid'>")
+    parts.append(metric_card("kpi-agents", "👥 عدد المحصلين", f"{agent_count:,}", text))
+    parts.append(metric_card("kpi-total", "📞 إجمالي المكالمات", f"{total:,}", text))
+    parts.append(metric_card("kpi-success", "✅ المكالمات الناجحة", f"{success:,}", export_success))
+    parts.append(metric_card("kpi-rate", "📈 نسبة النجاح", f"{rate:.1f}%", export_accent))
+    parts.append(metric_card("kpi-wasted", "⏱️ الوقت المهدر", f"{wasted:,.1f} د", export_warn))
+    parts.append("</section>")
+
+    section_titles = {
+        "main": "النتائج والاتجاهات الزمنية",
+        "rank": "مقارنة أداء المحصلين",
+        "states": "تفاصيل حالات المتابعة",
+        "ops": "كفاءة التشغيل",
+    }
+    include_js = True
+    current_section = None
+    for section, heading, fig, plot_id in chart_specs:
+        if section != current_section:
+            if current_section is not None:
+                parts.append("</div>")  # close charts-grid
+            current_section = section
+            parts.append(f"<h2 class='section-title'>{section_titles.get(section, section)}</h2>")
+            parts.append("<div class='charts-grid'>")
+        parts.append(f"<article class='chart-card'><h3>{escape(heading)}</h3>")
+        parts.append(pio.to_html(
+            fig, full_html=False, include_plotlyjs=("cdn" if include_js else False),
+            config={"displayModeBar": False, "responsive": True},
+            div_id=plot_id, default_width="100%",
+            default_height=f"{int(fig.layout.height or 420)}px",
+        ))
+        parts.append("</article>")
+        include_js = False
+    if current_section is not None:
+        parts.append("</div>")
+
+    # table
+    if not agent_table.empty:
+        columns = [
+            "المحصّل", "إجمالي المكالمات", "المكالمات الناجحة", "نسبة النجاح (%)",
+            "واعد بالسداد", "إجمالي لا يرد", "أيام النشاط",
+            "متوسط ساعات العمل/اليوم", "إجمالي ساعات العمل", "إجمالي الوقت المهدر (دقيقة)",
+        ]
+        columns = [c for c in columns if c in agent_table.columns]
+        parts.append("<section class='panel'><h2 class='section-title'>📋 ملخص أداء كل محصل</h2><div style='overflow-x:auto'><table><thead><tr>")
         for column in columns:
-            parts.append(f'<th style="padding:10px;border-bottom:1px solid {border};color:{text_dim};white-space:nowrap;text-align:right">{escape(column)}</th>')
-        parts.append('</tr></thead><tbody>')
+            parts.append(f"<th>{escape(column)}</th>")
+        parts.append("</tr></thead><tbody>")
         for _, row in agent_table.sort_values("إجمالي المكالمات", ascending=False).iterrows():
-            parts.append('<tr>')
+            parts.append("<tr>")
             for column in columns:
                 value = row[column]
                 if isinstance(value, float):
                     value = f"{value:,.2f}"
-                parts.append(f'<td style="padding:9px;border-bottom:1px solid rgba(128,145,170,.18);white-space:nowrap">{escape(str(value))}</td>')
-            parts.append('</tr>')
-        parts.append('</tbody></table></div></section>')
+                parts.append(f"<td>{escape(str(value))}</td>")
+            parts.append("</tr>")
+        parts.append("</tbody></table></div></section>")
 
     interactive_js = """
 <script>
@@ -2248,79 +2385,202 @@ const activityData = __ACTIVITY_DATA__;
 const agentColors = __AGENT_COLORS__;
 const stateColors = __STATE_COLORS__;
 const positiveStateColors = __POSITIVE_STATE_COLORS__;
-const donutPlot = document.getElementById('activity_plot_0');
-const dailyPlot = document.getElementById('activity_plot_1');
-const hourlyPlot = document.getElementById('activity_plot_2');
-const leaderboardPlot = document.getElementById('activity_plot_3');
-const statePlot = document.getElementById('activity_plot_4');
-const positivePlot = document.getElementById('activity_plot_5');
-const wastePlot = document.getElementById('activity_plot_6');
+const donutPlot = document.getElementById('plot_donut');
+const dailyPlot = document.getElementById('plot_daily');
+const hourlyPlot = document.getElementById('plot_hourly');
+const leaderboardPlot = document.getElementById('plot_leaderboard');
+const statePlot = document.getElementById('plot_no_answer');
+const positivePlot = document.getElementById('plot_positive');
+const wastePlot = document.getElementById('plot_waste');
 const fmt = n => Number(n || 0).toLocaleString('en-US');
+function setKpi(id, value) {
+  const el = document.querySelector('#' + id + ' [data-role="value"]');
+  if (el) el.textContent = value;
+}
 function updateMultiLabels() {
   const agent = [...document.querySelectorAll('.agent-option:checked')].map(o => o.value);
   const state = [...document.querySelectorAll('.state-option:checked')].map(o => o.value);
-  document.getElementById('agent-label').textContent = agent.length ? `${agent.length} محصل محدد` : 'كل المحصلين';
-  document.getElementById('state-label').textContent = state.length ? `${state.length} حالة محددة` : 'كل الحالات';
+  const al = document.getElementById('agent-label');
+  const sl = document.getElementById('state-label');
+  if (al) al.textContent = agent.length ? `${agent.length} محصل محدد` : 'كل المحصلين';
+  if (sl) sl.textContent = state.length ? `${state.length} حالة محددة` : 'كل الحالات';
 }
 function selectedRows() {
-  const values = cls => [...document.querySelectorAll('.' + cls + ':checked')].map(option => option.value).filter(Boolean);
+  const values = cls => [...document.querySelectorAll('.' + cls + ':checked')].map(o => o.value).filter(Boolean);
   const agent = values('agent-option');
   const state = values('state-option');
-  const cls = document.getElementById('filter-class').value;
-  const from = document.getElementById('filter-date-from').value;
-  const to = document.getElementById('filter-date-to').value;
-  return activityData.filter(row => ((!agent.length) || agent.includes(row.agent)) && ((!state.length) || state.includes(row.state)) && (!cls || (cls === 'success' ? row.success : !row.success)) && (!from || !row.time || row.time.slice(0,10) >= from) && (!to || !row.time || row.time.slice(0,10) <= to));
+  const cls = (document.getElementById('filter-class') || {}).value || '';
+  const from = (document.getElementById('filter-date-from') || {}).value || '';
+  const to = (document.getElementById('filter-date-to') || {}).value || '';
+  return activityData.filter(row => {
+    if (agent.length && !agent.includes(row.agent)) return false;
+    if (state.length && !state.includes(row.state)) return false;
+    if (cls === 'success' && !row.success) return false;
+    if (cls === 'failure' && row.success) return false;
+    if (from && row.time && row.time.slice(0,10) < from) return false;
+    if (to && row.time && row.time.slice(0,10) > to) return false;
+    return true;
+  });
 }
-function setKpi(id, value) { const el = document.querySelector('#' + id + ' [data-role=value]'); if (el) el.textContent = value; }
 function refreshDashboard() {
   const rows = selectedRows();
   const agents = [...new Set(rows.map(r => r.agent))].sort();
   const success = rows.filter(r => r.success).length;
   const rate = rows.length ? success / rows.length * 100 : 0;
-  setKpi('kpi-agents', fmt(agents.length)); setKpi('kpi-total', fmt(rows.length)); setKpi('kpi-success', fmt(success)); setKpi('kpi-rate', rate.toFixed(1) + '%'); setKpi('kpi-wasted', Number(rows.reduce((s,r) => s + (r.wasted || 0), 0)).toLocaleString('en-US', {maximumFractionDigits:1}) + ' دقيقة');
-  document.getElementById('filter-status').textContent = `عرض ${fmt(rows.length)} مكالمة من أصل ${fmt(activityData.length)} — ${fmt(agents.length)} محصل`;
+  const wasted = rows.reduce((s,r) => s + (r.wasted || 0), 0);
+  setKpi('kpi-agents', fmt(agents.length));
+  setKpi('kpi-total', fmt(rows.length));
+  setKpi('kpi-success', fmt(success));
+  setKpi('kpi-rate', rate.toFixed(1) + '%');
+  setKpi('kpi-wasted', Number(wasted).toLocaleString('en-US', {maximumFractionDigits:1}) + ' د');
+  const status = document.getElementById('filter-status');
+  if (status) status.textContent = `عرض ${fmt(rows.length)} مكالمة من أصل ${fmt(activityData.length)} — ${fmt(agents.length)} محصل`;
+
   const days = [...new Set(rows.filter(r => r.time).map(r => r.time.slice(0,10)))].sort();
-  const dailyTraces = agents.map(agent => ({type:'bar', name:agent, x:days, y:days.map(day => rows.filter(r => r.agent===agent && r.time.slice(0,10)===day).length), marker:{color:agentColors[agent] || '#6F9FB5'}, texttemplate:'%{y}', textposition:'inside', hovertemplate:'<b>%{x}</b><br>%{fullData.name}: %{y} مكالمة<extra></extra>'}));
-  const dailySuccess = days.map(day => { const d=rows.filter(r => r.time && r.time.slice(0,10)===day); return d.length ? d.filter(r=>r.success).length/d.length*100 : 0; });
-  dailyTraces.push({type:'scatter', mode:'lines+markers+text', name:'نسبة النجاح', x:days, y:dailySuccess, text:dailySuccess.map(v=>v.toFixed(1)+'%'), textposition:'top center', line:{color:'__ACCENT__',width:3}, marker:{color:'__ACCENT__',size:8}, yaxis:'y2', hovertemplate:'<b>%{x}</b><br>نسبة النجاح: %{y:.1f}%<extra></extra>'});
-  if (dailyPlot) Plotly.react(dailyPlot, dailyTraces, {...dailyPlot.layout, xaxis:{...(dailyPlot.layout?.xaxis||{}), type:'category', categoryarray:days}, yaxis2:{...(dailyPlot.layout?.yaxis2||{}), range:[0,100], ticksuffix:'%'}});
-  const hours = Array.from({length:24},(_,i)=>i); const hourlyTraces = agents.map(agent=>({type:'bar',name:agent,x:hours,y:hours.map(h=>rows.filter(r=>r.agent===agent && r.time && new Date(r.time).getHours()===h).length),marker:{color:agentColors[agent]||'#6F9FB5'},texttemplate:'%{y}',textposition:'inside'}));
-  if (hourlyPlot) Plotly.react(hourlyPlot, hourlyTraces, {...hourlyPlot.layout, barmode:'stack', xaxis:{...(hourlyPlot.layout?.xaxis||{}), dtick:1, range:[-0.5,23.5]}});
-  if (donutPlot) Plotly.react(donutPlot, [{type:'pie',labels:['ناجحة','غير ناجحة'],values:[success, rows.length-success],hole:.62,marker:{colors:['__SUCCESS__','__FAIL__']},textinfo:'percent'}], donutPlot.layout);
-  const stateNames = Object.keys(stateColors); const stateTraces = stateNames.map(state=>({type:'bar',name:state,x:agents,y:agents.map(a=>rows.filter(r=>r.agent===a && r.state===state).length),marker:{color:stateColors[state]},texttemplate:'%{y}',textposition:'inside'}));
-  if (statePlot) Plotly.react(statePlot, stateTraces, {...statePlot.layout, barmode:'stack'});
-  const sortedAgentsByCalls = [...agents].sort((a,b)=>rows.filter(r=>r.agent===a).length - rows.filter(r=>r.agent===b).length);
-  const agentCallCounts = sortedAgentsByCalls.map(a=>rows.filter(r=>r.agent===a).length);
-  const agentRates = sortedAgentsByCalls.map(a=>{ const d=rows.filter(r=>r.agent===a); return d.length ? d.filter(r=>r.success).length/d.length*100 : 0; });
-  const leaderboardTraces = [
-    {type:'bar', orientation:'h', name:'إجمالي المكالمات', y:sortedAgentsByCalls, x:agentCallCounts, marker:{color:'__ACCENT__'}, texttemplate:'%{x}', textposition:'outside'},
-    {type:'scatter', mode:'markers+text', name:'نسبة النجاح', y:sortedAgentsByCalls, x:agentRates, xaxis:'x2', marker:{color:'__SUCCESS__', size:12, symbol:'diamond'}, text:agentRates.map(v=>v.toFixed(0)+'%'), textposition:'middle right'},
-  ];
-  if (leaderboardPlot) Plotly.react(leaderboardPlot, leaderboardTraces, {...leaderboardPlot.layout, yaxis:{...(leaderboardPlot.layout?.yaxis||{}), categoryorder:'array', categoryarray:sortedAgentsByCalls}});
-  const positiveStateNames = Object.keys(positiveStateColors); const positiveTraces = positiveStateNames.map(state=>({type:'bar', orientation:'h', name:state, y:agents, x:agents.map(a=>rows.filter(r=>r.agent===a && r.state===state).length), marker:{color:positiveStateColors[state]}, texttemplate:'%{x}', textposition:'inside'}));
-  if (positivePlot) Plotly.react(positivePlot, positiveTraces, {...positivePlot.layout, barmode:'stack'});
-  const agentWaste = agents.map(a=>rows.filter(r=>r.agent===a).reduce((s,r)=>s+(r.wasted||0),0));
-  if (wastePlot) Plotly.react(wastePlot, [{type:'bar', x:agents, y:agentWaste, marker:{color:'__WARN__'}, texttemplate:'%{y:.1f}', textposition:'outside'}], wastePlot.layout);
+  if (dailyPlot) {
+    const dailyTraces = agents.map(agent => ({
+      type:'bar', name:agent,
+      x:days,
+      y:days.map(day => rows.filter(r => r.agent===agent && r.time && r.time.slice(0,10)===day).length),
+      marker:{color: agentColors[agent] || '#6A9A9D'},
+      hovertemplate:'<b>%{x}</b><br>%{fullData.name}: %{y} مكالمة<extra></extra>'
+    }));
+    const dailySuccess = days.map(day => {
+      const d = rows.filter(r => r.time && r.time.slice(0,10)===day);
+      return d.length ? d.filter(r => r.success).length / d.length * 100 : 0;
+    });
+    dailyTraces.push({
+      type:'scatter', mode:'lines+markers', name:'نسبة النجاح',
+      x:days, y:dailySuccess, yaxis:'y2',
+      line:{color:'__ACCENT__', width:3}, marker:{color:'__ACCENT__', size:8},
+      hovertemplate:'<b>%{x}</b><br>نسبة النجاح: %{y:.1f}%<extra></extra>'
+    });
+    Plotly.react(dailyPlot, dailyTraces, {
+      ...(dailyPlot.layout || {}),
+      xaxis:{...(dailyPlot.layout && dailyPlot.layout.xaxis || {}), type:'category', categoryarray:days},
+      yaxis2:{...(dailyPlot.layout && dailyPlot.layout.yaxis2 || {}), range:[0,100], ticksuffix:'%'}
+    });
+  }
+
+  if (hourlyPlot) {
+    const hours = Array.from({length:24}, (_,i)=>i);
+    const hourlyTraces = agents.map(agent => ({
+      type:'bar', name:agent, x:hours,
+      y:hours.map(h => rows.filter(r => r.agent===agent && r.time && new Date(r.time).getHours()===h).length),
+      marker:{color: agentColors[agent] || '#6A9A9D'}
+    }));
+    Plotly.react(hourlyPlot, hourlyTraces, {
+      ...(hourlyPlot.layout || {}),
+      barmode:'stack',
+      xaxis:{...(hourlyPlot.layout && hourlyPlot.layout.xaxis || {}), dtick:1, range:[-0.5,23.5]}
+    });
+  }
+
+  if (donutPlot) {
+    Plotly.react(donutPlot, [{
+      type:'pie', labels:['ناجحة','غير ناجحة'], values:[success, Math.max(rows.length-success,0)],
+      hole:0.62, marker:{colors:['__SUCCESS__','__FAIL__']},
+      textinfo:'label+value+percent'
+    }], donutPlot.layout || {});
+  }
+
+  if (leaderboardPlot) {
+    const totals = agents.map(a => rows.filter(r => r.agent===a).length);
+    const rates = agents.map(a => {
+      const rs = rows.filter(r => r.agent===a);
+      return rs.length ? rs.filter(r => r.success).length / rs.length * 100 : 0;
+    });
+    const order = agents.map((a,i)=>({a,t:totals[i],r:rates[i]})).sort((x,y)=>x.t-y.t);
+    Plotly.react(leaderboardPlot, [
+      {type:'bar', orientation:'h', y:order.map(o=>o.a), x:order.map(o=>o.t), name:'المكالمات', marker:{color:'__ACCENT__'}, text:order.map(o=>o.t), textposition:'outside'},
+      {type:'scatter', mode:'markers', y:order.map(o=>o.a), x:order.map(o=>o.r), name:'نسبة النجاح', xaxis:'x2', marker:{color:'__SUCCESS__', size:10, symbol:'diamond'}}
+    ], leaderboardPlot.layout || {});
+  }
+
+  if (statePlot) {
+    const stateNames = Object.keys(stateColors);
+    const stateTraces = stateNames.map(state => ({
+      type:'bar', orientation:'h', name:state,
+      y:agents,
+      x:agents.map(a => rows.filter(r => r.agent===a && r.state===state).length),
+      marker:{color: stateColors[state] || '#A8B8BC'}
+    }));
+    Plotly.react(statePlot, stateTraces, {...(statePlot.layout || {}), barmode:'stack'});
+  }
+
+  if (positivePlot) {
+    const posNames = Object.keys(positiveStateColors);
+    const positiveTraces = posNames.map(state => ({
+      type:'bar', orientation:'h', name:state,
+      y:agents,
+      x:agents.map(a => rows.filter(r => r.agent===a && r.state===state).length),
+      marker:{color: positiveStateColors[state] || '#6A9A9D'}
+    }));
+    Plotly.react(positivePlot, positiveTraces, {...(positivePlot.layout || {}), barmode:'stack'});
+  }
+
+  if (wastePlot) {
+    const agentWaste = agents.map(a => rows.filter(r => r.agent===a).reduce((s,r)=>s+(r.wasted||0),0));
+    const order = agents.map((a,i)=>({a,w:agentWaste[i]})).sort((x,y)=>x.w-y.w);
+    Plotly.react(wastePlot, [{
+      type:'bar', orientation:'h',
+      y:order.map(o=>o.a), x:order.map(o=>o.w),
+      marker:{color:'__WARN__'}, text:order.map(o=>o.w.toFixed(1)), textposition:'outside'
+    }], wastePlot.layout || {});
+  }
 }
-document.querySelectorAll('.multi-trigger').forEach(trigger => trigger.addEventListener('click', event => { event.stopPropagation(); const menu = document.getElementById(trigger.dataset.target); document.querySelectorAll('.multi-menu').forEach(other => { if (other !== menu) other.style.display = 'none'; }); menu.style.display = menu.style.display === 'block' ? 'none' : 'block'; }));
+
+document.querySelectorAll('.multi-trigger').forEach(trigger => {
+  trigger.addEventListener('click', event => {
+    event.stopPropagation();
+    const menu = document.getElementById(trigger.dataset.target);
+    document.querySelectorAll('.multi-menu').forEach(other => { if (other !== menu) other.style.display = 'none'; });
+    if (menu) menu.style.display = menu.style.display === 'block' ? 'none' : 'block';
+  });
+});
 document.addEventListener('click', () => document.querySelectorAll('.multi-menu').forEach(menu => menu.style.display = 'none'));
 document.querySelectorAll('.agent-option,.state-option').forEach(option => option.addEventListener('change', () => { updateMultiLabels(); refreshDashboard(); }));
-document.querySelector('.select-all-agent')?.addEventListener('change', event => { document.querySelectorAll('.agent-option').forEach(option => option.checked = event.target.checked); updateMultiLabels(); refreshDashboard(); });
-document.querySelector('.select-all-state')?.addEventListener('change', event => { document.querySelectorAll('.state-option').forEach(option => option.checked = event.target.checked); updateMultiLabels(); refreshDashboard(); });
+document.querySelector('.select-all-agent')?.addEventListener('change', event => {
+  document.querySelectorAll('.agent-option').forEach(option => option.checked = event.target.checked);
+  updateMultiLabels(); refreshDashboard();
+});
+document.querySelector('.select-all-state')?.addEventListener('change', event => {
+  document.querySelectorAll('.state-option').forEach(option => option.checked = event.target.checked);
+  updateMultiLabels(); refreshDashboard();
+});
 ['filter-class','filter-date-from','filter-date-to'].forEach(id => document.getElementById(id)?.addEventListener('change', refreshDashboard));
-document.getElementById('reset-filters')?.addEventListener('click', () => { document.querySelectorAll('.agent-option,.state-option,.select-all-agent,.select-all-state').forEach(option => option.checked=false); document.getElementById('filter-class').value=''; document.getElementById('filter-date-from').value='__DATE_MIN__'; document.getElementById('filter-date-to').value='__DATE_MAX__'; updateMultiLabels(); refreshDashboard(); });
+document.getElementById('reset-filters')?.addEventListener('click', () => {
+  document.querySelectorAll('.agent-option,.state-option,.select-all-agent,.select-all-state').forEach(option => option.checked = false);
+  const cls = document.getElementById('filter-class'); if (cls) cls.value = '';
+  const from = document.getElementById('filter-date-from'); if (from) from.value = '__DATE_MIN__';
+  const to = document.getElementById('filter-date-to'); if (to) to.value = '__DATE_MAX__';
+  updateMultiLabels(); refreshDashboard();
+});
 updateMultiLabels();
 refreshDashboard();
 function _resizeAllPlots() {
   document.querySelectorAll('.js-plotly-plot').forEach(div => { try { Plotly.Plots.resize(div); } catch (e) {} });
 }
-window.addEventListener('load', () => { _resizeAllPlots(); setTimeout(_resizeAllPlots, 150); setTimeout(_resizeAllPlots, 500); });
+window.addEventListener('load', () => { _resizeAllPlots(); setTimeout(_resizeAllPlots, 200); setTimeout(_resizeAllPlots, 600); });
 window.addEventListener('resize', _resizeAllPlots);
-_resizeAllPlots();
+setTimeout(_resizeAllPlots, 100);
 </script>
-""".replace('__ACTIVITY_DATA__', raw_records_json).replace('__AGENT_COLORS__', agent_color_json).replace('__STATE_COLORS__', state_color_json).replace('__POSITIVE_STATE_COLORS__', positive_state_color_json).replace('__ACCENT__', json.dumps(export_accent)).replace('__SUCCESS__', json.dumps(export_success)).replace('__FAIL__', json.dumps(export_fail)).replace('__WARN__', json.dumps(export_warn)).replace('__DATE_MIN__', export_date_min).replace('__DATE_MAX__', export_date_max)
+"""
+    interactive_js = (
+        interactive_js
+        .replace("__ACTIVITY_DATA__", raw_records_json)
+        .replace("__AGENT_COLORS__", agent_color_json)
+        .replace("__STATE_COLORS__", state_color_json)
+        .replace("__POSITIVE_STATE_COLORS__", positive_state_color_json)
+        .replace("__ACCENT__", json.dumps(export_accent))
+        .replace("__SUCCESS__", json.dumps(export_success))
+        .replace("__FAIL__", json.dumps(export_fail))
+        .replace("__WARN__", json.dumps(export_warn))
+        .replace("__DATE_MIN__", export_date_min)
+        .replace("__DATE_MAX__", export_date_max)
+    )
     parts.append(interactive_js)
-    parts.extend(['<footer style="color:' + text_dim + ';font-size:12px;text-align:center;margin-top:24px">تم إنشاء التقرير من لوحة تحليل نشاط المحصلين</footer></main></body></html>'])
+    parts.append("<footer>تم إنشاء التقرير من لوحة تحليل نشاط المحصلين</footer></main></body></html>")
     return "".join(parts)
 
 

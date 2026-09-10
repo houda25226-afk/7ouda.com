@@ -1510,7 +1510,14 @@ def _classify_activity_sub_state(value):
         return "لا يرد مع التكرار"
     if "مغلق" in key and "تكرار" in key:
         return "مغلق مع التكرار"
-    if "لايرد" in key or "مايرد" in key or "مشغول" in key:
+    if (
+        "لايرد" in key
+        or "مايرد" in key
+        or "مشغول" in key
+        or "بريدصوتي" in key
+        or "رسالهصوتي" in key
+        or "voicemail" in key
+    ):
         return "لا يرد"
     if (
         key == "مغلق"
@@ -1537,7 +1544,7 @@ def _classify_unreachable_from_notes(value):
 
     ترجع واحدة من ACTIVITY_NO_ANSWER_STATES أو None.
     أمثلة: لا يرد، لايرد مع التكرار، مغلق، مغلق مع التكرار، ما يرد، العميل لا يرد،
-    مشغول، مفصول من الخدمة، خارج الخدمة...
+    مشغول، مفصول من الخدمة، خارج الخدمة، بريد صوتي، عدم التواصل...
     """
     if value is None or (isinstance(value, float) and pd.isna(value)):
         return None
@@ -1570,6 +1577,33 @@ def _classify_unreachable_from_notes(value):
         or "مشغول" in key
         or "الخطمشغول" in key
         or "رقمشغول" in key
+        # بريد صوتي / رسالة صوتية = لم يتم التواصل مع العميل
+        or "بريدصوتي" in key
+        or "البريدالصوتي" in key
+        or "رسالهصوتيه" in key
+        or "رسالهصوتي" in key
+        or "voicemail" in key
+        or "voicemail" in key
+        or "answeringmachine" in key
+        or "machine" in key and "answer" in key
+        # لم يتم التواصل / لم يتواصل العميل
+        or "لميتواصل" in key
+        or "ماتواصل" in key
+        or "لماتواصل" in key
+        or "ماتمالتواصل" in key
+        or "لمتمتواصل" in key
+        or "عدمتواصل" in key
+        or "عدمالوصول" in key
+        or "عدمالرد" in key
+        or "لمالوصول" in key
+        or "مفيشتواصل" in key
+        or "لاتواصل" in key
+        or "nocontact" in key
+        or "notreachable" in key
+        or "couldnotreach" in key
+        or "unabletoreach" in key
+        or "clientnotavailable" in key
+        or "customernotavailable" in key
     )
     closed = (
         "مغلق" in key

@@ -460,8 +460,9 @@ def render_promises_dashboard(df, summary, mode_label):
         st.markdown("#### 📈 تحليلات الوعود التفاعلية")
         left, right = st.columns(2)
         with left:
+            count_df = agent_summary.head(15).sort_values("عدد الوعود")
             count_fig = px.bar(
-                agent_summary.head(15).sort_values("عدد الوعود"),
+                count_df,
                 x="عدد الوعود",
                 y=sales_col,
                 orientation="h",
@@ -470,13 +471,25 @@ def render_promises_dashboard(df, summary, mode_label):
                 color_continuous_scale=OPS_SCALE,
                 template=PLOTLY_TEMPLATE,
             )
-            count_fig.update_layout(**PLOTLY_LAYOUT, title="عدد الوعود حسب المحصّل", xaxis_title="عدد الوعود", yaxis_title="", coloraxis_showscale=False, height=430)
-            count_fig.update_traces(customdata=agent_summary.head(15).sort_values("عدد الوعود")[sales_col], hovertemplate="<b>%{y}</b><br>عدد الوعود: %{x:,}<extra></extra>")
-            render_selectable_chart(count_fig, f"promises_count_{mode_label}", filter_key=PROMISES_AGENT_FILTER_KEY)
+            _apply_ops_chart_style(
+                count_fig, "عدد الوعود حسب المحصّل",
+                height=430, xaxis_title="عدد الوعود", show_legend=False,
+                margin=dict(t=70, b=55, l=160, r=55),
+            )
+            count_fig.update_traces(
+                texttemplate="%{x:,.0f}",
+                textposition="outside",
+                cliponaxis=False,
+                customdata=count_df[sales_col],
+                hovertemplate="<b>%{y}</b><br>عدد الوعود: %{x:,}<extra></extra>",
+            )
+            with st.container(border=True):
+                render_selectable_chart(count_fig, f"promises_count_{mode_label}", filter_key=PROMISES_AGENT_FILTER_KEY)
         with right:
             if net_col and "إجمالي المديونية" in agent_summary.columns:
+                amount_df = agent_summary.head(15).sort_values("إجمالي المديونية")
                 amount_fig = px.bar(
-                    agent_summary.head(15).sort_values("إجمالي المديونية"),
+                    amount_df,
                     x="إجمالي المديونية",
                     y=sales_col,
                     orientation="h",
@@ -485,9 +498,20 @@ def render_promises_dashboard(df, summary, mode_label):
                     color_continuous_scale=OPS_SCALE,
                     template=PLOTLY_TEMPLATE,
                 )
-                amount_fig.update_layout(**PLOTLY_LAYOUT, title="إجمالي المديونية حسب المحصّل", xaxis_title="إجمالي المديونية", yaxis_title="", coloraxis_showscale=False, height=430)
-                amount_fig.update_traces(customdata=agent_summary.head(15).sort_values("إجمالي المديونية")[sales_col], hovertemplate="<b>%{y}</b><br>إجمالي المديونية: %{x:,.0f}<extra></extra>")
-                render_selectable_chart(amount_fig, f"promises_amount_{mode_label}", filter_key=PROMISES_AGENT_FILTER_KEY)
+                _apply_ops_chart_style(
+                    amount_fig, "إجمالي المديونية حسب المحصّل",
+                    height=430, xaxis_title="إجمالي المديونية", show_legend=False,
+                    margin=dict(t=70, b=55, l=160, r=70),
+                )
+                amount_fig.update_traces(
+                    texttemplate="%{x:,.0f}",
+                    textposition="outside",
+                    cliponaxis=False,
+                    customdata=amount_df[sales_col],
+                    hovertemplate="<b>%{y}</b><br>إجمالي المديونية: %{x:,.0f}<extra></extra>",
+                )
+                with st.container(border=True):
+                    render_selectable_chart(amount_fig, f"promises_amount_{mode_label}", filter_key=PROMISES_AGENT_FILTER_KEY)
             else:
                 st.info("لا يوجد عمود صافي المديونية لعرض الرسم المالي.")
 
@@ -619,27 +643,22 @@ def render_combined_promises_dashboard(df, meta, company_label):
                 color_discrete_map={"الوعود القائمة": OPS_POSITIVE, "الوعود المكسورة": OPS_NEGATIVE},
                 template=PLOTLY_TEMPLATE,
             )
-            fig.update_layout(**{
-                **PLOTLY_LAYOUT,
-                "title": "القائمة والمكسورة حسب المحصّل",
-                "xaxis_title": "عدد الوعود",
-                "yaxis_title": "",
-                "height": 500,
-                "legend_title_text": "",
-                "margin": dict(t=78, b=62, l=170, r=70),
-                "xaxis": dict(tickformat=",.0f", automargin=True),
-                "uniformtext_minsize": 12,
-                "uniformtext_mode": "hide",
-            })
+            _apply_ops_chart_style(
+                fig, "القائمة والمكسورة حسب المحصّل",
+                height=430, xaxis_title="عدد الوعود",
+                margin=dict(t=70, b=70, l=170, r=55),
+                extra={"xaxis": dict(tickformat=",.0f", automargin=True)},
+            )
             fig.update_traces(
                 texttemplate="%{x:,.0f}",
                 textposition="outside",
-                textfont=dict(size=15, color=THEME["text"]),
+                textfont=dict(size=13, color=THEME["text"]),
                 cliponaxis=False,
                 customdata=agent_type[sales_col],
-                hovertemplate="<b>%{y}</b><br>%{fullData.name}: %{x:,.0f} وعد<extra></extra>",
+                hovertemplate="<b>%{y}</b><br>%{fullData.name}: %{x:,.0f}<extra></extra>",
             )
-            render_selectable_chart(fig, "promises_combined_by_agent", filter_key=PROMISES_AGENT_FILTER_KEY)
+            with st.container(border=True):
+                render_selectable_chart(fig, "promises_combined_by_agent", filter_key=PROMISES_AGENT_FILTER_KEY)
         with right:
             if net_col and net_col in df.columns:
                 amount_work = df.assign(_amount=pd.to_numeric(df[net_col], errors="coerce").fillna(0))
@@ -656,27 +675,22 @@ def render_combined_promises_dashboard(df, meta, company_label):
                     color_discrete_map={"الوعود القائمة": OPS_POSITIVE, "الوعود المكسورة": OPS_NEGATIVE},
                     template=PLOTLY_TEMPLATE,
                 )
-                fig.update_layout(**{
-                    **PLOTLY_LAYOUT,
-                    "title": "إجمالي المديونية حسب المحصّل",
-                    "xaxis_title": "إجمالي المديونية",
-                    "yaxis_title": "",
-                    "height": 500,
-                    "legend_title_text": "",
-                    "margin": dict(t=78, b=62, l=170, r=105),
-                    "xaxis": dict(tickformat=",.0f", separatethousands=True, automargin=True),
-                    "uniformtext_minsize": 11,
-                    "uniformtext_mode": "hide",
-                })
+                _apply_ops_chart_style(
+                    fig, "إجمالي المديونية حسب المحصّل",
+                    height=430, xaxis_title="إجمالي المديونية",
+                    margin=dict(t=70, b=70, l=170, r=70),
+                    extra={"xaxis": dict(tickformat=",.0f", separatethousands=True, automargin=True)},
+                )
                 fig.update_traces(
                     texttemplate="%{x:,.0f}",
                     textposition="outside",
-                    textfont=dict(size=14, color=THEME["text"]),
+                    textfont=dict(size=13, color=THEME["text"]),
                     cliponaxis=False,
                     customdata=agent_amount[sales_col],
                     hovertemplate="<b>%{y}</b><br>%{fullData.name}: %{x:,.0f} جنيه<extra></extra>",
                 )
-                render_selectable_chart(fig, "promises_combined_amount_by_agent", filter_key=PROMISES_AGENT_FILTER_KEY)
+                with st.container(border=True):
+                    render_selectable_chart(fig, "promises_combined_amount_by_agent", filter_key=PROMISES_AGENT_FILTER_KEY)
             else:
                 st.info("لا يوجد عمود صافي المديونية لعرض الرسم المالي.")
 
@@ -690,20 +704,19 @@ def render_combined_promises_dashboard(df, meta, company_label):
             color_discrete_map={"الوعود القائمة": OPS_POSITIVE, "الوعود المكسورة": OPS_NEGATIVE},
             template=PLOTLY_TEMPLATE,
         )
-        fig.update_layout(**{
-            **PLOTLY_LAYOUT,
-            "title": "توزيع الوعود القائمة والمكسورة",
-            "height": 420,
-            "legend_title_text": "",
-            "margin": dict(t=78, b=45, l=35, r=35),
-        })
+        _apply_ops_chart_style(
+            fig, "توزيع الوعود القائمة والمكسورة",
+            height=430,
+            margin=dict(t=70, b=55, l=40, r=40),
+        )
         fig.update_traces(
-            texttemplate="%{label}<br>%{value:,.0f} (%{percent:.1%})",
-            textfont=dict(size=16, color=THEME["text"]),
+            texttemplate="%{value:,.0f}<br>%{percent:.1%}",
+            textfont=dict(size=15, color=THEME["text"]),
             textinfo="text",
             hovertemplate="<b>%{label}</b><br>عدد الوعود: %{value:,.0f}<br>النسبة: %{percent:.1%}<extra></extra>",
         )
-        st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG, key="promises_combined_type_share")
+        with st.container(border=True):
+            st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG, key="promises_combined_type_share")
 
     if sales_col and sales_col in df.columns and "نوع الوعد" in df.columns:
         agent_promise_table = (

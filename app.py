@@ -1243,6 +1243,53 @@ PLOTLY_CONFIG = {
 }
 
 
+def _apply_ops_chart_style(
+    fig,
+    title,
+    *,
+    height=430,
+    xaxis_title="",
+    yaxis_title="",
+    show_legend=True,
+    margin=None,
+    extra=None,
+):
+    """تنسيق شارتات الإهمال/الجدولة/أخطاء الحالات بنفس أسلوب تويب التصنيف."""
+    layout = {
+        **PLOTLY_LAYOUT,
+        "title": {
+            "text": title,
+            "x": 0.5,
+            "xanchor": "center",
+            "font": {"size": 17, "color": THEME["text"]},
+        },
+        "height": height,
+        "xaxis_title": xaxis_title,
+        "yaxis_title": yaxis_title,
+        "margin": margin or dict(t=70, b=60, l=60, r=36),
+        "coloraxis_showscale": False,
+        "uniformtext_minsize": 11,
+        "uniformtext_mode": "hide",
+    }
+    if show_legend:
+        layout["legend"] = {
+            "orientation": "h",
+            "yanchor": "bottom",
+            "y": -0.28,
+            "x": 0.5,
+            "xanchor": "center",
+            "title_text": "",
+            "bgcolor": "rgba(0,0,0,0)",
+        }
+    else:
+        layout["showlegend"] = False
+    if extra:
+        layout.update(extra)
+    fig.update_layout(**layout)
+    fig.update_traces(marker_line_width=0)
+    return fig
+
+
 CLASSIFICATION_AGENT_FILTER_KEY = "classification_selected_agent"
 PROMISES_AGENT_FILTER_KEY = "promises_selected_agent"
 SCHEDULE_AGENT_FILTER_KEY = "schedule_selected_agent"
@@ -4260,22 +4307,18 @@ def _show_neglect_followup_results(df, meta=None):
                 },
                 template=PLOTLY_TEMPLATE,
             )
-            fig.update_layout(
-                **{
-                    **PLOTLY_LAYOUT,
-                    "title": "توزيع التغطية",
-                    "height": 420,
-                    "legend_title_text": "",
-                    "margin": dict(t=78, b=45, l=35, r=35),
-                }
+            _apply_ops_chart_style(
+                fig, "توزيع التغطية", height=430,
+                margin=dict(t=70, b=50, l=30, r=30),
             )
             fig.update_traces(
                 texttemplate="%{label}<br>%{value:,.0f} (%{percent:.1%})",
-                textfont=dict(size=15, color=THEME["text"]),
+                textfont=dict(size=14, color=THEME["text"]),
                 textinfo="text",
                 hovertemplate="<b>%{label}</b><br>العدد: %{value:,.0f}<br>النسبة: %{percent:.1%}<extra></extra>",
             )
-            st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG, key="neglect_followup_pie")
+            with st.container(border=True):
+                st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG, key="neglect_followup_pie")
         with right:
             if sales_col and sales_col in df.columns:
                 agent_type = (
@@ -4305,16 +4348,10 @@ def _show_neglect_followup_results(df, meta=None):
                     template=PLOTLY_TEMPLATE,
                     category_orders={sales_col: list(reversed(agent_order))},
                 )
-                fig.update_layout(
-                    **{
-                        **PLOTLY_LAYOUT,
-                        "title": "التغطية حسب المحصّل — اضغط للاختيار",
-                        "xaxis_title": "عدد الحالات",
-                        "yaxis_title": "",
-                        "height": 420,
-                        "legend_title_text": "",
-                        "margin": dict(t=78, b=50, l=160, r=40),
-                    }
+                _apply_ops_chart_style(
+                    fig, "التغطية حسب المحصّل — اضغط للاختيار",
+                    height=430, xaxis_title="عدد الحالات",
+                    margin=dict(t=70, b=70, l=160, r=50),
                 )
                 fig.update_traces(
                     texttemplate="%{x:,.0f}",
@@ -4323,11 +4360,12 @@ def _show_neglect_followup_results(df, meta=None):
                     customdata=agent_type[sales_col],
                     hovertemplate="<b>%{y}</b><br>%{fullData.name}: %{x:,.0f}<extra></extra>",
                 )
-                render_selectable_chart(
-                    fig,
-                    "neglect_followup_by_agent",
-                    filter_key=NEGLECT_FOLLOWUP_AGENT_FILTER_KEY,
-                )
+                with st.container(border=True):
+                    render_selectable_chart(
+                        fig,
+                        "neglect_followup_by_agent",
+                        filter_key=NEGLECT_FOLLOWUP_AGENT_FILTER_KEY,
+                    )
             else:
                 st.info("لا يوجد عمود محصّل لعرض التوزيع.")
 
@@ -4554,16 +4592,10 @@ def _show_neglect_results(df, meta):
                 color_continuous_scale=OPS_SCALE,
                 template=PLOTLY_TEMPLATE,
             )
-            fig.update_layout(
-                **{
-                    **PLOTLY_LAYOUT,
-                    "title": "أعلى المحصّلين — اضغط للاختيار",
-                    "height": 430,
-                    "yaxis_title": "",
-                    "xaxis_title": "عدد الحالات",
-                    "coloraxis_showscale": False,
-                    "margin": dict(t=78, b=50, l=160, r=40),
-                }
+            _apply_ops_chart_style(
+                fig, "أعلى المحصّلين — اضغط للاختيار",
+                height=430, xaxis_title="عدد الحالات", show_legend=False,
+                margin=dict(t=70, b=55, l=160, r=50),
             )
             fig.update_traces(
                 texttemplate="%{x:,.0f}",
@@ -4572,11 +4604,12 @@ def _show_neglect_results(df, meta):
                 customdata=agent_counts["المحصّل"],
                 hovertemplate="<b>%{y}</b><br>عدد الحالات: %{x:,}<extra></extra>",
             )
-            render_selectable_chart(
-                fig,
-                "neglect_by_agent",
-                filter_key=NEGLECT_AGENT_FILTER_KEY,
-            )
+            with st.container(border=True):
+                render_selectable_chart(
+                    fig,
+                    "neglect_by_agent",
+                    filter_key=NEGLECT_AGENT_FILTER_KEY,
+                )
         with right:
             sub_col = meta.get("substate_col")
             if sub_col and sub_col in df.columns:
@@ -4599,16 +4632,12 @@ def _show_neglect_results(df, meta):
                     textinfo="text",
                     hovertemplate="<b>%{label}</b><br>العدد: %{value:,.0f}<br>النسبة: %{percent:.1%}<extra></extra>",
                 )
-                fig.update_layout(
-                    **{
-                        **PLOTLY_LAYOUT,
-                        "title": "توزيع حالات Sub State",
-                        "height": 430,
-                        "legend_title_text": "",
-                        "margin": dict(t=78, b=45, l=35, r=35),
-                    }
+                _apply_ops_chart_style(
+                    fig, "توزيع حالات Sub State", height=430,
+                    margin=dict(t=70, b=50, l=30, r=30),
                 )
-                st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG, key="neglect_by_state")
+                with st.container(border=True):
+                    st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG, key="neglect_by_state")
             else:
                 st.info("لا يوجد عمود Sub State لعرض التوزيع.")
 
@@ -5147,27 +5176,22 @@ def _show_schedule_stalled_results(df, meta):
                     SCHEDULE_STATUS_COL: ["جدولة منتظمة", "جدولة متعثرة", "بدون سداد"],
                 },
             )
-            fig.update_layout(**{
-                **PLOTLY_LAYOUT,
-                "title": "حالات الجدولة حسب المحصّل",
-                "xaxis_title": "العدد",
-                "yaxis_title": "",
-                "height": 500,
-                "legend_title_text": "",
-                "margin": dict(t=78, b=62, l=170, r=70),
-                "xaxis": dict(tickformat=",.0f", automargin=True),
-                "uniformtext_minsize": 12,
-                "uniformtext_mode": "hide",
-            })
+            _apply_ops_chart_style(
+                fig, "حالات الجدولة حسب المحصّل",
+                height=430, xaxis_title="العدد",
+                margin=dict(t=70, b=70, l=170, r=55),
+                extra={"xaxis": dict(tickformat=",.0f", automargin=True)},
+            )
             fig.update_traces(
                 texttemplate="%{x:,.0f}",
                 textposition="outside",
-                textfont=dict(size=14, color=THEME["text"]),
+                textfont=dict(size=13, color=THEME["text"]),
                 cliponaxis=False,
                 customdata=agent_status[sales_col],
                 hovertemplate="<b>%{y}</b><br>%{fullData.name}: %{x:,.0f}<extra></extra>",
             )
-            render_selectable_chart(fig, "schedule_by_agent", filter_key=SCHEDULE_AGENT_FILTER_KEY)
+            with st.container(border=True):
+                render_selectable_chart(fig, "schedule_by_agent", filter_key=SCHEDULE_AGENT_FILTER_KEY)
 
         with right:
             pie_counts = (
@@ -5187,21 +5211,18 @@ def _show_schedule_stalled_results(df, meta):
                 color_discrete_map=SCHEDULE_STATUS_COLORS,
                 template=PLOTLY_TEMPLATE,
             )
-            pie.update_layout(**{
-                **PLOTLY_LAYOUT,
-                "title": "توزيع حالات الجدولة",
-                "height": 500,
-                "legend_title_text": "",
-                "margin": dict(t=78, b=45, l=35, r=35),
-            })
+            _apply_ops_chart_style(
+                pie, "توزيع حالات الجدولة", height=430,
+                margin=dict(t=70, b=50, l=30, r=30),
+            )
             pie.update_traces(
                 texttemplate="%{label}<br>%{value:,.0f} (%{percent:.1%})",
-                textfont=dict(size=15, color=THEME["text"]),
+                textfont=dict(size=14, color=THEME["text"]),
                 textinfo="text",
                 hovertemplate="<b>%{label}</b><br>العدد: %{value:,.0f}<br>النسبة: %{percent:.1%}<extra></extra>",
-                marker=dict(line=dict(color=THEME["surface"], width=2)),
             )
-            st.plotly_chart(pie, use_container_width=True, config=PLOTLY_CONFIG, key="schedule_status_pie")
+            with st.container(border=True):
+                st.plotly_chart(pie, use_container_width=True, config=PLOTLY_CONFIG, key="schedule_status_pie")
 
         stacked = (
             df.groupby([sales_col, SCHEDULE_STATUS_COL])
@@ -5232,18 +5253,14 @@ def _show_schedule_stalled_results(df, meta):
                     hovertemplate=f"<b>%{{y}}</b><br>{status_name}: %{{x:,}}<extra></extra>",
                 )
             )
-        stack_fig.update_layout(**{
-            **PLOTLY_LAYOUT,
-            "title": "توزيع نسبي مكدّس حسب المحصّل",
-            "barmode": "stack",
-            "xaxis_title": "العدد",
-            "yaxis_title": "",
-            "height": 480,
-            "legend_title_text": "",
-            "margin": dict(t=78, b=50, l=170, r=40),
-            "xaxis": dict(tickformat=",.0f", automargin=True),
-        })
-        render_selectable_chart(stack_fig, "schedule_stacked_by_agent", filter_key=SCHEDULE_AGENT_FILTER_KEY)
+        _apply_ops_chart_style(
+            stack_fig, "توزيع مكدّس حسب المحصّل",
+            height=430, xaxis_title="العدد",
+            margin=dict(t=70, b=70, l=170, r=50),
+            extra={"barmode": "stack", "xaxis": dict(tickformat=",.0f", automargin=True)},
+        )
+        with st.container(border=True):
+            render_selectable_chart(stack_fig, "schedule_stacked_by_agent", filter_key=SCHEDULE_AGENT_FILTER_KEY)
 
     # ملخص حسب المحصّل
     if sales_col and sales_col in df.columns:
@@ -5583,7 +5600,7 @@ def _run_case_errors_pipeline(uploaded):
 
 
 CASE_ERRORS_AGENT_FILTER_KEY = "case_errors_selected_agent"
-CASE_ERROR_PALETTE = ["#2F6F73", "#5A8A8D", "#8FA8AB", "#A6B4B9", "#C5D0D2"]
+CASE_ERROR_PALETTE = list(OPS_SCALE)  # نفس 3 درجات التويبات التشغيلية
 CASE_ERROR_RULE_COLORS = {
     "Payment صفر مع حالة سداد": "#2F6F73",
     "Payment أكبر من صفر بدون حالة سداد": "#5A8A8D",
@@ -5718,18 +5735,14 @@ def _show_case_errors_results(errors_df, meta):
                 orientation="h",
                 text="عدد الأخطاء",
                 color="عدد الأخطاء",
-                color_continuous_scale=[CASE_ERROR_PALETTE[2], CASE_ERROR_PALETTE[0]],
+                color_continuous_scale=OPS_SCALE,
                 template=PLOTLY_TEMPLATE,
             )
-            fig.update_layout(**{
-                **PLOTLY_LAYOUT,
-                "title": "عدد الأخطاء حسب المحصّل",
-                "xaxis_title": "عدد الأخطاء",
-                "yaxis_title": "",
-                "height": 480,
-                "coloraxis_showscale": False,
-                "margin": dict(t=78, b=50, l=170, r=50),
-            })
+            _apply_ops_chart_style(
+                fig, "عدد الأخطاء حسب المحصّل",
+                height=430, xaxis_title="عدد الأخطاء", show_legend=False,
+                margin=dict(t=70, b=55, l=170, r=50),
+            )
             fig.update_traces(
                 texttemplate="%{x:,}",
                 textposition="outside",
@@ -5737,7 +5750,8 @@ def _show_case_errors_results(errors_df, meta):
                 customdata=agent_counts[sales_col],
                 hovertemplate="<b>%{y}</b><br>الأخطاء: %{x:,}<extra></extra>",
             )
-            render_selectable_chart(fig, "case_errors_by_agent", filter_key=CASE_ERRORS_AGENT_FILTER_KEY)
+            with st.container(border=True):
+                render_selectable_chart(fig, "case_errors_by_agent", filter_key=CASE_ERRORS_AGENT_FILTER_KEY)
 
         with right:
             # إجمالي المديونية (Net Amount) للأخطاء حسب المحصّل
@@ -5761,18 +5775,14 @@ def _show_case_errors_results(errors_df, meta):
                     orientation="h",
                     text="إجمالي Net Amount",
                     color="إجمالي Net Amount",
-                    color_continuous_scale=[CASE_ERROR_PALETTE[2], CASE_ERROR_PALETTE[0]],
+                    color_continuous_scale=OPS_SCALE,
                     template=PLOTLY_TEMPLATE,
                 )
-                net_fig.update_layout(**{
-                    **PLOTLY_LAYOUT,
-                    "title": "إجمالي المديونية في الأخطاء حسب المحصّل",
-                    "xaxis_title": "إجمالي Net Amount",
-                    "yaxis_title": "",
-                    "height": 480,
-                    "coloraxis_showscale": False,
-                    "margin": dict(t=78, b=50, l=170, r=70),
-                })
+                _apply_ops_chart_style(
+                    net_fig, "إجمالي Net Amount للأخطاء حسب المحصّل",
+                    height=430, xaxis_title="Net Amount", show_legend=False,
+                    margin=dict(t=70, b=55, l=170, r=50),
+                )
                 net_fig.update_traces(
                     texttemplate="%{x:,.0f}",
                     textposition="outside",
@@ -5780,7 +5790,8 @@ def _show_case_errors_results(errors_df, meta):
                     customdata=agent_net[sales_col],
                     hovertemplate="<b>%{y}</b><br>Net Amount: %{x:,.0f}<extra></extra>",
                 )
-                render_selectable_chart(net_fig, "case_errors_net_by_agent", filter_key=CASE_ERRORS_AGENT_FILTER_KEY)
+                with st.container(border=True):
+                    render_selectable_chart(net_fig, "case_errors_net_by_agent", filter_key=CASE_ERRORS_AGENT_FILTER_KEY)
             else:
                 st.info("لا يوجد عمود Net Amount لعرض رسم المديونية.")
 
@@ -5799,20 +5810,17 @@ def _show_case_errors_results(errors_df, meta):
                 orientation="h",
                 text="العدد",
                 color="العدد",
-                color_continuous_scale=[CASE_ERROR_PALETTE[2], CASE_ERROR_PALETTE[1]],
+                color_continuous_scale=OPS_SCALE,
                 template=PLOTLY_TEMPLATE,
             )
-            state_fig.update_layout(**{
-                **PLOTLY_LAYOUT,
-                "title": "الأخطاء حسب Sub State",
-                "xaxis_title": "العدد",
-                "yaxis_title": "",
-                "height": 420,
-                "coloraxis_showscale": False,
-                "margin": dict(t=70, b=40, l=180, r=40),
-            })
+            _apply_ops_chart_style(
+                state_fig, "الأخطاء حسب Sub State",
+                height=430, xaxis_title="العدد", show_legend=False,
+                margin=dict(t=70, b=55, l=180, r=50),
+            )
             state_fig.update_traces(texttemplate="%{x:,}", textposition="outside", cliponaxis=False)
-            st.plotly_chart(state_fig, use_container_width=True, config=PLOTLY_CONFIG, key="case_errors_by_state")
+            with st.container(border=True):
+                st.plotly_chart(state_fig, use_container_width=True, config=PLOTLY_CONFIG, key="case_errors_by_state")
 
     display_cols = [
         c for c in [

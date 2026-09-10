@@ -450,11 +450,12 @@ def render_promises_dashboard(df, summary, mode_label):
     avg_amount = total_amount / total if total else 0
 
     st.subheader(f"📊 ملخص الوعود — {mode_label}")
-    k1, k2, k3, k4 = st.columns(4)
-    k1.metric("🤝 إجمالي الوعود", f"{total:,}")
-    k2.metric("👥 عدد المحصّلين", f"{agent_count:,}")
-    k3.metric("💰 إجمالي المديونية", f"{total_amount:,.0f}" if net_col else "—")
-    k4.metric("📈 متوسط المديونية", f"{avg_amount:,.0f}" if net_col else "—")
+    _render_standard_kpi_cards([
+        ("🤝<br>إجمالي الوعود", total, {"valueformat": ",d"}, THEME["text"]),
+        ("👥<br>عدد المحصّلين", agent_count, {"valueformat": ",d"}, COLOR_ACCENT),
+        ("💰<br>إجمالي المديونية", total_amount if net_col else 0, {"valueformat": ",.0f"}, COLOR_WARN),
+        ("📈<br>متوسط المديونية", avg_amount if net_col else 0, {"valueformat": ",.0f"}, CLASSIFICATION_PRIMARY),
+    ], key=f"promises_kpi_{mode_label}")
 
     if total and sales_col and not agent_summary.empty:
         st.markdown("#### 📈 تحليلات الوعود التفاعلية")
@@ -467,7 +468,7 @@ def render_promises_dashboard(df, summary, mode_label):
                 orientation="h",
                 text="عدد الوعود",
                 color="عدد الوعود",
-                color_continuous_scale=[THEME["surface_2"], COLOR_ACCENT],
+                color_continuous_scale=CLASSIFICATION_SCALE,
                 template=PLOTLY_TEMPLATE,
             )
             count_fig.update_layout(**PLOTLY_LAYOUT, title="عدد الوعود حسب المحصّل", xaxis_title="عدد الوعود", yaxis_title="", coloraxis_showscale=False, height=430)
@@ -482,7 +483,7 @@ def render_promises_dashboard(df, summary, mode_label):
                     orientation="h",
                     text="إجمالي المديونية",
                     color="إجمالي المديونية",
-                    color_continuous_scale=[COLOR_ACCENT, COLOR_WARN],
+                    color_continuous_scale=CLASSIFICATION_SCALE,
                     template=PLOTLY_TEMPLATE,
                 )
                 amount_fig.update_layout(**PLOTLY_LAYOUT, title="إجمالي المديونية حسب المحصّل", xaxis_title="إجمالي المديونية", yaxis_title="", coloraxis_showscale=False, height=430)
@@ -542,47 +543,13 @@ def _combine_promises_cached_results(company_label, result_keys=None):
 
 
 def render_promises_kpi_dashboard(total, standing_count, broken_count, agent_count, total_amount):
-    cards = [
+    _render_standard_kpi_cards([
         ("🤝<br>إجمالي الوعود", total, {"valueformat": ",d"}, THEME["text"]),
-        ("📗<br>الوعود القائمة", standing_count, {"valueformat": ",d"}, COLOR_SUCCESS),
+        ("📗<br>الوعود القائمة", standing_count, {"valueformat": ",d"}, CLASSIFICATION_HIGHLIGHT),
         ("📕<br>الوعود المكسورة", broken_count, {"valueformat": ",d"}, COLOR_FAIL),
-        ("👥<br>عدد المحصّلين", agent_count, {"valueformat": ",d"}, THEME["text"]),
+        ("👥<br>عدد المحصّلين", agent_count, {"valueformat": ",d"}, COLOR_ACCENT),
         ("💰<br>إجمالي المديونية", total_amount, {"valueformat": ",.0f"}, COLOR_WARN),
-    ]
-    figure = go.Figure()
-    count = len(cards)
-    gap = 0.018
-    width = (1 - gap * (count + 1)) / count
-    for index, (label, value, number_format, number_color) in enumerate(cards):
-        x0 = gap + index * (width + gap)
-        x1 = x0 + width
-        figure.add_shape(
-            type="path",
-            xref="paper",
-            yref="paper",
-            path=_rounded_rect_path(x0, x1, 0.06, 0.94, radius=0.022),
-            line={"color": THEME["border"], "width": 1},
-            fillcolor=THEME["surface"],
-            layer="below",
-        )
-        figure.add_trace(
-            go.Indicator(
-                mode="number",
-                value=float(value or 0),
-                domain={"x": [x0 + 0.012, x1 - 0.012], "y": [0.12, 0.88]},
-                title={"text": label, "font": {"size": 18, "color": THEME["text_dim"]}, "align": "center"},
-                number={"font": {"size": 32, "color": number_color}, **number_format},
-            )
-        )
-    figure.update_layout(
-        height=200,
-        template=PLOTLY_TEMPLATE,
-        paper_bgcolor="rgba(0,0,0,0)",
-        plot_bgcolor="rgba(0,0,0,0)",
-        font={"family": "Tajawal, sans-serif", "color": THEME["text"]},
-        margin={"t": 8, "b": 8, "l": 8, "r": 8},
-    )
-    st.plotly_chart(figure, use_container_width=True, config=PLOTLY_CONFIG, key="promises_kpi_dashboard")
+    ], key="promises_combined_kpi")
 
 
 def render_combined_promises_dashboard(df, meta, company_label):
@@ -616,7 +583,7 @@ def render_combined_promises_dashboard(df, meta, company_label):
                 barmode="group",
                 orientation="h",
                 text="عدد الوعود",
-                color_discrete_map={"الوعود القائمة": COLOR_SUCCESS, "الوعود المكسورة": COLOR_FAIL},
+                color_discrete_map={"الوعود القائمة": CLASSIFICATION_HIGHLIGHT, "الوعود المكسورة": COLOR_FAIL},
                 template=PLOTLY_TEMPLATE,
             )
             fig.update_layout(**{
@@ -653,7 +620,7 @@ def render_combined_promises_dashboard(df, meta, company_label):
                     barmode="group",
                     orientation="h",
                     text="إجمالي المديونية",
-                    color_discrete_map={"الوعود القائمة": COLOR_SUCCESS, "الوعود المكسورة": COLOR_FAIL},
+                    color_discrete_map={"الوعود القائمة": CLASSIFICATION_HIGHLIGHT, "الوعود المكسورة": COLOR_FAIL},
                     template=PLOTLY_TEMPLATE,
                 )
                 fig.update_layout(**{
@@ -687,7 +654,7 @@ def render_combined_promises_dashboard(df, meta, company_label):
             names="نوع الوعد",
             hole=0.55,
             color="نوع الوعد",
-            color_discrete_map={"الوعود القائمة": COLOR_SUCCESS, "الوعود المكسورة": COLOR_FAIL},
+            color_discrete_map={"الوعود القائمة": CLASSIFICATION_HIGHLIGHT, "الوعود المكسورة": COLOR_FAIL},
             template=PLOTLY_TEMPLATE,
         )
         fig.update_layout(**{
@@ -1172,27 +1139,39 @@ CLASSIFICATION_PRIMARY = COLOR_ACCENT
 CLASSIFICATION_SECONDARY = THEMES[THEME_NAME]["accent_strong"]
 CLASSIFICATION_HIGHLIGHT = COLOR_SUCCESS
 CLASSIFICATION_SCALE = [CLASSIFICATION_SECONDARY, CLASSIFICATION_PRIMARY, CLASSIFICATION_HIGHLIGHT]
-# Palette النشاط: لونان أساسيان + درجة ثالثة (تيل + رمادي مزرق) بدرجاتهم فقط.
-ACTIVITY_PRIMARY = "#2F6F73"      # تيل غامق
-ACTIVITY_SECONDARY = "#6A9A9D"    # تيل متوسط
-ACTIVITY_MUTED = "#A8B8BC"        # رمادي مزرق فاتح
+# Palette موحّدة مع تويب التصنيف (نفس درجات الهوية البصرية)
+ACTIVITY_PRIMARY = CLASSIFICATION_PRIMARY
+ACTIVITY_SECONDARY = CLASSIFICATION_SECONDARY
+ACTIVITY_MUTED = THEME["text_muted"]
 ACTIVITY_AGENT_PALETTE = [
-    ACTIVITY_PRIMARY, "#3D7E82", ACTIVITY_SECONDARY, "#7EABAE",
-    ACTIVITY_MUTED, "#B8C5C8", "#4A888C", "#8FB4B7", "#C5D0D3",
+    CLASSIFICATION_PRIMARY,
+    CLASSIFICATION_SECONDARY,
+    CLASSIFICATION_HIGHLIGHT,
+    COLOR_WARN,
+    THEME["text_dim"],
+    COLOR_ACCENT,
+    COLOR_SUCCESS,
+    THEME["text_muted"],
+    COLOR_FAIL,
 ]
-ACTIVITY_STATE_PALETTE = [ACTIVITY_PRIMARY, ACTIVITY_SECONDARY, ACTIVITY_MUTED, "#C5D0D3"]
-ACTIVITY_OUTCOME_COLORS = {"ناجحة": ACTIVITY_PRIMARY, "غير ناجحة": ACTIVITY_MUTED}
+ACTIVITY_STATE_PALETTE = [
+    CLASSIFICATION_PRIMARY,
+    CLASSIFICATION_SECONDARY,
+    CLASSIFICATION_HIGHLIGHT,
+    THEME["text_muted"],
+]
+ACTIVITY_OUTCOME_COLORS = {"ناجحة": CLASSIFICATION_HIGHLIGHT, "غير ناجحة": COLOR_FAIL}
 ACTIVITY_TIME_CHART_HEIGHT = 460  # ارتفاع موحّد لشارت اليومي والساعي
 ACTIVITY_PAIR_CHART_HEIGHT = 420  # ارتفاع موحّد لأزواج الشارتات الأخرى
 
-# لوحة الجدولة: 3 درجات متقاربة من نفس العائلة اللونية (تيل هادئ)
-SCHEDULE_PALETTE = ["#2F6F73", "#5A8A8D", "#8FA8AB"]
+# لوحة الجدولة: نفس هوية التصنيف
+SCHEDULE_PALETTE = list(CLASSIFICATION_SCALE)
 SCHEDULE_STATUS_COLORS = {
-    "جدولة منتظمة": SCHEDULE_PALETTE[0],   # أغمق
-    "جدولة متعثرة": SCHEDULE_PALETTE[1],   # متوسط
-    "بدون سداد": SCHEDULE_PALETTE[2],      # أفتح
+    "جدولة منتظمة": CLASSIFICATION_HIGHLIGHT,
+    "جدولة متعثرة": COLOR_WARN,
+    "بدون سداد": THEME["text_muted"],
 }
-SCHEDULE_AGENT_SCALE = list(SCHEDULE_PALETTE)
+SCHEDULE_AGENT_SCALE = list(CLASSIFICATION_SCALE)
 
 
 def _activity_agent_color_map(values):
@@ -1208,6 +1187,7 @@ PLOTLY_LAYOUT = dict(
     font_family="Tajawal, sans-serif",
     font_size=13,
     margin=dict(t=60, b=50, l=50, r=20),
+    title=dict(x=0.5, xanchor="center", font=dict(size=18, color=THEME["text"])),
     title_font_size=18,
     legend_font_size=12,
     hovermode="closest",
@@ -1216,6 +1196,14 @@ PLOTLY_LAYOUT = dict(
         bordercolor=THEME["border"],
         font=dict(family="Tajawal, sans-serif", size=13, color=THEME["text"]),
     ),
+    colorway=[
+        CLASSIFICATION_PRIMARY,
+        CLASSIFICATION_SECONDARY,
+        CLASSIFICATION_HIGHLIGHT,
+        COLOR_WARN,
+        COLOR_FAIL,
+        THEME["text_muted"],
+    ],
 )
 PLOTLY_CONFIG = {
     "displayModeBar": True,
@@ -1695,37 +1683,13 @@ def _activity_layout(**overrides):
 
 
 def render_activity_kpi_cards(total, success, agent_count, success_rate, wasted_minutes):
-    cards = [
+    _render_standard_kpi_cards([
         ("👥<br>عدد المحصّلين", agent_count, {"valueformat": ",d"}, THEME["text"]),
         ("📞<br>إجمالي المكالمات", total, {"valueformat": ",d"}, THEME["text"]),
-        ("✅<br>المكالمات الناجحة", success, {"valueformat": ",d"}, ACTIVITY_PRIMARY),
-        ("📈<br>نسبة النجاح", success_rate, {"valueformat": ".1f", "suffix": "%"}, ACTIVITY_SECONDARY),
-        ("⏱️<br>إجمالي الوقت المهدر", wasted_minutes, {"valueformat": ".1f", "suffix": " دقيقة"}, ACTIVITY_MUTED),
-    ]
-    figure = go.Figure()
-    gap = 0.014
-    width = (1 - gap * (len(cards) + 1)) / len(cards)
-    for index, (label, value, number_format, color) in enumerate(cards):
-        x0 = gap + index * (width + gap)
-        x1 = x0 + width
-        figure.add_shape(
-            type="path",
-            path=_rounded_rect_path(x0, x1, 0.04, 0.96, radius=0.022),
-            xref="paper", yref="paper", layer="below",
-            fillcolor=THEME["surface"], line={"color": THEME["border"], "width": 1},
-        )
-        figure.add_trace(go.Indicator(
-            mode="number", value=float(value or 0),
-            domain={"x": [x0 + 0.008, x1 - 0.008], "y": [0.13, 0.87]},
-            title={"text": label, "font": {"size": 16, "color": THEME["text_dim"]}, "align": "center"},
-            number={"font": {"size": 28, "color": color}, **number_format},
-        ))
-    figure.update_layout(
-        height=205, template=PLOTLY_TEMPLATE, paper_bgcolor="rgba(0,0,0,0)",
-        plot_bgcolor="rgba(0,0,0,0)", font={"family": "Tajawal, sans-serif", "color": THEME["text"]},
-        margin={"t": 8, "b": 8, "l": 8, "r": 8},
-    )
-    st.plotly_chart(figure, use_container_width=True, config=PLOTLY_CONFIG, key="activity_kpi_cards")
+        ("✅<br>المكالمات الناجحة", success, {"valueformat": ",d"}, CLASSIFICATION_HIGHLIGHT),
+        ("📈<br>نسبة النجاح", success_rate, {"valueformat": ".1f", "suffix": "%"}, CLASSIFICATION_PRIMARY),
+        ("⏱️<br>إجمالي الوقت المهدر", wasted_minutes, {"valueformat": ".1f", "suffix": " دقيقة"}, COLOR_WARN),
+    ], key="activity_kpi_dashboard")
 
 
 def _render_agent_legend_chips(agent_color_map):
@@ -3691,19 +3655,10 @@ def _rounded_rect_path(x0, x1, y0, y1, radius=0.018):
     )
 
 
-def render_kpi_dashboard(total, success, agent_count, success_rate, avg_wasted=None):
-    """لوحة KPI مركزية مبنية بـ Plotly لضمان محاذاة موحدة داخل كل كارت."""
-    cards = [
-        ("📞<br>إجمالي المكالمات", total, {"valueformat": ",d"}, THEME["text"]),
-        ("✅<br>المكالمات الناجحة", success, {"valueformat": ",d"}, COLOR_SUCCESS),
-        ("👥<br>عدد المحصّلين", agent_count, {"valueformat": ",d"}, THEME["text"]),
-        ("📈<br>نسبة النجاح", success_rate, {"valueformat": ".1f", "suffix": "%"}, COLOR_ACCENT),
-    ]
-    if avg_wasted is not None:
-        cards.append(("⏱️<br>متوسط الوقت المهدر", avg_wasted, {"valueformat": ".1f", "suffix": " دقيقة"}, COLOR_WARN))
-
+def _render_standard_kpi_cards(cards, height=200, key=None):
+    """كروت KPI موحّدة بنفس تصميم تويب التصنيف في كل التبويبات."""
     figure = go.Figure()
-    count = len(cards)
+    count = max(len(cards), 1)
     gap = 0.018
     width = (1 - gap * (count + 1)) / count
     for index, (label, value, number_format, number_color) in enumerate(cards):
@@ -3721,21 +3676,35 @@ def render_kpi_dashboard(total, success, agent_count, success_rate, avg_wasted=N
         figure.add_trace(
             go.Indicator(
                 mode="number",
-                value=value,
+                value=float(value or 0),
                 domain={"x": [x0 + 0.012, x1 - 0.012], "y": [0.12, 0.88]},
                 title={"text": label, "font": {"size": 18, "color": THEME["text_dim"]}, "align": "center"},
                 number={"font": {"size": 32, "color": number_color}, **number_format},
             )
         )
     figure.update_layout(
-        height=200,
+        height=height,
         template=PLOTLY_TEMPLATE,
         paper_bgcolor="rgba(0,0,0,0)",
         plot_bgcolor="rgba(0,0,0,0)",
         font={"family": "Tajawal, sans-serif", "color": THEME["text"]},
         margin={"t": 8, "b": 8, "l": 8, "r": 8},
     )
-    st.plotly_chart(figure, use_container_width=True, config=PLOTLY_CONFIG)
+    st.plotly_chart(figure, use_container_width=True, config=PLOTLY_CONFIG, key=key)
+
+
+def render_kpi_dashboard(total, success, agent_count, success_rate, avg_wasted=None):
+    """لوحة KPI مركزية بنفس تصميم تويب التصنيف."""
+    cards = [
+        ("📞<br>إجمالي المكالمات", total, {"valueformat": ",d"}, THEME["text"]),
+        ("✅<br>المكالمات الناجحة", success, {"valueformat": ",d"}, COLOR_SUCCESS),
+        ("👥<br>عدد المحصّلين", agent_count, {"valueformat": ",d"}, THEME["text"]),
+        ("📈<br>نسبة النجاح", success_rate, {"valueformat": ".1f", "suffix": "%"}, COLOR_ACCENT),
+    ]
+    if avg_wasted is not None:
+        cards.append(("⏱️<br>متوسط الوقت المهدر", avg_wasted, {"valueformat": ".1f", "suffix": " دقيقة"}, COLOR_WARN))
+    _render_standard_kpi_cards(cards, height=200, key="classification_kpi_dashboard")
+
 
 
 def render_period_charts(df, sales_col, time_col, period_title):
@@ -4541,7 +4510,7 @@ def _show_neglect_results(df, meta):
                 orientation="h",
                 text="عدد الحالات",
                 color="عدد الحالات",
-                color_continuous_scale=[THEME["surface_2"], COLOR_WARN],
+                color_continuous_scale=CLASSIFICATION_SCALE,
                 template=PLOTLY_TEMPLATE,
             )
             fig.update_layout(
@@ -5013,7 +4982,7 @@ def _run_schedule_stalled_pipeline(portfolio_file, payments_file):
 
 
 def render_schedule_kpi_dashboard(total, regular, stalled, no_pay, agent_count=None):
-    """كروت KPI للجدولة بنفس أسلوب كروت التصنيف (Plotly Indicators + زوايا دائرية)."""
+    """كروت KPI للجدولة بنفس تصميم تويب التصنيف."""
     cards = [
         ("📋<br>إجمالي الجدولة", total, {"valueformat": ",d"}, THEME["text"]),
         ("📗<br>جدولة منتظمة", regular, {"valueformat": ",d"}, SCHEDULE_STATUS_COLORS["جدولة منتظمة"]),
@@ -5021,42 +4990,8 @@ def render_schedule_kpi_dashboard(total, regular, stalled, no_pay, agent_count=N
         ("⚪<br>بدون سداد", no_pay, {"valueformat": ",d"}, SCHEDULE_STATUS_COLORS["بدون سداد"]),
     ]
     if agent_count is not None:
-        cards.insert(1, ("👥<br>عدد المحصّلين", agent_count, {"valueformat": ",d"}, THEME["text"]))
-
-    figure = go.Figure()
-    count = len(cards)
-    gap = 0.018
-    width = (1 - gap * (count + 1)) / count
-    for index, (label, value, number_format, number_color) in enumerate(cards):
-        x0 = gap + index * (width + gap)
-        x1 = x0 + width
-        figure.add_shape(
-            type="path",
-            xref="paper",
-            yref="paper",
-            path=_rounded_rect_path(x0, x1, 0.06, 0.94, radius=0.022),
-            line={"color": THEME["border"], "width": 1},
-            fillcolor=THEME["surface"],
-            layer="below",
-        )
-        figure.add_trace(
-            go.Indicator(
-                mode="number",
-                value=float(value or 0),
-                domain={"x": [x0 + 0.012, x1 - 0.012], "y": [0.12, 0.88]},
-                title={"text": label, "font": {"size": 17, "color": THEME["text_dim"]}, "align": "center"},
-                number={"font": {"size": 30, "color": number_color}, **number_format},
-            )
-        )
-    figure.update_layout(
-        height=200,
-        template=PLOTLY_TEMPLATE,
-        paper_bgcolor="rgba(0,0,0,0)",
-        plot_bgcolor="rgba(0,0,0,0)",
-        font={"family": "Tajawal, sans-serif", "color": THEME["text"]},
-        margin={"t": 8, "b": 8, "l": 8, "r": 8},
-    )
-    st.plotly_chart(figure, use_container_width=True, config=PLOTLY_CONFIG, key="schedule_kpi_dashboard")
+        cards.insert(1, ("👥<br>عدد المحصّلين", agent_count, {"valueformat": ",d"}, COLOR_ACCENT))
+    _render_standard_kpi_cards(cards, height=200, key="schedule_kpi_dashboard")
 
 
 def _show_schedule_stalled_results(df, meta):

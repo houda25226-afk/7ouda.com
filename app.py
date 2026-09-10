@@ -1685,6 +1685,8 @@ def _build_activity_summary(df, class_col, sales_col, time_col, break_start=None
         )
     if WASTED_TIME_COL in work.columns:
         work[WASTED_TIME_COL] = pd.to_numeric(work[WASTED_TIME_COL], errors="coerce").fillna(0)
+        # المكالمات الناجحة مش بتتحسب ضمن الوقت المهدر
+        work.loc[work["_success_bool"].astype(bool), WASTED_TIME_COL] = 0.0
 
     agent = work.groupby("_agent_display", dropna=False).size().rename("إجمالي المكالمات").to_frame()
     agent["المكالمات الناجحة"] = work[work["_success_bool"]].groupby("_agent_display").size()
@@ -2352,6 +2354,11 @@ def build_dashboard_html(df, class_col, sales_col, time_col, source_name="", fil
         return None
 
     work["_unreachable_state"] = work.apply(_resolve_unreachable_export, axis=1)
+
+    # استبعاد الوقت المهدر للمكالمات الناجحة من صفحة HTML أيضًا
+    if WASTED_TIME_COL in work.columns:
+        work[WASTED_TIME_COL] = pd.to_numeric(work[WASTED_TIME_COL], errors="coerce").fillna(0)
+        work.loc[work["_success_bool"].astype(bool), WASTED_TIME_COL] = 0.0
 
     total = len(work)
     success = int(work["_success_bool"].sum())

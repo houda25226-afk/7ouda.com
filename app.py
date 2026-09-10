@@ -4615,26 +4615,39 @@ def _show_neglect_results(df, meta):
             if sub_col and sub_col in df.columns:
                 state_counts = (
                     df[sub_col].astype(str).str.strip().value_counts()
-                    .head(10).reset_index()
+                    .head(12)
+                    .sort_values(ascending=True)
+                    .reset_index()
                 )
                 state_counts.columns = ["الحالة", "العدد"]
-                fig = px.pie(
+                total_states = max(int(state_counts["العدد"].sum()), 1)
+                state_counts["النسبة"] = (state_counts["العدد"] / total_states * 100).round(1)
+                # شارت أفقي أوضح من الدائرة لما الحالات كتير والأسماء طويلة
+                fig = px.bar(
                     state_counts,
-                    values="العدد",
-                    names="الحالة",
-                    hole=0.55,
-                    color_discrete_sequence=OPS_SCALE,
+                    x="العدد",
+                    y="الحالة",
+                    orientation="h",
+                    text="العدد",
+                    color="العدد",
+                    color_continuous_scale=OPS_SCALE,
                     template=PLOTLY_TEMPLATE,
                 )
-                fig.update_traces(
-                    texttemplate="%{label}<br>%{value:,.0f} (%{percent:.1%})",
-                    textfont=dict(size=13, color=THEME["text"]),
-                    textinfo="text",
-                    hovertemplate="<b>%{label}</b><br>العدد: %{value:,.0f}<br>النسبة: %{percent:.1%}<extra></extra>",
-                )
                 _apply_ops_chart_style(
-                    fig, "توزيع حالات Sub State", height=430,
-                    margin=dict(t=70, b=50, l=30, r=30),
+                    fig,
+                    "توزيع حالات Sub State",
+                    height=max(430, 36 * len(state_counts) + 120),
+                    xaxis_title="عدد الحالات",
+                    show_legend=False,
+                    margin=dict(t=70, b=55, l=180, r=70),
+                )
+                fig.update_traces(
+                    texttemplate="%{x:,.0f}  (%{customdata:.1f}%)",
+                    textposition="outside",
+                    cliponaxis=False,
+                    customdata=state_counts["النسبة"],
+                    hovertemplate="<b>%{y}</b><br>العدد: %{x:,.0f}<br>النسبة: %{customdata:.1f}%<extra></extra>",
+                    marker_line_width=0,
                 )
                 with st.container(border=True):
                     st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG, key="neglect_by_state")

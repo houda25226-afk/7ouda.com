@@ -101,6 +101,47 @@ def _promises_exclusion_token():
     return hashlib.sha256("|".join(sorted(_promises_excluded_sales())).encode("utf-8")).hexdigest()[:16]
 
 
+def _extract_promises_sales_from_upload(uploaded):
+    """قراءة أسماء المحصلين من ملف المحفظة بدون تطبيق فلاتر الوعود."""
+    if uploaded is None:
+        return []
+    try:
+        raw_df = read_uploaded_dataframe(uploaded)
+    except Exception:
+        return []
+    df = raw_df.iloc[1:].copy() if len(raw_df) > 0 else raw_df
+    sales_col = find_column(df, SALES_PERSON_CANDIDATES)
+    if not sales_col:
+        return []
+    vals = df[sales_col].astype(str).str.strip()
+    return sorted({v for v in vals.tolist() if v and v.lower() not in {"nan", "none", "null", ""}})
+
+
+def _sync_promises_available_sales(uploaded=None, result_keys=None):
+    """تحديث قائمة المحصلين المتاحة من الملف أو من الكاش."""
+    init_promises_sales_filter()
+    found = []
+    if uploaded is not None:
+        found = _extract_promises_sales_from_upload(uploaded)
+    if not found and result_keys:
+        for key in result_keys:
+            cached = st.session_state.get(key) or {}
+            found = list(cached.get("available_sales") or [])
+            if found:
+                break
+            df = cached.get("df")
+            sales_col = cached.get("sales_col")
+            if df is not None and sales_col and sales_col in getattr(df, "columns", []):
+                vals = df[sales_col].astype(str).str.strip()
+                found = sorted({v for v in vals.tolist() if v and v.lower() not in {"nan", "none", "null", ""}})
+                if found:
+                    break
+    if found:
+        merged = sorted(set(st.session_state.get(PROMISES_AVAILABLE_SALES_KEY, [])) | set(found))
+        st.session_state[PROMISES_AVAILABLE_SALES_KEY] = merged
+    return list(st.session_state.get(PROMISES_AVAILABLE_SALES_KEY, []))
+
+
 # ==========================================================
 # إعدادات تويب الإهمال
 # ==========================================================
@@ -742,17 +783,36 @@ def page_promises():
         for key in result_keys:
             st.session_state.pop(key, None)
 
-    with st.expander("⚙️ إدارة المحصلين (Sales Person) — إضافة / استبعاد", expanded=False):
-        available = list(st.session_state.get(PROMISES_AVAILABLE_SALES_KEY, []))
-        excluded = list(st.session_state.get(PROMISES_EXCLUDED_SALES_KEY, []))
-        included = [s for s in available if s not in excluded]
+    uploaded = st.file_uploader(
+        f"📂 ارفع محفظة {company_label} (Excel أو CSV)",
+        type=["xlsx", "xls", "csv"],
+        key=upload_key,
+        on_change=sync_file_cache,
+        args=(upload_key, cache_scope, result_keys),
+    )
+    if uploaded is not None:
+        st.caption(f"المحفظة المختارة: {company_label} · الملف: {uploaded.name}")
+        _run_promises_pipeline(uploaded, standing_key, due_mode="today", count_label="عدد الوعود القائمة")
+        _run_promises_pipeline(uploaded, broken_key, due_mode="before", count_label="عدد الوعود المكسورة")
+        _sync_promises_available_sales(uploaded=uploaded, result_keys=result_keys)
+    else:
+        cached_file = st.session_state.get(APP_DATA_CACHE_KEY, {}).get(cache_scope, {})
+        cached_result = st.session_state.get(standing_key) or st.session_state.get(broken_key)
+        if cached_result or cached_file:
+            saved_name = (cached_result or cached_file).get("filename", "المحفظة المحفوظة")
+            st.success(f"✅ محفظة {company_label} محفوظة: {saved_name}. لن تُحذف عند التنقل بين التبويبات.")
+            _sync_promises_available_sales(uploaded=None, result_keys=result_keys)
 
+    # إدارة المحصلين بعد معالجة الملف عشان القائمة تبقى جاهزة
+    available = list(st.session_state.get(PROMISES_AVAILABLE_SALES_KEY, []))
+    excluded = list(st.session_state.get(PROMISES_EXCLUDED_SALES_KEY, []))
+    included = [s for s in available if s not in excluded]
+
+    with st.expander("⚙️ إدارة المحصلين (Sales Person) — إضافة / استبعاد", expanded=bool(available)):
         st.caption("المحصل اللي هتشيله من القائمة هتتشال بياناته من تحليل الوعود، واللي هتضيفه هترجع بياناته.")
-
         if not available:
             st.info("💡 ارفع ملف المحفظة أولاً عشان أقدر أستخرج قائمة المحصلين من عمود Sales Person.")
         else:
-            # إضافة محصلين كانوا مستبعدين
             to_add_options = [s for s in available if s in excluded]
             selected_to_add = st.multiselect(
                 "محصلين مستبعدين — اختر لإضافتهم للتحليل:",
@@ -790,25 +850,8 @@ def page_promises():
                             st.rerun()
 
             if excluded:
-                st.caption("المستبعدون حالياً: " + " · ".join(excluded[:12]) + (" …" if len(excluded) > 12 else ""))
-
-    uploaded = st.file_uploader(
-        f"📂 ارفع محفظة {company_label} (Excel أو CSV)",
-        type=["xlsx", "xls", "csv"],
-        key=upload_key,
-        on_change=sync_file_cache,
-        args=(upload_key, cache_scope, result_keys),
-    )
-    if uploaded is not None:
-        st.caption(f"المحفظة المختارة: {company_label} · الملف: {uploaded.name}")
-        _run_promises_pipeline(uploaded, standing_key, due_mode="today", count_label="عدد الوعود القائمة")
-        _run_promises_pipeline(uploaded, broken_key, due_mode="before", count_label="عدد الوعود المكسورة")
-    else:
-        cached_file = st.session_state.get(APP_DATA_CACHE_KEY, {}).get(cache_scope, {})
-        cached_result = st.session_state.get(standing_key) or st.session_state.get(broken_key)
-        if cached_result or cached_file:
-            saved_name = (cached_result or cached_file).get("filename", "المحفظة المحفوظة")
-            st.success(f"✅ محفظة {company_label} محفوظة: {saved_name}. لن تُحذف عند التنقل بين التبويبات.")
+                with st.expander(f"محصلين مستبعدين ({len(excluded)})", expanded=False):
+                    st.write(" · ".join(excluded))
 
     combined, meta = _combine_promises_cached_results(company_label, result_keys=result_keys)
     if combined.empty or meta is None:

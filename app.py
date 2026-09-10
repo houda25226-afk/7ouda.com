@@ -2389,6 +2389,20 @@ def build_dashboard_html(df, class_col, sales_col, time_col, source_name="", fil
     if sales_col and sales_col in work.columns:
         agent_table, _, _ = _build_activity_summary(work, class_col, sales_col, time_col)
 
+    # خريطة ساعات العمل لكل محصل — لتحديث شارت الكفاءة في صفحة HTML
+    agent_hours_map = {}
+    if (
+        not agent_table.empty
+        and "المحصّل" in agent_table.columns
+        and "إجمالي ساعات العمل" in agent_table.columns
+    ):
+        for _, row in agent_table.iterrows():
+            name = str(row.get("المحصّل", "")).strip()
+            if not name:
+                continue
+            agent_hours_map[name] = float(pd.to_numeric(row.get("إجمالي ساعات العمل"), errors="coerce") or 0)
+    agent_hours_json = json.dumps(agent_hours_map, ensure_ascii=False)
+
     export_date_min = export_date_max = ""
     if timed_source.notna().any():
         export_date_min = timed_source.min().strftime("%Y-%m-%d")
@@ -2793,6 +2807,7 @@ const activityData = __ACTIVITY_DATA__;
 const agentColors = __AGENT_COLORS__;
 const stateColors = __STATE_COLORS__;
 const positiveStateColors = __POSITIVE_STATE_COLORS__;
+const agentHoursMap = __AGENT_HOURS__;
 const donutPlot = document.getElementById('plot_donut');
 const hourlyPlot = document.getElementById('plot_hourly');
 const leaderboardPlot = document.getElementById('plot_leaderboard');
@@ -2953,23 +2968,49 @@ function refreshDashboard() {
 
   if (hoursEffPlot) {
     const agentWaste = agents.map(a => rows.filter(r => r.agent===a).reduce((s,r)=>s+(r.wasted||0),0));
-    const order = agents.map((a,i)=>({a,w:agentWaste[i]})).sort((x,y)=>x.w-y.w);
+    // ساعات العمل من خريطة ثابتة (من ملخص النشاط) — مش من صفوف المكالمات
+    const agentHours = agents.map(a => Number((agentHoursMap && agentHoursMap[a]) || 0));
+    const order = agents.map((a,i)=>({a, h:agentHours[i], w:agentWaste[i]}))
+      .filter(o => o.h > 0 || o.w > 0)
+      .sort((x,y)=>x.h-y.h);
+    const maxH = Math.max(...order.map(o=>o.h), 1);
     const maxW = Math.max(...order.map(o=>o.w), 1);
     Plotly.react(hoursEffPlot, [
       {
-        type:'bar', orientation:'h', name:'الوقت المهدر (دقيقة)',
-        y:order.map(o=>o.a), x:order.map(o=>o.w),
+        type:'bar', orientation:'h', name:'ساعات العمل',
+        y:order.map(o=>o.a), x:order.map(o=>o.h),
         marker:{color:'__SUCCESS__'},
-        text:order.map(o => o.w.toFixed(0)),
-        textposition:'outside', cliponaxis:false,
+        text:order.map(o => o.h.toFixed(1)),
+        textposition:'inside', insidetextanchor:'middle',
+        textfont:{size:13, color:'#FFFFFF'},
+        cliponaxis:false,
+        hovertemplate:'<b>%{y}</b><br>ساعات العمل: %{x:.1f}<extra></extra>'
+      },
+      {
+        type:'scatter', mode:'markers+text', name:'الوقت المهدر (دقيقة)',
+        y:order.map(o=>o.a), x:order.map(o=>o.w),
+        xaxis:'x2',
+        marker:{color:'__WARN__', size:12, symbol:'diamond', line:{width:1, color:'#FFFFFF'}},
+        text:order.map(o => '  ' + o.w.toFixed(0)),
+        textposition:'middle right',
+        textfont:{size:12, color:'#1F2937'},
+        cliponaxis:false,
         hovertemplate:'<b>%{y}</b><br>الوقت المهدر: %{x:.0f} دقيقة<extra></extra>'
       }
     ], {
       ...(hoursEffPlot.layout || {}),
-      xaxis:{...(hoursEffPlot.layout && hoursEffPlot.layout.xaxis || {}), title:'دقيقة', rangemode:'tozero', range:[0, maxW*1.15], automargin:true},
-      xaxis2:{title:null, overlaying:'x', side:'top', showgrid:false, showticklabels:false},
+      title:{...(hoursEffPlot.layout && hoursEffPlot.layout.title || {}), text:'ساعات العمل مقابل الوقت المهدر'},
+      xaxis:{
+        ...(hoursEffPlot.layout && hoursEffPlot.layout.xaxis || {}),
+        title:'ساعات العمل', rangemode:'tozero', range:[0, maxH*1.15], automargin:true
+      },
+      xaxis2:{
+        title:null, overlaying:'x', side:'top', showgrid:false, showticklabels:false,
+        rangemode:'tozero', range:[0, maxW*1.28]
+      },
       showlegend:true,
-      legend:{orientation:'h', y:-0.18, x:0.5, xanchor:'center'}
+      legend:{orientation:'h', y:-0.18, x:0.5, xanchor:'center'},
+      margin:{...(hoursEffPlot.layout && hoursEffPlot.layout.margin || {}), r:88, b:80}
     });
   }
 }
@@ -3016,6 +3057,7 @@ setTimeout(_resizeAllPlots, 100);
         .replace("__AGENT_COLORS__", agent_color_json)
         .replace("__STATE_COLORS__", state_color_json)
         .replace("__POSITIVE_STATE_COLORS__", positive_state_color_json)
+        .replace("__AGENT_HOURS__", agent_hours_json)
         .replace("__ACCENT__", json.dumps(export_accent))
         .replace("__SUCCESS__", json.dumps(export_success))
         .replace("__FAIL__", json.dumps(export_fail))

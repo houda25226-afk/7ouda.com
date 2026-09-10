@@ -1208,6 +1208,12 @@ ACTIVITY_OUTCOME_COLORS = {"ناجحة": OPS_DARK, "غير ناجحة": OPS_LIGH
 ACTIVITY_TIME_CHART_HEIGHT = 460
 ACTIVITY_PAIR_CHART_HEIGHT = 420
 
+
+def _activity_pair_height(n_agents, base=ACTIVITY_PAIR_CHART_HEIGHT, row_px=36, pad=160):
+    """ارتفاع موحّد لزوج الشارتات جنب بعض حسب عدد المحصلين."""
+    n = max(int(n_agents or 0), 1)
+    return max(base, row_px * n + pad)
+
 # الجدولة: 3 درجات من نفس اللوحة فقط
 SCHEDULE_PALETTE = list(OPS_SCALE)
 SCHEDULE_STATUS_COLORS = {
@@ -2166,9 +2172,10 @@ def _render_activity_positive_states_chart(agent):
         hoverinfo="skip",
         cliponaxis=False,
     ))
+    pair_h = _activity_pair_height(len(plot))
     fig.update_layout(**_activity_layout(
         title="حالات الوعد والسداد لكل محصل",
-        height=ACTIVITY_PAIR_CHART_HEIGHT,
+        height=pair_h,
         legend_title_text="",
         legend={"orientation": "h", "yanchor": "top", "y": -0.22, "x": 0.5, "xanchor": "center", "font": {"size": 11}},
         margin={"t": 56, "b": 95, "l": 160, "r": 55},
@@ -2229,12 +2236,13 @@ def _render_activity_hours_efficiency_chart(agent):
         customdata=plot["المحصّل"],
         hovertemplate="<b>%{y}</b><br>الوقت المهدر: %{x:.0f} دقيقة<extra></extra>",
     ))
+    pair_h = _activity_pair_height(len(plot))
     fig.update_layout(**_activity_layout(
         title="ساعات العمل مقابل الوقت المهدر",
-        height=max(420, 40 * len(plot) + 140),
+        height=pair_h,
         legend={"orientation": "h", "yanchor": "top", "y": -0.18, "x": 0.5, "xanchor": "center", "title_text": ""},
         # يمين أوسع لاستيعاب أرقام الوقت المهدر
-        margin={"t": 56, "b": 80, "l": 170, "r": 88},
+        margin={"t": 56, "b": 95, "l": 170, "r": 88},
         xaxis={
             "title": {"text": "ساعات العمل", "font": {"size": 13}},
             "rangemode": "tozero",

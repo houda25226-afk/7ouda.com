@@ -467,7 +467,7 @@ def render_promises_dashboard(df, summary, mode_label):
                 orientation="h",
                 text="عدد الوعود",
                 color="عدد الوعود",
-                color_continuous_scale=[THEME["surface_2"], COLOR_ACCENT],
+                color_continuous_scale=OPS_SCALE,
                 template=PLOTLY_TEMPLATE,
             )
             count_fig.update_layout(**PLOTLY_LAYOUT, title="عدد الوعود حسب المحصّل", xaxis_title="عدد الوعود", yaxis_title="", coloraxis_showscale=False, height=430)
@@ -482,7 +482,7 @@ def render_promises_dashboard(df, summary, mode_label):
                     orientation="h",
                     text="إجمالي المديونية",
                     color="إجمالي المديونية",
-                    color_continuous_scale=[COLOR_ACCENT, COLOR_WARN],
+                    color_continuous_scale=OPS_SCALE,
                     template=PLOTLY_TEMPLATE,
                 )
                 amount_fig.update_layout(**PLOTLY_LAYOUT, title="إجمالي المديونية حسب المحصّل", xaxis_title="إجمالي المديونية", yaxis_title="", coloraxis_showscale=False, height=430)
@@ -544,10 +544,10 @@ def _combine_promises_cached_results(company_label, result_keys=None):
 def render_promises_kpi_dashboard(total, standing_count, broken_count, agent_count, total_amount):
     cards = [
         ("🤝<br>إجمالي الوعود", total, {"valueformat": ",d"}, THEME["text"]),
-        ("📗<br>الوعود القائمة", standing_count, {"valueformat": ",d"}, COLOR_SUCCESS),
-        ("📕<br>الوعود المكسورة", broken_count, {"valueformat": ",d"}, COLOR_FAIL),
+        ("📗<br>الوعود القائمة", standing_count, {"valueformat": ",d"}, OPS_POSITIVE),
+        ("📕<br>الوعود المكسورة", broken_count, {"valueformat": ",d"}, OPS_NEGATIVE),
         ("👥<br>عدد المحصّلين", agent_count, {"valueformat": ",d"}, THEME["text"]),
-        ("💰<br>إجمالي المديونية", total_amount, {"valueformat": ",.0f"}, COLOR_WARN),
+        ("💰<br>إجمالي المديونية", total_amount, {"valueformat": ",.0f"}, OPS_MID),
     ]
     figure = go.Figure()
     count = len(cards)
@@ -616,7 +616,7 @@ def render_combined_promises_dashboard(df, meta, company_label):
                 barmode="group",
                 orientation="h",
                 text="عدد الوعود",
-                color_discrete_map={"الوعود القائمة": COLOR_SUCCESS, "الوعود المكسورة": COLOR_FAIL},
+                color_discrete_map={"الوعود القائمة": OPS_POSITIVE, "الوعود المكسورة": OPS_NEGATIVE},
                 template=PLOTLY_TEMPLATE,
             )
             fig.update_layout(**{
@@ -653,7 +653,7 @@ def render_combined_promises_dashboard(df, meta, company_label):
                     barmode="group",
                     orientation="h",
                     text="إجمالي المديونية",
-                    color_discrete_map={"الوعود القائمة": COLOR_SUCCESS, "الوعود المكسورة": COLOR_FAIL},
+                    color_discrete_map={"الوعود القائمة": OPS_POSITIVE, "الوعود المكسورة": OPS_NEGATIVE},
                     template=PLOTLY_TEMPLATE,
                 )
                 fig.update_layout(**{
@@ -687,7 +687,7 @@ def render_combined_promises_dashboard(df, meta, company_label):
             names="نوع الوعد",
             hole=0.55,
             color="نوع الوعد",
-            color_discrete_map={"الوعود القائمة": COLOR_SUCCESS, "الوعود المكسورة": COLOR_FAIL},
+            color_discrete_map={"الوعود القائمة": OPS_POSITIVE, "الوعود المكسورة": OPS_NEGATIVE},
             template=PLOTLY_TEMPLATE,
         )
         fig.update_layout(**{
@@ -1172,27 +1172,37 @@ CLASSIFICATION_PRIMARY = COLOR_ACCENT
 CLASSIFICATION_SECONDARY = THEMES[THEME_NAME]["accent_strong"]
 CLASSIFICATION_HIGHLIGHT = COLOR_SUCCESS
 CLASSIFICATION_SCALE = [CLASSIFICATION_SECONDARY, CLASSIFICATION_PRIMARY, CLASSIFICATION_HIGHLIGHT]
-# Palette النشاط: لونان أساسيان + درجة ثالثة (تيل + رمادي مزرق) بدرجاتهم فقط.
-ACTIVITY_PRIMARY = "#2F6F73"      # تيل غامق
-ACTIVITY_SECONDARY = "#6A9A9D"    # تيل متوسط
-ACTIVITY_MUTED = "#A8B8BC"        # رمادي مزرق فاتح
-ACTIVITY_AGENT_PALETTE = [
-    ACTIVITY_PRIMARY, "#3D7E82", ACTIVITY_SECONDARY, "#7EABAE",
-    ACTIVITY_MUTED, "#B8C5C8", "#4A888C", "#8FB4B7", "#C5D0D3",
-]
-ACTIVITY_STATE_PALETTE = [ACTIVITY_PRIMARY, ACTIVITY_SECONDARY, ACTIVITY_MUTED, "#C5D0D3"]
-ACTIVITY_OUTCOME_COLORS = {"ناجحة": ACTIVITY_PRIMARY, "غير ناجحة": ACTIVITY_MUTED}
-ACTIVITY_TIME_CHART_HEIGHT = 460  # ارتفاع موحّد لشارت اليومي والساعي
-ACTIVITY_PAIR_CHART_HEIGHT = 420  # ارتفاع موحّد لأزواج الشارتات الأخرى
 
-# لوحة الجدولة: 3 درجات متقاربة من نفس العائلة اللونية (تيل هادئ)
-SCHEDULE_PALETTE = ["#2F6F73", "#5A8A8D", "#8FA8AB"]
+# ==========================================================
+# لوحة موحّدة لتويبات: الوعود + الإهمال + الجدولة + أخطاء الحالات
+# لونان أساسيان (تيل) + درجة ثالثة أقرب (أفتح) فقط — بدون أحمر/أصفر منفصل
+# ==========================================================
+OPS_DARK = "#2F6F73"      # غامق
+OPS_MID = "#5A9093"       # متوسط
+OPS_LIGHT = "#8FB4B7"     # فاتح
+OPS_SCALE = [OPS_DARK, OPS_MID, OPS_LIGHT]
+OPS_POSITIVE = OPS_DARK   # قائمة / تم التغطية / منتظمة
+OPS_NEGATIVE = OPS_MID    # مكسورة / لم يتم / متعثرة
+OPS_NEUTRAL = OPS_LIGHT   # محايد / بدون سداد / أخرى
+
+# Palette النشاط (نفس العائلة عشان متفرقش عن باقي الداشبورد)
+ACTIVITY_PRIMARY = OPS_DARK
+ACTIVITY_SECONDARY = OPS_MID
+ACTIVITY_MUTED = OPS_LIGHT
+ACTIVITY_AGENT_PALETTE = [OPS_DARK, "#3D7E82", OPS_MID, "#7EABAE", OPS_LIGHT, "#B8C5C8", "#4A888C", "#8FB4B7", "#C5D0D3"]
+ACTIVITY_STATE_PALETTE = [OPS_DARK, OPS_MID, OPS_LIGHT, "#C5D0D3"]
+ACTIVITY_OUTCOME_COLORS = {"ناجحة": OPS_DARK, "غير ناجحة": OPS_LIGHT}
+ACTIVITY_TIME_CHART_HEIGHT = 460
+ACTIVITY_PAIR_CHART_HEIGHT = 420
+
+# الجدولة: 3 درجات من نفس اللوحة فقط
+SCHEDULE_PALETTE = list(OPS_SCALE)
 SCHEDULE_STATUS_COLORS = {
-    "جدولة منتظمة": SCHEDULE_PALETTE[0],   # أغمق
-    "جدولة متعثرة": SCHEDULE_PALETTE[1],   # متوسط
-    "بدون سداد": SCHEDULE_PALETTE[2],      # أفتح
+    "جدولة منتظمة": OPS_POSITIVE,
+    "جدولة متعثرة": OPS_NEGATIVE,
+    "بدون سداد": OPS_NEUTRAL,
 }
-SCHEDULE_AGENT_SCALE = list(SCHEDULE_PALETTE)
+SCHEDULE_AGENT_SCALE = list(OPS_SCALE)
 
 
 def _activity_agent_color_map(values):
@@ -4212,10 +4222,10 @@ def _show_neglect_followup_results(df, meta=None):
 
     cards = [
         ("📋<br>إجمالي الحالات", total, {"valueformat": ",d"}, THEME["text"]),
-        ("✅<br>تم التغطية", covered, {"valueformat": ",d"}, COLOR_SUCCESS),
-        ("❌<br>لم يتم التغطية", not_covered, {"valueformat": ",d"}, COLOR_FAIL),
-        ("📈<br>نسبة التغطية", pct, {"valueformat": ".1f", "suffix": "%"}, COLOR_ACCENT),
-        ("🔗<br>حالات لها تاريخ", matched, {"valueformat": ",d"}, COLOR_WARN),
+        ("✅<br>تم التغطية", covered, {"valueformat": ",d"}, OPS_POSITIVE),
+        ("❌<br>لم يتم التغطية", not_covered, {"valueformat": ",d"}, OPS_NEGATIVE),
+        ("📈<br>نسبة التغطية", pct, {"valueformat": ".1f", "suffix": "%"}, OPS_MID),
+        ("🔗<br>حالات لها تاريخ", matched, {"valueformat": ",d"}, OPS_LIGHT),
     ]
     render_neglect_kpi_dashboard(cards, chart_key="neglect_followup_kpi")
 
@@ -4245,8 +4255,8 @@ def _show_neglect_followup_results(df, meta=None):
                 hole=0.55,
                 color="الحالة",
                 color_discrete_map={
-                    "تم التغطية": COLOR_SUCCESS,
-                    "لم يتم التغطية": COLOR_FAIL,
+                    "تم التغطية": OPS_POSITIVE,
+                    "لم يتم التغطية": OPS_NEGATIVE,
                 },
                 template=PLOTLY_TEMPLATE,
             )
@@ -4289,8 +4299,8 @@ def _show_neglect_followup_results(df, meta=None):
                     orientation="h",
                     text="العدد",
                     color_discrete_map={
-                        "تم التغطية": COLOR_SUCCESS,
-                        "لم يتم التغطية": COLOR_FAIL,
+                        "تم التغطية": OPS_POSITIVE,
+                        "لم يتم التغطية": OPS_NEGATIVE,
                     },
                     template=PLOTLY_TEMPLATE,
                     category_orders={sales_col: list(reversed(agent_order))},
@@ -4519,10 +4529,10 @@ def _show_neglect_results(df, meta):
 
     st.subheader("📊 ملخص الإهمال")
     cards = [
-        ("⚠️<br>إجمالي الحالات", total, {"valueformat": ",d"}, COLOR_WARN),
+        ("⚠️<br>إجمالي الحالات", total, {"valueformat": ",d"}, OPS_MID),
         ("👥<br>عدد المحصّلين", agent_count, {"valueformat": ",d"}, THEME["text"]),
-        ("💰<br>إجمالي المديونية", total_amount, {"valueformat": ",.0f"}, COLOR_ACCENT),
-        ("📅<br>متوسط فرق الأيام", avg_days if avg_days is not None else 0, {"valueformat": ".1f", "suffix": " يوم"}, COLOR_FAIL),
+        ("💰<br>إجمالي المديونية", total_amount, {"valueformat": ",.0f"}, OPS_DARK),
+        ("📅<br>متوسط فرق الأيام", avg_days if avg_days is not None else 0, {"valueformat": ".1f", "suffix": " يوم"}, OPS_MID),
     ]
     render_neglect_kpi_dashboard(cards, chart_key="neglect_main_kpi")
 
@@ -4541,7 +4551,7 @@ def _show_neglect_results(df, meta):
                 orientation="h",
                 text="عدد الحالات",
                 color="عدد الحالات",
-                color_continuous_scale=[THEME["surface_2"], COLOR_WARN],
+                color_continuous_scale=OPS_SCALE,
                 template=PLOTLY_TEMPLATE,
             )
             fig.update_layout(
@@ -4580,7 +4590,7 @@ def _show_neglect_results(df, meta):
                     values="العدد",
                     names="الحالة",
                     hole=0.55,
-                    color_discrete_sequence=[COLOR_WARN, COLOR_ACCENT, COLOR_FAIL, COLOR_SUCCESS, THEME["text_dim"]],
+                    color_discrete_sequence=OPS_SCALE,
                     template=PLOTLY_TEMPLATE,
                 )
                 fig.update_traces(

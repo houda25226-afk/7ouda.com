@@ -2283,15 +2283,20 @@ def build_dashboard_html(df, class_col, sales_col, time_col, source_name="", fil
     from html import escape
     import json
 
-    background = "#F4F7FB"
+    # لوحة HTML موحّدة: لونان تيل + درجة ثالثة أقرب فقط
+    background = "#F3F7F7"
     surface = "#FFFFFF"
-    border = "#D7E0EA"
-    text = "#1F2937"
-    text_dim = "#5B6B7C"
-    export_success = "#2F6F73"
-    export_fail = "#A8B8BC"
-    export_accent = "#3D7E82"
-    export_warn = "#6A9A9D"
+    border = "#D5E3E4"
+    text = "#1F2A2B"
+    text_dim = "#5A6F71"
+    export_dark = "#2F6F73"      # أساسي غامق
+    export_mid = "#5A9093"       # متوسط
+    export_light = "#8FB4B7"     # فاتح
+    export_success = export_dark
+    export_fail = export_light
+    export_accent = export_mid
+    export_warn = export_mid
+    export_scale = [export_dark, export_mid, export_light]
     export_template = "plotly_white"
 
     def export_layout(**overrides):
@@ -2307,6 +2312,7 @@ def build_dashboard_html(df, class_col, sales_col, time_col, source_name="", fil
                 "x": 0.5, "xanchor": "center", "bgcolor": "rgba(0,0,0,0)",
             },
             "hoverlabel": {"bgcolor": surface, "font": {"color": text, "family": "Tahoma, Arial"}},
+            "colorway": [export_dark, export_mid, export_light],
         }
         overrides = dict(overrides)
         title_x = overrides.pop("title_x", None)
@@ -2378,10 +2384,13 @@ def build_dashboard_html(df, class_col, sales_col, time_col, source_name="", fil
             "unreachable": _clean_state_value(row.get("_unreachable_state")),
         })
 
-    agent_color_map = _activity_agent_color_map(work["_agent_display"])
+    _agent_names = sorted({str(v) for v in work["_agent_display"].dropna().astype(str) if str(v).strip()})
+    agent_color_map = {name: export_scale[i % len(export_scale)] for i, name in enumerate(_agent_names)}
     agent_color_json = json.dumps(agent_color_map, ensure_ascii=False)
-    state_color_json = json.dumps(dict(zip(ACTIVITY_NO_ANSWER_STATES, ACTIVITY_STATE_PALETTE)), ensure_ascii=False)
-    positive_state_colors = [export_success, export_accent, export_warn, "#7EABAE", "#8FB4B7"]
+    # ألوان حالات اللا يرد من نفس 3 درجات فقط
+    _state_cols = [export_scale[i % len(export_scale)] for i in range(len(ACTIVITY_NO_ANSWER_STATES))]
+    state_color_json = json.dumps(dict(zip(ACTIVITY_NO_ANSWER_STATES, _state_cols)), ensure_ascii=False)
+    positive_state_colors = list(export_scale)
     positive_state_color_json = json.dumps(dict(zip(ACTIVITY_POSITIVE_STATES, positive_state_colors)), ensure_ascii=False)
     raw_records_json = json.dumps(raw_records, ensure_ascii=False)
 
@@ -2695,10 +2704,17 @@ def build_dashboard_html(df, class_col, sales_col, time_col, source_name="", fil
         ".charts-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(480px,1fr));gap:20px;margin:14px 0 24px}",
         f".chart-card{{background:{surface};border:1px solid {border};border-radius:16px;padding:16px 14px 12px;min-width:0;overflow:visible}}",
         f".chart-card h3{{margin:6px 8px 4px;text-align:center;font-size:15px;color:{text}}}",
-        f"table{{width:100%;border-collapse:collapse;font-size:13px}} th,td{{padding:9px 8px;border-bottom:1px solid {border};text-align:right;white-space:nowrap}}",
-        f"th{{color:{text_dim};font-weight:600}}",
+        f".table-wrap{{overflow-x:auto;border:1px solid {border};border-radius:14px;background:{surface}}}",
+        f"table.data-table{{width:100%;border-collapse:separate;border-spacing:0;font-size:13px}}",
+        f"table.data-table thead th{{position:sticky;top:0;background:{export_dark};color:#FFFFFF;font-weight:600;padding:12px 10px;text-align:center;border-bottom:2px solid {export_mid};white-space:nowrap}}",
+        f"table.data-table tbody td{{padding:11px 10px;border-bottom:1px solid {border};text-align:center;white-space:nowrap;color:{text}}}",
+        f"table.data-table tbody td:first-child{{text-align:right;font-weight:600;color:{export_dark}}}",
+        f"table.data-table tbody tr:nth-child(even){{background:#F3F8F8}}",
+        f"table.data-table tbody tr:hover{{background:#E7F1F1}}",
+        f"table.data-table tbody tr:last-child td{{border-bottom:none}}",
         f"footer{{color:{text_dim};font-size:12px;text-align:center;margin-top:22px}}",
-        f".btn-reset{{background:{export_accent};color:#fff;border:0;border-radius:10px;padding:10px 12px;font-size:13px;cursor:pointer}}",
+        f".btn-reset{{background:{export_dark};color:#fff;border:0;border-radius:10px;padding:10px 12px;font-size:13px;cursor:pointer}}",
+        f".btn-reset:hover{{background:{export_mid}}}",
         "@media (max-width:900px){.charts-grid{grid-template-columns:1fr}}",
         "</style></head><body><main>",
         "<header class='hero'>",
@@ -2787,7 +2803,7 @@ def build_dashboard_html(df, class_col, sales_col, time_col, source_name="", fil
             "متوسط ساعات العمل/اليوم", "إجمالي ساعات العمل", "إجمالي الوقت المهدر (دقيقة)",
         ]
         columns = [c for c in columns if c in agent_table.columns]
-        parts.append("<section class='panel'><h2 class='section-title'>📋 ملخص أداء كل محصل</h2><div style='overflow-x:auto'><table><thead><tr>")
+        parts.append("<section class='panel'><h2 class='section-title'>📋 ملخص أداء كل محصل</h2><div class='table-wrap'><table class='data-table'><thead><tr>")
         for column in columns:
             parts.append(f"<th>{escape(column)}</th>")
         parts.append("</tr></thead><tbody>")

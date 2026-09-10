@@ -43,6 +43,10 @@ MODEL_REPO = "Mahmoud252002/7oudaModel"
 MAX_LENGTH = 256
 
 ORIGINAL_TEXT_COL = "Notes"         # اسم العمود الأصلي في الملف
+NOTES_CANDIDATES = [
+    "Notes", "notes", "NOTE", "Note", "الافادة", "الإفادة", "افادة", "إفادة",
+    "Call Notes", "call notes", "Comment", "Comments", "ملاحظات",
+]
 MODEL_TEXT_COL = "الافادة"          # الاسم اللي بيتحول له مؤقتًا لـ الموديل
 CLASSIFICATION_COL = "التصنيف"      # عمود النتيجة: 1 = ناجحة / 0 = غير ناجحة
 WASTED_TIME_COL = "الوقت_المهدر_دقيقة"
@@ -1317,6 +1321,66 @@ def _classify_activity_sub_state(value):
     return "أخرى"
 
 
+def _classify_unreachable_from_notes(value):
+    """تصنيف الإفادة (Notes) إذا كانت تدل على عدم الوصول للعميل.
+
+    ترجع واحدة من ACTIVITY_NO_ANSWER_STATES أو None.
+    أمثلة: لا يرد، لايرد مع التكرار، مغلق، مغلق مع التكرار، ما يرد، العميل لا يرد...
+    """
+    if value is None or (isinstance(value, float) and pd.isna(value)):
+        return None
+    raw = str(value).strip()
+    if not raw or raw.lower() in {"nan", "none", "null", "-"}:
+        return None
+    key = _state_key(raw)
+    if not key:
+        return None
+
+    has_repeat = ("تكرار" in key) or ("متكرر" in key) or ("again" in key) or ("repeat" in key)
+    no_answer = (
+        "لايرد" in key
+        or "مايرد" in key
+        or "مابيرد" in key
+        or "لميرد" in key
+        or "مشبيرد" in key
+        or "مبيرد" in key
+        or "مشراد" in key
+        or "عميللايرد" in key
+        or "لايوجدرد" in key
+        or "بدونرد" in key
+        or "مفيشرد" in key
+        or "noreply" in key
+        or "noanswer" in key
+        or "notanswering" in key
+        or "doesnotanswer" in key
+        or "unreachable" in key
+    )
+    closed = (
+        "مغلق" in key
+        or "مقفول" in key
+        or "الخطمغلق" in key
+        or "الرقممغلق" in key
+        or "switchedoff" in key
+        or "phoneoff" in key
+        or "poweredoff" in key
+        or "outofservice" in key
+        or "خارجالخدمه" in key
+        or "خارجالتغطيه" in key
+        or "غيرمتاح" in key
+        or "الرقمغيرمتاح" in key
+    )
+
+    if no_answer and has_repeat:
+        return "لا يرد مع التكرار"
+    if closed and has_repeat:
+        return "مغلق مع التكرار"
+    if no_answer:
+        return "لا يرد"
+    if closed:
+        return "مغلق"
+    return None
+
+
 def _activity_success_mask(df, class_col):
     if not class_col or class_col not in df.columns:
         return pd.Series(False, index=df.index)
@@ -1391,6 +1455,24 @@ def _build_activity_summary(df, class_col, sales_col, time_col, break_start=None
     else:
         work["_activity_state"] = "غير محدد"
 
+    # عدم الوصول للعميل: من نص الإفادة أولاً، ولو مفيش نرجع لـ Sub State
+    notes_col = find_column(work, NOTES_CANDIDATES + [ORIGINAL_TEXT_COL, MODEL_TEXT_COL])
+    if notes_col:
+        work["_unreachable_from_notes"] = work[notes_col].map(_classify_unreachable_from_notes)
+    else:
+        work["_unreachable_from_notes"] = None
+
+    def _resolve_unreachable(row):
+        note_state = row.get("_unreachable_from_notes")
+        if isinstance(note_state, str) and note_state in ACTIVITY_NO_ANSWER_STATES:
+            return note_state
+        sub_state = row.get("_activity_state")
+        if isinstance(sub_state, str) and sub_state in ACTIVITY_NO_ANSWER_STATES:
+            return sub_state
+        return None
+
+    work["_unreachable_state"] = work.apply(_resolve_unreachable, axis=1)
+
     if time_col and time_col in work.columns and WASTED_TIME_COL not in work.columns:
         work[WASTED_TIME_COL] = _calculate_wasted_time_by_day(
             work, "_agent_display", time_col, break_start, break_end
@@ -1406,12 +1488,26 @@ def _build_activity_summary(df, class_col, sales_col, time_col, break_start=None
         agent["المكالمات الناجحة"] / agent["إجمالي المكالمات"].replace(0, pd.NA) * 100
     ).fillna(0).round(1)
 
-    state_columns = ACTIVITY_NO_ANSWER_STATES + ACTIVITY_PROMISE_STATES + ACTIVITY_PAYMENT_STATES
-    state_table = pd.crosstab(work["_agent_display"], work["_activity_state"])
-    for state in state_columns:
-        if state not in state_table.columns:
-            state_table[state] = 0
-    state_table = state_table.reindex(columns=state_columns, fill_value=0)
+    # الحالات الإيجابية من Sub State
+    positive_columns = ACTIVITY_PROMISE_STATES + ACTIVITY_PAYMENT_STATES
+    positive_table = pd.crosstab(work["_agent_display"], work["_activity_state"])
+    for state in positive_columns:
+        if state not in positive_table.columns:
+            positive_table[state] = 0
+    positive_table = positive_table.reindex(columns=positive_columns, fill_value=0)
+
+    # حالات عدم الوصول من الإفادة (Notes) مع احتياطي Sub State
+    no_answer_src = work.dropna(subset=["_unreachable_state"])
+    if not no_answer_src.empty:
+        no_answer_table = pd.crosstab(no_answer_src["_agent_display"], no_answer_src["_unreachable_state"])
+    else:
+        no_answer_table = pd.DataFrame(index=agent.index)
+    for state in ACTIVITY_NO_ANSWER_STATES:
+        if state not in no_answer_table.columns:
+            no_answer_table[state] = 0
+    no_answer_table = no_answer_table.reindex(columns=ACTIVITY_NO_ANSWER_STATES, fill_value=0)
+
+    state_table = positive_table.join(no_answer_table, how="outer").fillna(0)
     agent = agent.join(state_table, how="left").fillna(0)
     agent["إجمالي لا يرد"] = agent[ACTIVITY_NO_ANSWER_STATES].sum(axis=1).astype(int)
     agent["نسبة من إجمالي المكالمات (%)"] = (
@@ -1682,7 +1778,7 @@ def _render_activity_outcome_donut(work, class_col):
 def _render_activity_no_answer_chart(agent):
     available = [state for state in ACTIVITY_NO_ANSWER_STATES if state in agent.columns]
     if not available:
-        st.info("يلزم وجود عمود Sub State لعرض حالات لا يرد ومغلق.")
+        st.info("لا توجد حالات عدم وصول (من الإفادة أو Sub State) للعرض.")
         return
     plot = agent[["المحصّل"] + available].copy()
     plot["إجمالي لا يرد"] = plot[available].sum(axis=1)
@@ -1715,7 +1811,7 @@ def _render_activity_no_answer_chart(agent):
         cliponaxis=False,
     ))
     fig.update_layout(**_activity_layout(
-        title="حالات لا يرد / مغلق لكل محصل",
+        title="عدم الوصول للعميل من الإفادة (لا يرد / مغلق)",
         height=ACTIVITY_PAIR_CHART_HEIGHT,
         legend_title_text="",
         legend={"orientation": "h", "yanchor": "top", "y": -0.2, "x": 0.5, "xanchor": "center", "font": {"size": 11}},
@@ -2008,6 +2104,23 @@ def build_dashboard_html(df, class_col, sales_col, time_col, source_name="", fil
     else:
         work["_activity_state"] = ""
 
+    notes_col_export = find_column(work, NOTES_CANDIDATES + [ORIGINAL_TEXT_COL, MODEL_TEXT_COL])
+    if notes_col_export:
+        work["_unreachable_from_notes"] = work[notes_col_export].map(_classify_unreachable_from_notes)
+    else:
+        work["_unreachable_from_notes"] = None
+
+    def _resolve_unreachable_export(row):
+        note_state = row.get("_unreachable_from_notes")
+        if isinstance(note_state, str) and note_state in ACTIVITY_NO_ANSWER_STATES:
+            return note_state
+        sub_state = row.get("_activity_state")
+        if isinstance(sub_state, str) and sub_state in ACTIVITY_NO_ANSWER_STATES:
+            return sub_state
+        return None
+
+    work["_unreachable_state"] = work.apply(_resolve_unreachable_export, axis=1)
+
     total = len(work)
     success = int(work["_success_bool"].sum())
     rate = success / total * 100 if total else 0
@@ -2027,7 +2140,11 @@ def build_dashboard_html(df, class_col, sales_col, time_col, source_name="", fil
             "time": timestamp.isoformat() if pd.notna(timestamp) else "",
             "success": bool(row.get("_success_bool", False)),
             "wasted": float(pd.to_numeric(row.get(WASTED_TIME_COL, 0), errors="coerce") or 0),
-            "state": str(row.get("_activity_state", "") or ""),
+            "state": str(
+                row.get("_unreachable_state")
+                or row.get("_activity_state")
+                or ""
+            ),
         })
 
     agent_color_map = _activity_agent_color_map(work["_agent_display"])
@@ -2147,8 +2264,10 @@ def build_dashboard_html(df, class_col, sales_col, time_col, source_name="", fil
         ))
         chart_specs.append(("rank", "ترتيب أداء المحصلين", board_fig, "plot_leaderboard"))
 
-    if sub_col_for_export:
-        state_counts = work.pivot_table(index="_agent_display", columns="_activity_state", aggfunc="size", fill_value=0)
+    if work["_unreachable_state"].notna().any():
+        state_counts = work.dropna(subset=["_unreachable_state"]).pivot_table(
+            index="_agent_display", columns="_unreachable_state", aggfunc="size", fill_value=0
+        )
         for state_name in ACTIVITY_NO_ANSWER_STATES:
             if state_name not in state_counts.columns:
                 state_counts[state_name] = 0
@@ -2163,7 +2282,7 @@ def build_dashboard_html(df, class_col, sales_col, time_col, source_name="", fil
                 color_discrete_sequence=ACTIVITY_STATE_PALETTE,
             )
             no_fig.update_layout(**export_layout(
-                title="حالات لا يرد / مغلق", height=max(400, 34 * state_counts.shape[0] + 160),
+                title="عدم الوصول للعميل من الإفادة", height=max(400, 34 * state_counts.shape[0] + 160),
                 xaxis_title="عدد الحالات", yaxis_title="",
                 xaxis={"automargin": True}, yaxis={"automargin": True, "categoryorder": "total ascending"},
                 margin=dict(t=60, b=90, l=170, r=28),
@@ -2173,51 +2292,51 @@ def build_dashboard_html(df, class_col, sales_col, time_col, source_name="", fil
             no_fig.update_traces(marker_line_width=0, hovertemplate="<b>%{y}</b><br>%{fullData.name}: %{x:,}<extra></extra>")
             chart_specs.append(("states", "حالات لا يرد", no_fig, "plot_no_answer"))
 
-        available_positive = [s for s in ACTIVITY_POSITIVE_STATES if s in agent_table.columns] if not agent_table.empty else []
-        if available_positive:
-            pos_plot = agent_table[["المحصّل"] + available_positive].copy()
-            pos_plot["_ترتيب"] = pos_plot[available_positive].sum(axis=1)
-            pos_plot = pos_plot.sort_values("_ترتيب", ascending=True)
-            pos_long = pos_plot.melt(id_vars=["المحصّل"], value_vars=available_positive, var_name="الحالة", value_name="العدد")
-            if pos_long["العدد"].sum() > 0:
-                pos_fig = px.bar(
-                    pos_long, x="العدد", y="المحصّل", orientation="h", color="الحالة", barmode="stack",
-                    template=export_template,
-                    category_orders={"الحالة": ACTIVITY_POSITIVE_STATES},
-                    color_discrete_sequence=positive_state_colors,
-                )
-                pos_fig.update_layout(**export_layout(
-                    title="حالات الوعد والسداد", height=max(420, 36 * len(pos_plot) + 170),
-                    xaxis_title="عدد الحالات", yaxis_title="",
-                    xaxis={"automargin": True, "rangemode": "tozero", "title": {"text": "عدد الحالات", "font": {"size": 13}}},
-                    yaxis={"automargin": True, "categoryorder": "total ascending"},
-                    margin=dict(t=60, b=100, l=170, r=55),
-                    showlegend=True,
-                    legend=dict(orientation="h", y=-0.24, x=0.5, xanchor="center", font=dict(size=11), title_text=""),
-                    uniformtext_minsize=10,
-                    uniformtext_mode="hide",
-                ))
-                pos_fig.update_traces(
-                    marker_line_width=0,
-                    texttemplate="%{x}",
-                    textposition="inside",
-                    insidetextanchor="middle",
-                    textfont_size=11,
-                    hovertemplate="<b>%{y}</b><br>%{fullData.name}: %{x:,}<extra></extra>",
-                )
-                pos_totals = pos_long.groupby("المحصّل", sort=False)["العدد"].sum()
-                pos_fig.add_trace(go.Scatter(
-                    x=pos_totals.values,
-                    y=pos_totals.index.astype(str),
-                    mode="text",
-                    text=[f"{int(v)}" for v in pos_totals.values],
-                    textposition="middle right",
-                    textfont={"size": 12, "color": text, "family": "Tahoma, Arial"},
-                    showlegend=False,
-                    hoverinfo="skip",
-                    cliponaxis=False,
-                ))
-                chart_specs.append(("states", "الوعد والسداد", pos_fig, "plot_positive"))
+    available_positive = [s for s in ACTIVITY_POSITIVE_STATES if s in agent_table.columns] if not agent_table.empty else []
+    if available_positive:
+        pos_plot = agent_table[["المحصّل"] + available_positive].copy()
+        pos_plot["_ترتيب"] = pos_plot[available_positive].sum(axis=1)
+        pos_plot = pos_plot.sort_values("_ترتيب", ascending=True)
+        pos_long = pos_plot.melt(id_vars=["المحصّل"], value_vars=available_positive, var_name="الحالة", value_name="العدد")
+        if pos_long["العدد"].sum() > 0:
+            pos_fig = px.bar(
+                pos_long, x="العدد", y="المحصّل", orientation="h", color="الحالة", barmode="stack",
+                template=export_template,
+                category_orders={"الحالة": ACTIVITY_POSITIVE_STATES},
+                color_discrete_sequence=positive_state_colors,
+            )
+            pos_fig.update_layout(**export_layout(
+                title="حالات الوعد والسداد", height=max(420, 36 * len(pos_plot) + 170),
+                xaxis_title="عدد الحالات", yaxis_title="",
+                xaxis={"automargin": True, "rangemode": "tozero", "title": {"text": "عدد الحالات", "font": {"size": 13}}},
+                yaxis={"automargin": True, "categoryorder": "total ascending"},
+                margin=dict(t=60, b=100, l=170, r=55),
+                showlegend=True,
+                legend=dict(orientation="h", y=-0.24, x=0.5, xanchor="center", font=dict(size=11), title_text=""),
+                uniformtext_minsize=10,
+                uniformtext_mode="hide",
+            ))
+            pos_fig.update_traces(
+                marker_line_width=0,
+                texttemplate="%{x}",
+                textposition="inside",
+                insidetextanchor="middle",
+                textfont_size=11,
+                hovertemplate="<b>%{y}</b><br>%{fullData.name}: %{x:,}<extra></extra>",
+            )
+            pos_totals = pos_long.groupby("المحصّل", sort=False)["العدد"].sum()
+            pos_fig.add_trace(go.Scatter(
+                x=pos_totals.values,
+                y=pos_totals.index.astype(str),
+                mode="text",
+                text=[f"{int(v)}" for v in pos_totals.values],
+                textposition="middle right",
+                textfont={"size": 12, "color": text, "family": "Tahoma, Arial"},
+                showlegend=False,
+                hoverinfo="skip",
+                cliponaxis=False,
+            ))
+            chart_specs.append(("states", "الوعد والسداد", pos_fig, "plot_positive"))
 
     if not agent_table.empty and "إجمالي الوقت المهدر (دقيقة)" in agent_table.columns:
         waste_df = agent_table[["المحصّل", "إجمالي الوقت المهدر (دقيقة)"]].copy()

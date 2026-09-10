@@ -1510,9 +1510,14 @@ def _classify_activity_sub_state(value):
         return "لا يرد مع التكرار"
     if "مغلق" in key and "تكرار" in key:
         return "مغلق مع التكرار"
-    if "لايرد" in key:
+    if "لايرد" in key or "مايرد" in key or "مشغول" in key:
         return "لا يرد"
-    if key == "مغلق" or ("مغلق" in key and "جدوله" not in key):
+    if (
+        key == "مغلق"
+        or ("مغلق" in key and "جدوله" not in key)
+        or "مفصول" in key
+        or "خارجالخدمه" in key
+    ):
         return "مغلق"
     if "واعد" in key and "سداد" in key:
         return "واعد بالسداد"
@@ -1531,7 +1536,8 @@ def _classify_unreachable_from_notes(value):
     """تصنيف الإفادة (Notes) إذا كانت تدل على عدم الوصول للعميل.
 
     ترجع واحدة من ACTIVITY_NO_ANSWER_STATES أو None.
-    أمثلة: لا يرد، لايرد مع التكرار، مغلق، مغلق مع التكرار، ما يرد، العميل لا يرد...
+    أمثلة: لا يرد، لايرد مع التكرار، مغلق، مغلق مع التكرار، ما يرد، العميل لا يرد،
+    مشغول، مفصول من الخدمة، خارج الخدمة...
     """
     if value is None or (isinstance(value, float) and pd.isna(value)):
         return None
@@ -1560,6 +1566,10 @@ def _classify_unreachable_from_notes(value):
         or "notanswering" in key
         or "doesnotanswer" in key
         or "unreachable" in key
+        or "busy" in key
+        or "مشغول" in key
+        or "الخطمشغول" in key
+        or "رقمشغول" in key
     )
     closed = (
         "مغلق" in key
@@ -1574,6 +1584,13 @@ def _classify_unreachable_from_notes(value):
         or "خارجالتغطيه" in key
         or "غيرمتاح" in key
         or "الرقمغيرمتاح" in key
+        or "مفصول" in key
+        or "مفصولمنالخدمه" in key
+        or "فصلالخدمه" in key
+        or "الخطمفصول" in key
+        or "الرقممفصول" in key
+        or "disconnected" in key
+        or "outofreach" in key
     )
 
     if no_answer and has_repeat:
@@ -1685,8 +1702,12 @@ def _build_activity_summary(df, class_col, sales_col, time_col, break_start=None
         )
     if WASTED_TIME_COL in work.columns:
         work[WASTED_TIME_COL] = pd.to_numeric(work[WASTED_TIME_COL], errors="coerce").fillna(0)
-        # المكالمات الناجحة مش بتتحسب ضمن الوقت المهدر
-        work.loc[work["_success_bool"].astype(bool), WASTED_TIME_COL] = 0.0
+        # الوقت المهدر يُحسب فقط لحالات عدم الوصول للعميل
+        # (لا يرد / مغلق / مشغول / مفصول من الخدمة ... من الإفادة أو Sub State)
+        unreachable_mask = work["_unreachable_state"].notna() & (
+            work["_unreachable_state"].astype(str).str.strip() != ""
+        )
+        work.loc[~unreachable_mask, WASTED_TIME_COL] = 0.0
 
     agent = work.groupby("_agent_display", dropna=False).size().rename("إجمالي المكالمات").to_frame()
     agent["المكالمات الناجحة"] = work[work["_success_bool"]].groupby("_agent_display").size()
@@ -2355,10 +2376,13 @@ def build_dashboard_html(df, class_col, sales_col, time_col, source_name="", fil
 
     work["_unreachable_state"] = work.apply(_resolve_unreachable_export, axis=1)
 
-    # استبعاد الوقت المهدر للمكالمات الناجحة من صفحة HTML أيضًا
+    # الوقت المهدر في HTML فقط لحالات عدم الوصول للعميل
     if WASTED_TIME_COL in work.columns:
         work[WASTED_TIME_COL] = pd.to_numeric(work[WASTED_TIME_COL], errors="coerce").fillna(0)
-        work.loc[work["_success_bool"].astype(bool), WASTED_TIME_COL] = 0.0
+        unreachable_mask = work["_unreachable_state"].notna() & (
+            work["_unreachable_state"].astype(str).str.strip() != ""
+        )
+        work.loc[~unreachable_mask, WASTED_TIME_COL] = 0.0
 
     total = len(work)
     success = int(work["_success_bool"].sum())

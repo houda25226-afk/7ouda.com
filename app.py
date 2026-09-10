@@ -467,7 +467,7 @@ def render_promises_dashboard(df, summary, mode_label):
                 orientation="h",
                 text="عدد الوعود",
                 color="عدد الوعود",
-                color_continuous_scale=[THEME["surface_2"], COLOR_ACCENT],
+                color_continuous_scale=CLASSIFICATION_SCALE,
                 template=PLOTLY_TEMPLATE,
             )
             count_fig.update_layout(**PLOTLY_LAYOUT, title="عدد الوعود حسب المحصّل", xaxis_title="عدد الوعود", yaxis_title="", coloraxis_showscale=False, height=430)
@@ -482,7 +482,7 @@ def render_promises_dashboard(df, summary, mode_label):
                     orientation="h",
                     text="إجمالي المديونية",
                     color="إجمالي المديونية",
-                    color_continuous_scale=[COLOR_ACCENT, COLOR_WARN],
+                    color_continuous_scale=CLASSIFICATION_SCALE,
                     template=PLOTLY_TEMPLATE,
                 )
                 amount_fig.update_layout(**PLOTLY_LAYOUT, title="إجمالي المديونية حسب المحصّل", xaxis_title="إجمالي المديونية", yaxis_title="", coloraxis_showscale=False, height=430)
@@ -1172,27 +1172,39 @@ CLASSIFICATION_PRIMARY = COLOR_ACCENT
 CLASSIFICATION_SECONDARY = THEMES[THEME_NAME]["accent_strong"]
 CLASSIFICATION_HIGHLIGHT = COLOR_SUCCESS
 CLASSIFICATION_SCALE = [CLASSIFICATION_SECONDARY, CLASSIFICATION_PRIMARY, CLASSIFICATION_HIGHLIGHT]
-# Palette النشاط: لونان أساسيان + درجة ثالثة (تيل + رمادي مزرق) بدرجاتهم فقط.
-ACTIVITY_PRIMARY = "#2F6F73"      # تيل غامق
-ACTIVITY_SECONDARY = "#6A9A9D"    # تيل متوسط
-ACTIVITY_MUTED = "#A8B8BC"        # رمادي مزرق فاتح
+# نفس ألوان تويب التصنيف في كل التبويبات (بدون لوحة منفصلة)
+ACTIVITY_PRIMARY = CLASSIFICATION_PRIMARY
+ACTIVITY_SECONDARY = CLASSIFICATION_SECONDARY
+ACTIVITY_MUTED = THEME["text_muted"]
 ACTIVITY_AGENT_PALETTE = [
-    ACTIVITY_PRIMARY, "#3D7E82", ACTIVITY_SECONDARY, "#7EABAE",
-    ACTIVITY_MUTED, "#B8C5C8", "#4A888C", "#8FB4B7", "#C5D0D3",
+    CLASSIFICATION_PRIMARY,
+    CLASSIFICATION_SECONDARY,
+    CLASSIFICATION_HIGHLIGHT,
+    COLOR_WARN,
+    THEME["text_dim"],
+    COLOR_ACCENT,
+    COLOR_SUCCESS,
+    THEME["text_muted"],
+    COLOR_FAIL,
 ]
-ACTIVITY_STATE_PALETTE = [ACTIVITY_PRIMARY, ACTIVITY_SECONDARY, ACTIVITY_MUTED, "#C5D0D3"]
-ACTIVITY_OUTCOME_COLORS = {"ناجحة": ACTIVITY_PRIMARY, "غير ناجحة": ACTIVITY_MUTED}
-ACTIVITY_TIME_CHART_HEIGHT = 460  # ارتفاع موحّد لشارت اليومي والساعي
-ACTIVITY_PAIR_CHART_HEIGHT = 420  # ارتفاع موحّد لأزواج الشارتات الأخرى
+ACTIVITY_STATE_PALETTE = [
+    CLASSIFICATION_PRIMARY,
+    CLASSIFICATION_SECONDARY,
+    CLASSIFICATION_HIGHLIGHT,
+    THEME["text_muted"],
+]
+ACTIVITY_OUTCOME_COLORS = dict(CHART_COLORS)  # ناجحة / غير ناجحة زي التصنيف
+ACTIVITY_TIME_CHART_HEIGHT = 460
+ACTIVITY_PAIR_CHART_HEIGHT = 420
 
-# لوحة الجدولة: 3 درجات متقاربة من نفس العائلة اللونية (تيل هادئ)
-SCHEDULE_PALETTE = ["#2F6F73", "#5A8A8D", "#8FA8AB"]
+# الجدولة بنفس ألوان التصنيف (نجاح / تحذير / محايد)
+SCHEDULE_PALETTE = list(CLASSIFICATION_SCALE)
 SCHEDULE_STATUS_COLORS = {
-    "جدولة منتظمة": SCHEDULE_PALETTE[0],   # أغمق
-    "جدولة متعثرة": SCHEDULE_PALETTE[1],   # متوسط
-    "بدون سداد": SCHEDULE_PALETTE[2],      # أفتح
+    "جدولة منتظمة": COLOR_SUCCESS,
+    "جدولة متعثرة": COLOR_WARN,
+    "بدون سداد": THEME["text_muted"],
 }
-SCHEDULE_AGENT_SCALE = list(SCHEDULE_PALETTE)
+SCHEDULE_AGENT_SCALE = list(CLASSIFICATION_SCALE)
 
 
 def _activity_agent_color_map(values):
@@ -1208,6 +1220,7 @@ PLOTLY_LAYOUT = dict(
     font_family="Tajawal, sans-serif",
     font_size=13,
     margin=dict(t=60, b=50, l=50, r=20),
+    title=dict(x=0.5, xanchor="center", font=dict(size=18, color=THEME["text"])),
     title_font_size=18,
     legend_font_size=12,
     hovermode="closest",
@@ -1216,6 +1229,15 @@ PLOTLY_LAYOUT = dict(
         bordercolor=THEME["border"],
         font=dict(family="Tajawal, sans-serif", size=13, color=THEME["text"]),
     ),
+    # نفس ترتيب ألوان شارتات التصنيف كافتراضي لكل الشارتات
+    colorway=[
+        CLASSIFICATION_PRIMARY,
+        CLASSIFICATION_SECONDARY,
+        CLASSIFICATION_HIGHLIGHT,
+        COLOR_WARN,
+        COLOR_FAIL,
+        THEME["text_muted"],
+    ],
 )
 PLOTLY_CONFIG = {
     "displayModeBar": True,
@@ -1698,9 +1720,9 @@ def render_activity_kpi_cards(total, success, agent_count, success_rate, wasted_
     cards = [
         ("👥<br>عدد المحصّلين", agent_count, {"valueformat": ",d"}, THEME["text"]),
         ("📞<br>إجمالي المكالمات", total, {"valueformat": ",d"}, THEME["text"]),
-        ("✅<br>المكالمات الناجحة", success, {"valueformat": ",d"}, ACTIVITY_PRIMARY),
-        ("📈<br>نسبة النجاح", success_rate, {"valueformat": ".1f", "suffix": "%"}, ACTIVITY_SECONDARY),
-        ("⏱️<br>إجمالي الوقت المهدر", wasted_minutes, {"valueformat": ".1f", "suffix": " دقيقة"}, ACTIVITY_MUTED),
+        ("✅<br>المكالمات الناجحة", success, {"valueformat": ",d"}, COLOR_SUCCESS),
+        ("📈<br>نسبة النجاح", success_rate, {"valueformat": ".1f", "suffix": "%"}, COLOR_ACCENT),
+        ("⏱️<br>إجمالي الوقت المهدر", wasted_minutes, {"valueformat": ".1f", "suffix": " دقيقة"}, COLOR_WARN),
     ]
     figure = go.Figure()
     gap = 0.014
@@ -4541,7 +4563,7 @@ def _show_neglect_results(df, meta):
                 orientation="h",
                 text="عدد الحالات",
                 color="عدد الحالات",
-                color_continuous_scale=[THEME["surface_2"], COLOR_WARN],
+                color_continuous_scale=CLASSIFICATION_SCALE,
                 template=PLOTLY_TEMPLATE,
             )
             fig.update_layout(
@@ -4580,7 +4602,7 @@ def _show_neglect_results(df, meta):
                     values="العدد",
                     names="الحالة",
                     hole=0.55,
-                    color_discrete_sequence=[COLOR_WARN, COLOR_ACCENT, COLOR_FAIL, COLOR_SUCCESS, THEME["text_dim"]],
+                    color_discrete_sequence=[CLASSIFICATION_PRIMARY, CLASSIFICATION_SECONDARY, CLASSIFICATION_HIGHLIGHT, COLOR_WARN, COLOR_FAIL],
                     template=PLOTLY_TEMPLATE,
                 )
                 fig.update_traces(

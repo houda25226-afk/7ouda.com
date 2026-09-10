@@ -2193,7 +2193,7 @@ def _render_activity_positive_states_chart(agent):
 
 
 def _render_activity_hours_efficiency_chart(agent):
-    """ساعات العمل (عمود) مقابل الوقت المهدر (نقطة) — أرقام متباعدة بدون تداخل."""
+    """ساعات العمل (عمود) + الوقت المهدر (عمود أرقام يمين) بدون تداخل."""
     if agent.empty or "إجمالي ساعات العمل" not in agent.columns:
         st.info("لا تتوفر بيانات ساعات عمل كافية لعرض الإنتاجية.")
         return
@@ -2203,10 +2203,10 @@ def _render_activity_hours_efficiency_chart(agent):
     plot = plot.sort_values("إجمالي ساعات العمل", ascending=True)
 
     max_h = float(plot["إجمالي ساعات العمل"].max()) if len(plot) else 1.0
-    max_w = float(plot["إجمالي الوقت المهدر (دقيقة)"].max()) if len(plot) else 1.0
+    # عمود ثابت يمين كل الأعمدة لعرض الماس + رقم الوقت المهدر
+    waste_x = max(max_h * 1.22, max_h + 1.2, 1.0)
 
     fig = go.Figure()
-    # ساعات العمل: الرقم جوّه العمود عشان ميضربش في رقم الوقت المهدر
     fig.add_trace(go.Bar(
         y=plot["المحصّل"],
         x=plot["إجمالي ساعات العمل"],
@@ -2221,46 +2221,37 @@ def _render_activity_hours_efficiency_chart(agent):
         customdata=plot["المحصّل"],
         hovertemplate="<b>%{y}</b><br>ساعات العمل: %{x:.1f}<extra></extra>",
     ))
-    # الوقت المهدر: نقطة + رقم يمينها بمسافة واضحة
+    # الوقت المهدر في صف واحد يمين الأعمدة — مش على محور متراكب
     fig.add_trace(go.Scatter(
         y=plot["المحصّل"],
-        x=plot["إجمالي الوقت المهدر (دقيقة)"],
+        x=[waste_x] * len(plot),
         mode="markers+text",
-        xaxis="x2",
-        marker={"color": ACTIVITY_MUTED, "size": 12, "symbol": "diamond", "line": {"width": 1, "color": "#FFFFFF"}},
+        marker={
+            "color": ACTIVITY_MUTED,
+            "size": 11,
+            "symbol": "diamond",
+            "line": {"width": 1, "color": "#FFFFFF"},
+        },
         name="الوقت المهدر (دقيقة)",
-        text=plot["إجمالي الوقت المهدر (دقيقة)"].map(lambda v: f"  {float(v):.0f}"),
+        text=plot["إجمالي الوقت المهدر (دقيقة)"].map(lambda v: f"{float(v):.0f}"),
         textposition="middle right",
         textfont={"size": 12, "color": THEME["text"]},
         cliponaxis=False,
-        customdata=plot["المحصّل"],
-        hovertemplate="<b>%{y}</b><br>الوقت المهدر: %{x:.0f} دقيقة<extra></extra>",
+        customdata=plot["إجمالي الوقت المهدر (دقيقة)"],
+        hovertemplate="<b>%{y}</b><br>الوقت المهدر: %{customdata:.0f} دقيقة<extra></extra>",
     ))
     pair_h = _activity_pair_height(len(plot))
     fig.update_layout(**_activity_layout(
         title="ساعات العمل مقابل الوقت المهدر",
         height=pair_h,
         legend={"orientation": "h", "yanchor": "top", "y": -0.18, "x": 0.5, "xanchor": "center", "title_text": ""},
-        # يمين أوسع لاستيعاب أرقام الوقت المهدر
-        margin={"t": 56, "b": 95, "l": 170, "r": 88},
+        margin={"t": 56, "b": 95, "l": 170, "r": 110},
         xaxis={
             "title": {"text": "ساعات العمل", "font": {"size": 13}},
             "rangemode": "tozero",
-            # مساحة بعد نهاية الأعمدة عشان النقط/الأرقام متلزقش في الحافة
-            "range": [0, max(max_h * 1.15, 1)],
+            "range": [0, waste_x * 1.18],
             "automargin": True,
             "gridcolor": "rgba(128,145,170,0.18)",
-        },
-        xaxis2={
-            "title": None,
-            "overlaying": "x",
-            "side": "top",
-            "showgrid": False,
-            "showticklabels": False,
-            "rangemode": "tozero",
-            # نمد المحور شوية عشان رقم الدقيقة يبقى يمين النقطة ومش فوق نهاية العمود
-            "range": [0, max(max_w * 1.28, 1)],
-            "automargin": False,
         },
         yaxis={"title": "", "automargin": True},
         bargap=0.28,
@@ -2689,6 +2680,7 @@ def build_dashboard_html(df, class_col, sales_col, time_col, source_name="", fil
         eff = eff.sort_values("إجمالي ساعات العمل", ascending=True)
         max_h = float(eff["إجمالي ساعات العمل"].max()) if len(eff) else 1.0
         max_w = float(eff["إجمالي الوقت المهدر (دقيقة)"].max()) if len(eff) else 1.0
+        waste_x = max(max_h * 1.22, max_h + 1.2, 1.0)
         eff_fig = go.Figure()
         eff_fig.add_trace(go.Bar(
             y=eff["المحصّل"],
@@ -2705,39 +2697,30 @@ def build_dashboard_html(df, class_col, sales_col, time_col, source_name="", fil
         ))
         eff_fig.add_trace(go.Scatter(
             y=eff["المحصّل"],
-            x=eff["إجمالي الوقت المهدر (دقيقة)"],
+            x=[waste_x] * len(eff),
             mode="markers+text",
-            xaxis="x2",
-            marker={"color": export_warn, "size": 12, "symbol": "diamond", "line": {"width": 1, "color": "#FFFFFF"}},
+            marker={"color": export_warn, "size": 11, "symbol": "diamond", "line": {"width": 1, "color": "#FFFFFF"}},
             name="الوقت المهدر (دقيقة)",
-            text=eff["إجمالي الوقت المهدر (دقيقة)"].map(lambda v: f"  {float(v):.0f}"),
+            text=eff["إجمالي الوقت المهدر (دقيقة)"].map(lambda v: f"{float(v):.0f}"),
             textposition="middle right",
             textfont={"size": 12, "color": text},
             cliponaxis=False,
-            hovertemplate="<b>%{y}</b><br>الوقت المهدر: %{x:.0f} دقيقة<extra></extra>",
+            customdata=eff["إجمالي الوقت المهدر (دقيقة)"],
+            hovertemplate="<b>%{y}</b><br>الوقت المهدر: %{customdata:.0f} دقيقة<extra></extra>",
         ))
         eff_fig.update_layout(**export_layout(
             title="ساعات العمل مقابل الوقت المهدر",
-            height=max(420, 40 * len(eff) + 140),
+            height=max(420, 36 * len(eff) + 160),
             xaxis_title="ساعات العمل",
             yaxis_title="",
             xaxis={
                 "automargin": True,
                 "rangemode": "tozero",
-                "range": [0, max(max_h * 1.15, 1)],
+                "range": [0, waste_x * 1.18],
                 "title": {"text": "ساعات العمل", "font": {"size": 13}},
             },
-            xaxis2={
-                "title": None,
-                "overlaying": "x",
-                "side": "top",
-                "showgrid": False,
-                "showticklabels": False,
-                "rangemode": "tozero",
-                "range": [0, max(max_w * 1.28, 1)],
-            },
             yaxis={"automargin": True},
-            margin=dict(t=56, b=80, l=170, r=88),
+            margin=dict(t=56, b=95, l=170, r=110),
             showlegend=True,
             legend=dict(orientation="h", y=-0.18, x=0.5, xanchor="center", title_text=""),
             bargap=0.28,
@@ -3057,13 +3040,12 @@ function refreshDashboard() {
 
   if (hoursEffPlot) {
     const agentWaste = agents.map(a => rows.filter(r => r.agent===a).reduce((s,r)=>s+(r.wasted||0),0));
-    // ساعات العمل من خريطة ثابتة (من ملخص النشاط) — مش من صفوف المكالمات
     const agentHours = agents.map(a => Number((agentHoursMap && agentHoursMap[a]) || 0));
     const order = agents.map((a,i)=>({a, h:agentHours[i], w:agentWaste[i]}))
       .filter(o => o.h > 0 || o.w > 0)
       .sort((x,y)=>x.h-y.h);
     const maxH = Math.max(...order.map(o=>o.h), 1);
-    const maxW = Math.max(...order.map(o=>o.w), 1);
+    const wasteX = Math.max(maxH * 1.22, maxH + 1.2, 1);
     Plotly.react(hoursEffPlot, [
       {
         type:'bar', orientation:'h', name:'ساعات العمل',
@@ -3077,29 +3059,25 @@ function refreshDashboard() {
       },
       {
         type:'scatter', mode:'markers+text', name:'الوقت المهدر (دقيقة)',
-        y:order.map(o=>o.a), x:order.map(o=>o.w),
-        xaxis:'x2',
-        marker:{color:'__WARN__', size:12, symbol:'diamond', line:{width:1, color:'#FFFFFF'}},
-        text:order.map(o => '  ' + o.w.toFixed(0)),
+        y:order.map(o=>o.a), x:order.map(() => wasteX),
+        marker:{color:'__WARN__', size:11, symbol:'diamond', line:{width:1, color:'#FFFFFF'}},
+        text:order.map(o => String(Math.round(o.w))),
         textposition:'middle right',
         textfont:{size:12, color:'#1F2937'},
         cliponaxis:false,
-        hovertemplate:'<b>%{y}</b><br>الوقت المهدر: %{x:.0f} دقيقة<extra></extra>'
+        customdata:order.map(o => o.w),
+        hovertemplate:'<b>%{y}</b><br>الوقت المهدر: %{customdata:.0f} دقيقة<extra></extra>'
       }
     ], {
       ...(hoursEffPlot.layout || {}),
       title:{...(hoursEffPlot.layout && hoursEffPlot.layout.title || {}), text:'ساعات العمل مقابل الوقت المهدر'},
       xaxis:{
         ...(hoursEffPlot.layout && hoursEffPlot.layout.xaxis || {}),
-        title:'ساعات العمل', rangemode:'tozero', range:[0, maxH*1.15], automargin:true
-      },
-      xaxis2:{
-        title:null, overlaying:'x', side:'top', showgrid:false, showticklabels:false,
-        rangemode:'tozero', range:[0, maxW*1.28]
+        title:'ساعات العمل', rangemode:'tozero', range:[0, wasteX*1.18], automargin:true
       },
       showlegend:true,
       legend:{orientation:'h', y:-0.18, x:0.5, xanchor:'center'},
-      margin:{...(hoursEffPlot.layout && hoursEffPlot.layout.margin || {}), r:88, b:80}
+      margin:{...(hoursEffPlot.layout && hoursEffPlot.layout.margin || {}), r:110, b:95}
     });
   }
 }

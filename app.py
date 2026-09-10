@@ -79,6 +79,26 @@ PROMISE_EXCLUDED_SALES = [
     "Op II Ibrahim Qassem",
     "قانونى -الوطنية",
 ]
+PROMISES_EXCLUDED_SALES_KEY = "promises_excluded_sales"
+PROMISES_AVAILABLE_SALES_KEY = "promises_available_sales"
+
+
+def init_promises_sales_filter():
+    """تهيئة قائمة المحصلين المستبعدين (قابلة للتعديل من واجهة الوعود)."""
+    if PROMISES_EXCLUDED_SALES_KEY not in st.session_state:
+        st.session_state[PROMISES_EXCLUDED_SALES_KEY] = list(PROMISE_EXCLUDED_SALES)
+    if PROMISES_AVAILABLE_SALES_KEY not in st.session_state:
+        st.session_state[PROMISES_AVAILABLE_SALES_KEY] = []
+
+
+def _promises_excluded_sales():
+    init_promises_sales_filter()
+    return [str(x).strip() for x in st.session_state.get(PROMISES_EXCLUDED_SALES_KEY, []) if str(x).strip()]
+
+
+def _promises_exclusion_token():
+    """توكن لتحديث الكاش عند تغيير فلتر المحصلين."""
+    return hashlib.sha256("|".join(sorted(_promises_excluded_sales())).encode("utf-8")).hexdigest()[:16]
 
 
 # ==========================================================
@@ -243,9 +263,20 @@ def _run_promises_pipeline(
 
     بترجع ``True`` لو تم الحفظ في الكاش، و``False`` لو اتعرضت من الكاش مباشرة.
     """
+    init_promises_sales_filter()
     _file_hash = hashlib.sha256(uploaded.getvalue()).hexdigest()
+    _excl_token = _promises_exclusion_token()
     cached = st.session_state.get(result_key)
-    if cached and cached.get("file_hash") == _file_hash:
+    if (
+        cached
+        and cached.get("file_hash") == _file_hash
+        and cached.get("exclusion_token") == _excl_token
+    ):
+        # تحديث قائمة المحصلين المتاحة من الكاش لو موجودة
+        avail = cached.get("available_sales") or []
+        if avail:
+            merged = sorted(set(st.session_state.get(PROMISES_AVAILABLE_SALES_KEY, [])) | set(avail))
+            st.session_state[PROMISES_AVAILABLE_SALES_KEY] = merged
         return False  # النتيجة موجودة في الكاش من رفع الملف ده — مش يلزم وجود إعادة معالجة
 
     try:
@@ -278,9 +309,14 @@ def _run_promises_pipeline(
         )
         return False
 
-    # 2) فلترة Salesperson — نستبعد المحصّلين المحددين
+    # 2) فلترة Salesperson — حسب قائمة الاستبعاد القابلة للتعديل من الواجهة
     sales_vals = df[sales_col].astype(str).str.strip()
-    keep_sales = ~sales_vals.isin(PROMISE_EXCLUDED_SALES)
+    available_sales = sorted({v for v in sales_vals.tolist() if v and v.lower() not in {"nan", "none", "null"}})
+    merged_available = sorted(set(st.session_state.get(PROMISES_AVAILABLE_SALES_KEY, [])) | set(available_sales))
+    st.session_state[PROMISES_AVAILABLE_SALES_KEY] = merged_available
+
+    excluded = set(_promises_excluded_sales())
+    keep_sales = ~sales_vals.isin(excluded)
     dropped_sales = int((~keep_sales).sum())
     df = df[keep_sales].copy()
 
@@ -329,6 +365,8 @@ def _run_promises_pipeline(
         "target_date": target_date,
         "filename": uploaded.name,
         "file_hash": _file_hash,
+        "exclusion_token": _excl_token,
+        "available_sales": available_sales,
         "sales_col": sales_col,
         "substate_col": substate_col,
         "duedate_col": duedate_col,
@@ -686,6 +724,7 @@ def render_combined_promises_dashboard(df, meta, company_label):
 def page_promises():
     """صفحة واحدة تجمع الوعود القائمة والمكسورة داخل محفظة الشركة المختارة فقط."""
     _init_promises_today()
+    init_promises_sales_filter()
     page_header(
         "PROMISES",
         "📚 الوعود",
@@ -698,6 +737,60 @@ def page_promises():
     upload_key = f"promises_upload_{company_slug}"
     cache_scope = f"promises_upload:{company_slug}"
     result_keys = (standing_key, broken_key)
+
+    def _clear_promises_company_cache():
+        for key in result_keys:
+            st.session_state.pop(key, None)
+
+    with st.expander("⚙️ إدارة المحصلين (Sales Person) — إضافة / استبعاد", expanded=False):
+        available = list(st.session_state.get(PROMISES_AVAILABLE_SALES_KEY, []))
+        excluded = list(st.session_state.get(PROMISES_EXCLUDED_SALES_KEY, []))
+        included = [s for s in available if s not in excluded]
+
+        st.caption("المحصل اللي هتشيله من القائمة هتتشال بياناته من تحليل الوعود، واللي هتضيفه هترجع بياناته.")
+
+        if not available:
+            st.info("💡 ارفع ملف المحفظة أولاً عشان أقدر أستخرج قائمة المحصلين من عمود Sales Person.")
+        else:
+            # إضافة محصلين كانوا مستبعدين
+            to_add_options = [s for s in available if s in excluded]
+            selected_to_add = st.multiselect(
+                "محصلين مستبعدين — اختر لإضافتهم للتحليل:",
+                options=to_add_options,
+                key=f"promises_add_sales_{company_slug}",
+            )
+            c_add, c_reset = st.columns(2)
+            with c_add:
+                if st.button("➕ إضافة المحصلين المختارين", use_container_width=True, key=f"promises_btn_add_{company_slug}"):
+                    if selected_to_add:
+                        for name in selected_to_add:
+                            if name in st.session_state[PROMISES_EXCLUDED_SALES_KEY]:
+                                st.session_state[PROMISES_EXCLUDED_SALES_KEY].remove(name)
+                        _clear_promises_company_cache()
+                        st.success(f"تمت إضافة {len(selected_to_add)} محصل للتحليل.")
+                        st.rerun()
+            with c_reset:
+                if st.button("↩️ استعادة الاستبعاد الافتراضي", use_container_width=True, key=f"promises_btn_reset_{company_slug}"):
+                    st.session_state[PROMISES_EXCLUDED_SALES_KEY] = list(PROMISE_EXCLUDED_SALES)
+                    _clear_promises_company_cache()
+                    st.rerun()
+
+            st.divider()
+            st.write(f"📋 المحصلين المشمولين حالياً في التحليل ({len(included)}):")
+            if not included:
+                st.warning("لا يوجد محصلين مشمولين حالياً — أضف من قائمة المستبعدين أو راجع الاستبعاد.")
+            else:
+                cols = st.columns(3)
+                for i, name in enumerate(included):
+                    with cols[i % 3]:
+                        if st.button(f"❌ {name}", key=f"promises_del_{company_slug}_{i}", use_container_width=True):
+                            if name not in st.session_state[PROMISES_EXCLUDED_SALES_KEY]:
+                                st.session_state[PROMISES_EXCLUDED_SALES_KEY].append(name)
+                            _clear_promises_company_cache()
+                            st.rerun()
+
+            if excluded:
+                st.caption("المستبعدون حالياً: " + " · ".join(excluded[:12]) + (" …" if len(excluded) > 12 else ""))
 
     uploaded = st.file_uploader(
         f"📂 ارفع محفظة {company_label} (Excel أو CSV)",

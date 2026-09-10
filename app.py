@@ -2132,6 +2132,14 @@ def build_dashboard_html(df, class_col, sales_col, time_col, source_name="", fil
         if time_col and time_col in work.columns
         else pd.Series(pd.NaT, index=work.index)
     )
+    def _clean_state_value(val):
+        if val is None or (isinstance(val, float) and pd.isna(val)):
+            return ""
+        text_val = str(val).strip()
+        if not text_val or text_val.lower() in {"nan", "none", "null"}:
+            return ""
+        return text_val
+
     raw_records = []
     for row_index, row in work.iterrows():
         timestamp = timed_source.loc[row_index] if row_index in timed_source.index else pd.NaT
@@ -2140,11 +2148,8 @@ def build_dashboard_html(df, class_col, sales_col, time_col, source_name="", fil
             "time": timestamp.isoformat() if pd.notna(timestamp) else "",
             "success": bool(row.get("_success_bool", False)),
             "wasted": float(pd.to_numeric(row.get(WASTED_TIME_COL, 0), errors="coerce") or 0),
-            "state": str(
-                row.get("_unreachable_state")
-                or row.get("_activity_state")
-                or ""
-            ),
+            "state": _clean_state_value(row.get("_activity_state")),
+            "unreachable": _clean_state_value(row.get("_unreachable_state")),
         })
 
     agent_color_map = _activity_agent_color_map(work["_agent_display"])
@@ -2292,13 +2297,26 @@ def build_dashboard_html(df, class_col, sales_col, time_col, source_name="", fil
             no_fig.update_traces(marker_line_width=0, hovertemplate="<b>%{y}</b><br>%{fullData.name}: %{x:,}<extra></extra>")
             chart_specs.append(("states", "حالات لا يرد", no_fig, "plot_no_answer"))
 
-    available_positive = [s for s in ACTIVITY_POSITIVE_STATES if s in agent_table.columns] if not agent_table.empty else []
-    if available_positive:
-        pos_plot = agent_table[["المحصّل"] + available_positive].copy()
+    # شارت الوعد/السداد من Sub State مباشرة (مش من agent_table بس)
+    pos_src = (
+        work[work["_activity_state"].isin(ACTIVITY_POSITIVE_STATES)].copy()
+        if "_activity_state" in work.columns else pd.DataFrame()
+    )
+    if not pos_src.empty:
+        pos_counts = pos_src.pivot_table(
+            index="_agent_display", columns="_activity_state", aggfunc="size", fill_value=0
+        )
+        for state_name in ACTIVITY_POSITIVE_STATES:
+            if state_name not in pos_counts.columns:
+                pos_counts[state_name] = 0
+        pos_counts = pos_counts.reindex(columns=ACTIVITY_POSITIVE_STATES, fill_value=0).reset_index()
+        pos_counts = pos_counts.rename(columns={"_agent_display": "المحصّل"})
+        available_positive = list(ACTIVITY_POSITIVE_STATES)
+        pos_plot = pos_counts.copy()
         pos_plot["_ترتيب"] = pos_plot[available_positive].sum(axis=1)
-        pos_plot = pos_plot.sort_values("_ترتيب", ascending=True)
+        pos_plot = pos_plot[pos_plot["_ترتيب"] > 0].sort_values("_ترتيب", ascending=True)
         pos_long = pos_plot.melt(id_vars=["المحصّل"], value_vars=available_positive, var_name="الحالة", value_name="العدد")
-        if pos_long["العدد"].sum() > 0:
+        if not pos_long.empty and pos_long["العدد"].sum() > 0:
             pos_fig = px.bar(
                 pos_long, x="العدد", y="المحصّل", orientation="h", color="الحالة", barmode="stack",
                 template=export_template,
@@ -2358,7 +2376,12 @@ def build_dashboard_html(df, class_col, sales_col, time_col, source_name="", fil
         chart_specs.append(("ops", "الوقت المهدر", waste_fig, "plot_waste"))
 
     agent_options = sorted(work["_agent_display"].dropna().astype(str).unique().tolist())
-    state_options = sorted({str(s) for s in work["_activity_state"].dropna().astype(str).tolist() if str(s).strip()})
+    state_options = sorted({
+        str(s).strip()
+        for s in list(work.get("_activity_state", pd.Series(dtype=object)).dropna().astype(str))
+        + list(work.get("_unreachable_state", pd.Series(dtype=object)).dropna().astype(str))
+        if str(s).strip() and str(s).strip().lower() not in {"nan", "none", "null", "غير محدد", "أخرى"}
+    })
 
     parts = [
         "<!doctype html><html lang='ar' dir='rtl'><head><meta charset='utf-8'>",
@@ -2525,7 +2548,7 @@ function selectedRows() {
   const to = (document.getElementById('filter-date-to') || {}).value || '';
   return activityData.filter(row => {
     if (agent.length && !agent.includes(row.agent)) return false;
-    if (state.length && !state.includes(row.state)) return false;
+    if (state.length && !(state.includes(row.state) || state.includes(row.unreachable))) return false;
     if (cls === 'success' && !row.success) return false;
     if (cls === 'failure' && row.success) return false;
     if (from && row.time && row.time.slice(0,10) < from) return false;
@@ -2600,40 +2623,55 @@ function refreshDashboard() {
 
   if (statePlot) {
     const stateNames = Object.keys(stateColors);
+    // عدم الوصول من حقل unreachable (الإفادة)
     const stateTraces = stateNames.map(state => ({
       type:'bar', orientation:'h', name:state,
       y:agents,
-      x:agents.map(a => rows.filter(r => r.agent===a && r.state===state).length),
+      x:agents.map(a => rows.filter(r => r.agent===a && r.unreachable===state).length),
       marker:{color: stateColors[state] || '#A8B8BC'},
-      text:agents.map(a => { const v = rows.filter(r => r.agent===a && r.state===state).length; return v > 0 ? v : ''; }),
+      text:agents.map(a => { const v = rows.filter(r => r.agent===a && r.unreachable===state).length; return v > 0 ? v : ''; }),
       textposition:'inside', insidetextanchor:'middle', textfont:{size:11},
       hovertemplate:'<b>%{y}</b><br>%{fullData.name}: %{x:,}<extra></extra>'
     }));
-    const stateTotals = agents.map(a => rows.filter(r => r.agent===a && stateNames.includes(r.state)).length);
-    stateTraces.push({
-      type:'scatter', mode:'text', y:agents, x:stateTotals,
-      text:stateTotals.map(v => v > 0 ? String(v) : ''),
+    const stateTotals = agents.map(a => rows.filter(r => r.agent===a && stateNames.includes(r.unreachable)).length);
+    const agentsWithState = agents.filter((a,i) => stateTotals[i] > 0);
+    const totalsFiltered = stateTotals.filter(v => v > 0);
+    const tracesFiltered = stateNames.map(state => ({
+      type:'bar', orientation:'h', name:state,
+      y:agentsWithState,
+      x:agentsWithState.map(a => rows.filter(r => r.agent===a && r.unreachable===state).length),
+      marker:{color: stateColors[state] || '#A8B8BC'},
+      text:agentsWithState.map(a => { const v = rows.filter(r => r.agent===a && r.unreachable===state).length; return v > 0 ? v : ''; }),
+      textposition:'inside', insidetextanchor:'middle', textfont:{size:11},
+      hovertemplate:'<b>%{y}</b><br>%{fullData.name}: %{x:,}<extra></extra>'
+    }));
+    tracesFiltered.push({
+      type:'scatter', mode:'text', y:agentsWithState, x:totalsFiltered,
+      text:totalsFiltered.map(v => String(v)),
       textposition:'middle right', textfont:{size:12, color:'#1F2937'},
       showlegend:false, hoverinfo:'skip', cliponaxis:false
     });
-    Plotly.react(statePlot, stateTraces, {...(statePlot.layout || {}), barmode:'stack', margin:{...(statePlot.layout && statePlot.layout.margin || {}), r:55}});
+    Plotly.react(statePlot, tracesFiltered, {...(statePlot.layout || {}), barmode:'stack', margin:{...(statePlot.layout && statePlot.layout.margin || {}), r:55}});
   }
 
   if (positivePlot) {
     const posNames = Object.keys(positiveStateColors);
+    // الوعد والسداد من حقل state (Sub State)
+    const posTotals = agents.map(a => rows.filter(r => r.agent===a && posNames.includes(r.state)).length);
+    const agentsWithPos = agents.filter((a,i) => posTotals[i] > 0);
+    const totalsFiltered = posTotals.filter(v => v > 0);
     const positiveTraces = posNames.map(state => ({
       type:'bar', orientation:'h', name:state,
-      y:agents,
-      x:agents.map(a => rows.filter(r => r.agent===a && r.state===state).length),
+      y:agentsWithPos,
+      x:agentsWithPos.map(a => rows.filter(r => r.agent===a && r.state===state).length),
       marker:{color: positiveStateColors[state] || '#6A9A9D'},
-      text:agents.map(a => { const v = rows.filter(r => r.agent===a && r.state===state).length; return v > 0 ? v : ''; }),
+      text:agentsWithPos.map(a => { const v = rows.filter(r => r.agent===a && r.state===state).length; return v > 0 ? v : ''; }),
       textposition:'inside', insidetextanchor:'middle', textfont:{size:11},
       hovertemplate:'<b>%{y}</b><br>%{fullData.name}: %{x:,}<extra></extra>'
     }));
-    const posTotals = agents.map(a => rows.filter(r => r.agent===a && posNames.includes(r.state)).length);
     positiveTraces.push({
-      type:'scatter', mode:'text', y:agents, x:posTotals,
-      text:posTotals.map(v => v > 0 ? String(v) : ''),
+      type:'scatter', mode:'text', y:agentsWithPos, x:totalsFiltered,
+      text:totalsFiltered.map(v => String(v)),
       textposition:'middle right', textfont:{size:12, color:'#1F2937'},
       showlegend:false, hoverinfo:'skip', cliponaxis:false
     });

@@ -168,6 +168,42 @@ DASH_PAYMENTS_CACHE_KEY = "dashboard_payments_cache"
 DASH_ACTIVE_PAGE_KEY = "dashboard_active_page"
 
 # ==========================================================
+# أعمدة إضافية لتحليل المحفظة داخل داشبورد النشاط
+# ==========================================================
+WALLET_ASSIGN_DATE_CANDIDATES = [
+    "Assign Date", "assign date", "AssignDate", "Assignment Date", "assignment date",
+    "تاريخ الاسناد", "تاريخ الإسناد", "Assign date",
+]
+WALLET_DEBIT_DATE_CANDIDATES = [
+    "Debit Date", "debit date", "DebitDate", "Date of Debit", "Accident Date",
+    "تاريخ الحادث", "تاريخ الدين",
+]
+WALLET_NATIONALITY_CANDIDATES = [
+    "Nationality", "nationality", "Customer Nationality", "client nationality",
+    "جنسية العميل", "الجنسية", "جنسية",
+]
+WALLET_CUSTOMER_STATE_CANDIDATES = [
+    "Customer State", "customer state", "Client State", "client state",
+    "حالة العميل", "Status", "status", "State", "state",
+    "Sub State", "sub state", "SubState", "الحالة الفرعية",
+]
+WALLET_CUSTOMER_ID_CANDIDATES = [
+    "Customer ID", "customer id", "CustomerId", "Client ID", "client id",
+    "Debitor", "debitor", "رقم العميل", "رقم المدين", "Customer Number",
+    "Customer Account number", "Customer Account Number", "رقم حساب العميل",
+]
+WALLET_AGING_BUCKETS = [
+    (0, 30, "0 — 30 يوم"),
+    (31, 60, "31 — 60 يوم"),
+    (61, 90, "61 — 90 يوم"),
+    (91, 180, "91 — 180 يوم"),
+    (181, None, "أكثر من 180 يوم"),
+]
+WALLET_AGING_COL = "عمر_الاسناد"
+WALLET_COLLECTED_COL = "تم_التحصيل"
+WALLET_REMAINING_COL = "باقي_المديونية"
+
+# ==========================================================
 # إعدادات تويب الجدولة المتعثرة
 # ==========================================================
 SCHEDULE_RESULT_KEY = "schedule_stalled_result"
@@ -5198,27 +5234,263 @@ def _build_kpi_figure(cards, height=200):
     return figure
 
 
-def _build_wallet_analysis(df):
-    """تحليل كامل لملف المحفظة: KPIs + توزيع الحالات + المديونية حسب المحصل/الحالة."""
-    sales_col = find_column(df, SALES_PERSON_CANDIDATES)
-    sub_col = find_column(df, PROMISE_SUB_STATE_CANDIDATES)
-    net_col = find_column(df, PROMISE_NET_AMOUNT_CANDIDATES)
+def _wallet_aging_bucket(days):
+    """تصنيف أيام عمر الإسناد إلى بوكيتات ثابتة."""
+    if days is None or (isinstance(days, float) and pd.isna(days)):
+        return "غير محدد"
+    try:
+        d = int(days)
+    except (TypeError, ValueError):
+        return "غير محدد"
+    if d < 0:
+        d = 0
+    for low, high, label in WALLET_AGING_BUCKETS:
+        if high is None:
+            if d >= low:
+                return label
+        elif low <= d <= high:
+            return label
+    return "غير محدد"
+
+
+def _wallet_prepare_frame(df):
+    """تجهيز إطار المحفظة: أعمدة رقمية + عمر الإسناد + التحصيل والمتبقي."""
     work = df.copy()
+    sales_col = find_column(work, SALES_PERSON_CANDIDATES)
+    sub_col = find_column(work, PROMISE_SUB_STATE_CANDIDATES)
+    net_col = find_column(work, PROMISE_NET_AMOUNT_CANDIDATES)
+    original_col = find_column(work, CASE_ORIGINAL_DEBT_CANDIDATES)
+    payment_col = find_column(work, CASE_PAYMENT_CANDIDATES)
+    assign_col = find_column(work, WALLET_ASSIGN_DATE_CANDIDATES)
+    debit_col = find_column(work, WALLET_DEBIT_DATE_CANDIDATES)
+    nationality_col = find_column(work, WALLET_NATIONALITY_CANDIDATES)
+    customer_state_col = find_column(work, WALLET_CUSTOMER_STATE_CANDIDATES)
+    customer_id_col = (
+        find_column(work, WALLET_CUSTOMER_ID_CANDIDATES)
+        or find_column(work, ACCOUNT_NUMBER_CANDIDATES)
+        or find_column(work, ID_CANDIDATES)
+    )
+
     if net_col and net_col in work.columns:
         work[net_col] = pd.to_numeric(work[net_col], errors="coerce").fillna(0)
+    if original_col and original_col in work.columns:
+        work[original_col] = pd.to_numeric(work[original_col], errors="coerce").fillna(0)
+    if payment_col and payment_col in work.columns:
+        work[payment_col] = pd.to_numeric(work[payment_col], errors="coerce").fillna(0)
+
+    if net_col:
+        work[WALLET_REMAINING_COL] = work[net_col]
+    else:
+        work[WALLET_REMAINING_COL] = 0.0
+
+    # تم التحصيل: نعتمد أولاً على عمود Payment
+    if payment_col:
+        work[WALLET_COLLECTED_COL] = work[payment_col].clip(lower=0)
+    elif original_col and net_col:
+        work[WALLET_COLLECTED_COL] = (work[original_col] - work[net_col]).clip(lower=0)
+    elif original_col:
+        work[WALLET_COLLECTED_COL] = work[original_col].clip(lower=0)
+    else:
+        work[WALLET_COLLECTED_COL] = 0.0
+
+    today = datetime.now().date()
+    if assign_col and assign_col in work.columns:
+        assign_dates = work[assign_col].map(parse_date_cell)
+        work["_assign_date"] = assign_dates
+        work["_aging_days"] = assign_dates.map(
+            lambda d: (today - d).days if d is not None else None
+        )
+        work[WALLET_AGING_COL] = work["_aging_days"].map(_wallet_aging_bucket)
+    else:
+        work["_assign_date"] = None
+        work["_aging_days"] = None
+        work[WALLET_AGING_COL] = "غير محدد"
+
+    if debit_col and debit_col in work.columns:
+        work["_debit_date"] = work[debit_col].map(parse_date_cell)
+    else:
+        work["_debit_date"] = None
+
+    cols = {
+        "sales_col": sales_col,
+        "sub_col": sub_col,
+        "net_col": net_col,
+        "original_col": original_col,
+        "payment_col": payment_col,
+        "assign_col": assign_col,
+        "debit_col": debit_col,
+        "nationality_col": nationality_col,
+        "customer_state_col": customer_state_col,
+        "customer_id_col": customer_id_col,
+    }
+    return work, cols
+
+
+def _wallet_apply_slicers(work, cols):
+    """سلايسرز صفحة المحفظة: محصل / تاريخ إسناد / تاريخ حادث / جنسية / حالة العميل."""
+    filtered = work
+    hint_parts = []
+
+    sales_col = cols.get("sales_col")
+    if sales_col and sales_col in filtered.columns:
+        agents = sorted({
+            v for v in filtered[sales_col].astype(str).str.strip().tolist()
+            if v and v.lower() not in {"nan", "none", "null", ""}
+        })
+        selected_agents = st.multiselect(
+            "👤 المحصل", options=agents, default=[], key="wallet_slicer_agent"
+        )
+        if selected_agents:
+            filtered = filtered[filtered[sales_col].astype(str).str.strip().isin(selected_agents)]
+            hint_parts.append(f"المحصل: {len(selected_agents)}")
+
+    assign_col = cols.get("assign_col")
+    if assign_col and "_assign_date" in filtered.columns:
+        valid_dates = [d for d in filtered["_assign_date"].tolist() if d is not None]
+        if valid_dates:
+            dmin, dmax = min(valid_dates), max(valid_dates)
+            c1, c2 = st.columns(2)
+            with c1:
+                start_assign = st.date_input(
+                    "📅 تاريخ الإسناد من", value=dmin, min_value=dmin, max_value=dmax,
+                    key="wallet_slicer_assign_from",
+                )
+            with c2:
+                end_assign = st.date_input(
+                    "📅 تاريخ الإسناد إلى", value=dmax, min_value=dmin, max_value=dmax,
+                    key="wallet_slicer_assign_to",
+                )
+            if start_assign and end_assign:
+                mask = filtered["_assign_date"].map(
+                    lambda d: d is not None and start_assign <= d <= end_assign
+                )
+                filtered = filtered[mask]
+                hint_parts.append(f"إسناد: {start_assign} → {end_assign}")
+
+    debit_col = cols.get("debit_col")
+    if debit_col and "_debit_date" in filtered.columns:
+        valid_dates = [d for d in filtered["_debit_date"].tolist() if d is not None]
+        if valid_dates:
+            dmin, dmax = min(valid_dates), max(valid_dates)
+            c1, c2 = st.columns(2)
+            with c1:
+                start_debit = st.date_input(
+                    "📅 تاريخ الحادث من", value=dmin, min_value=dmin, max_value=dmax,
+                    key="wallet_slicer_debit_from",
+                )
+            with c2:
+                end_debit = st.date_input(
+                    "📅 تاريخ الحادث إلى", value=dmax, min_value=dmin, max_value=dmax,
+                    key="wallet_slicer_debit_to",
+                )
+            if start_debit and end_debit:
+                mask = filtered["_debit_date"].map(
+                    lambda d: d is not None and start_debit <= d <= end_debit
+                )
+                filtered = filtered[mask]
+                hint_parts.append(f"حادث: {start_debit} → {end_debit}")
+
+    nationality_col = cols.get("nationality_col")
+    if nationality_col and nationality_col in filtered.columns:
+        nations = sorted({
+            v for v in filtered[nationality_col].astype(str).str.strip().tolist()
+            if v and v.lower() not in {"nan", "none", "null", ""}
+        })
+        selected_nations = st.multiselect(
+            "🌍 جنسية العميل", options=nations, default=[], key="wallet_slicer_nationality"
+        )
+        if selected_nations:
+            filtered = filtered[filtered[nationality_col].astype(str).str.strip().isin(selected_nations)]
+            hint_parts.append(f"الجنسية: {len(selected_nations)}")
+
+    customer_state_col = cols.get("customer_state_col")
+    if customer_state_col and customer_state_col in filtered.columns:
+        states = sorted({
+            v for v in filtered[customer_state_col].astype(str).str.strip().tolist()
+            if v and v.lower() not in {"nan", "none", "null", ""}
+        })
+        selected_states = st.multiselect(
+            "🏷️ حالة العميل", options=states, default=[], key="wallet_slicer_customer_state"
+        )
+        if selected_states:
+            filtered = filtered[filtered[customer_state_col].astype(str).str.strip().isin(selected_states)]
+            hint_parts.append(f"حالة العميل: {len(selected_states)}")
+
+    return filtered, " · ".join(hint_parts)
+
+
+def _build_wallet_aging_table(work, sub_col):
+    """جدول عمر الإسناد: البوكيت + التحصيل + المتبقي + الحالة + عدد الحسابات."""
+    bucket_order = [label for _, _, label in WALLET_AGING_BUCKETS] + ["غير محدد"]
+    rows = []
+    group_cols = [WALLET_AGING_COL]
+    if sub_col and sub_col in work.columns:
+        group_cols.append(sub_col)
+
+    empty_cols = ["عمر الإسناد", "تم التحصيل", "باقي المديونية", "الحالة", "عدد الحسابات"]
+    if work.empty:
+        return pd.DataFrame(columns=empty_cols)
+
+    grouped = work.groupby(group_cols, dropna=False)
+    for keys, grp in grouped:
+        if not isinstance(keys, tuple):
+            keys = (keys,)
+        aging_label = str(keys[0]) if keys else "غير محدد"
+        state_label = str(keys[1]).strip() if len(keys) > 1 else "—"
+        rows.append({
+            "عمر الإسناد": aging_label,
+            "تم التحصيل": float(grp[WALLET_COLLECTED_COL].sum()),
+            "باقي المديونية": float(grp[WALLET_REMAINING_COL].sum()),
+            "الحالة": state_label,
+            "عدد الحسابات": int(len(grp)),
+        })
+
+    table = pd.DataFrame(rows)
+    if table.empty:
+        return table
+    table["_ord"] = table["عمر الإسناد"].map({lab: i for i, lab in enumerate(bucket_order)}).fillna(99)
+    table = (
+        table.sort_values(["_ord", "عدد الحسابات"], ascending=[True, False])
+        .drop(columns=["_ord"])
+        .reset_index(drop=True)
+    )
+    return table
+
+
+def _build_wallet_analysis(df):
+    """تحليل كامل لملف المحفظة: KPIs + الحالات + عمر الإسناد + الجنسية + حالة العميل."""
+    work, cols = _wallet_prepare_frame(df)
+    sales_col = cols["sales_col"]
+    sub_col = cols["sub_col"]
+    nationality_col = cols["nationality_col"]
+    customer_state_col = cols["customer_state_col"]
+    customer_id_col = cols["customer_id_col"]
 
     total_accounts = len(work)
-    total_amount = float(work[net_col].sum()) if net_col else 0.0
-    agent_count = int(work[sales_col].astype(str).str.strip().nunique()) if sales_col and sales_col in work.columns else 0
-    avg_amount = (total_amount / total_accounts) if total_accounts and net_col else 0.0
+    total_amount = float(work[WALLET_REMAINING_COL].sum())
+    total_collected = float(work[WALLET_COLLECTED_COL].sum())
+    agent_count = (
+        int(work[sales_col].astype(str).str.strip().nunique())
+        if sales_col and sales_col in work.columns else 0
+    )
+    if customer_id_col and customer_id_col in work.columns:
+        customer_count = int(
+            work[customer_id_col].astype(str).str.strip()
+            .replace({"": pd.NA, "nan": pd.NA, "none": pd.NA, "null": pd.NA, "None": pd.NA})
+            .nunique(dropna=True)
+        )
+    else:
+        customer_count = total_accounts
+    avg_amount = (total_amount / total_accounts) if total_accounts else 0.0
 
     figs = {}
     figs["kpi"] = _build_kpi_figure([
-        ("📋<br>إجمالي حسابات المحفظة", total_accounts, {"valueformat": ",d"}, THEME["text"]),
-        ("👥<br>عدد المحصلين", agent_count, {"valueformat": ",d"}, THEME["text"]),
         ("💰<br>إجمالي المديونية", total_amount, {"valueformat": ",.0f"}, OPS_DARK),
-        ("📊<br>متوسط المديونية للحساب", avg_amount, {"valueformat": ",.0f"}, OPS_MID),
-    ])
+        ("👥<br>عدد المحصلين", agent_count, {"valueformat": ",d"}, THEME["text"]),
+        ("🧑<br>عدد العملاء", customer_count, {"valueformat": ",d"}, THEME["text"]),
+        ("📋<br>عدد الحسابات", total_accounts, {"valueformat": ",d"}, THEME["text"]),
+        ("📊<br>متوسط المديونية", avg_amount, {"valueformat": ",.0f"}, OPS_MID),
+    ], height=210)
 
     if sub_col and sub_col in work.columns:
         state_counts = (
@@ -5226,27 +5498,40 @@ def _build_wallet_analysis(df):
             .sort_values(ascending=True).reset_index()
         )
         state_counts.columns = ["الحالة", "عدد الحسابات"]
-        fig = px.bar(state_counts, x="عدد الحسابات", y="الحالة", orientation="h", text="عدد الحسابات",
-                     color="عدد الحسابات", color_continuous_scale=OPS_SCALE, template=PLOTLY_TEMPLATE)
-        _apply_ops_chart_style(fig, "توزيع حسابات المحفظة حسب الحالة", height=max(430, 36 * len(state_counts) + 120),
-                                xaxis_title="عدد الحسابات", show_legend=False, margin=dict(t=70, b=55, l=190, r=60))
-        fig.update_traces(texttemplate="%{x:,.0f}", textposition="outside", cliponaxis=False, marker_line_width=0,
-                           hovertemplate="<b>%{y}</b><br>عدد الحسابات: %{x:,.0f}<extra></extra>")
+        fig = px.bar(
+            state_counts, x="عدد الحسابات", y="الحالة", orientation="h", text="عدد الحسابات",
+            color="عدد الحسابات", color_continuous_scale=OPS_SCALE, template=PLOTLY_TEMPLATE,
+        )
+        _apply_ops_chart_style(
+            fig, "توزيع حسابات المحفظة حسب الحالة",
+            height=max(430, 36 * len(state_counts) + 120),
+            xaxis_title="عدد الحسابات", show_legend=False, margin=dict(t=70, b=55, l=190, r=60),
+        )
+        fig.update_traces(
+            texttemplate="%{x:,.0f}", textposition="outside", cliponaxis=False, marker_line_width=0,
+            hovertemplate="<b>%{y}</b><br>عدد الحسابات: %{x:,.0f}<extra></extra>",
+        )
         figs["states"] = fig
 
-        if net_col:
-            by_state_amt = (
-                work.groupby(work[sub_col].astype(str).str.strip())[net_col].sum()
-                .sort_values(ascending=True).tail(15).reset_index()
-            )
-            by_state_amt.columns = ["الحالة", "إجمالي المبلغ"]
-            fig2 = px.bar(by_state_amt, x="إجمالي المبلغ", y="الحالة", orientation="h", text="إجمالي المبلغ",
-                          color="إجمالي المبلغ", color_continuous_scale=OPS_SCALE, template=PLOTLY_TEMPLATE)
-            _apply_ops_chart_style(fig2, "إجمالي المديونية حسب الحالة", height=max(430, 36 * len(by_state_amt) + 120),
-                                    xaxis_title="المبلغ", show_legend=False, margin=dict(t=70, b=55, l=190, r=60))
-            fig2.update_traces(texttemplate="%{x:,.0f}", textposition="outside", cliponaxis=False, marker_line_width=0,
-                                hovertemplate="<b>%{y}</b><br>المبلغ: %{x:,.0f}<extra></extra>")
-            figs["state_amount"] = fig2
+        by_state_amt = (
+            work.groupby(work[sub_col].astype(str).str.strip())[WALLET_REMAINING_COL].sum()
+            .sort_values(ascending=True).tail(15).reset_index()
+        )
+        by_state_amt.columns = ["الحالة", "إجمالي المبلغ"]
+        fig2 = px.bar(
+            by_state_amt, x="إجمالي المبلغ", y="الحالة", orientation="h", text="إجمالي المبلغ",
+            color="إجمالي المبلغ", color_continuous_scale=OPS_SCALE, template=PLOTLY_TEMPLATE,
+        )
+        _apply_ops_chart_style(
+            fig2, "المديونية حسب الحالة",
+            height=max(430, 36 * len(by_state_amt) + 120),
+            xaxis_title="المبلغ", show_legend=False, margin=dict(t=70, b=55, l=190, r=60),
+        )
+        fig2.update_traces(
+            texttemplate="%{x:,.0f}", textposition="outside", cliponaxis=False, marker_line_width=0,
+            hovertemplate="<b>%{y}</b><br>المبلغ: %{x:,.0f}<extra></extra>",
+        )
+        figs["state_amount"] = fig2
 
     if sales_col and sales_col in work.columns:
         agent_counts = (
@@ -5254,50 +5539,206 @@ def _build_wallet_analysis(df):
             .sort_values(ascending=True).reset_index()
         )
         agent_counts.columns = ["المحصّل", "عدد الحسابات"]
-        fig3 = px.bar(agent_counts, x="عدد الحسابات", y="المحصّل", orientation="h", text="عدد الحسابات",
-                      color="عدد الحسابات", color_continuous_scale=OPS_SCALE, template=PLOTLY_TEMPLATE)
-        _apply_ops_chart_style(fig3, "توزيع حسابات المحفظة حسب المحصل", height=max(430, 36 * len(agent_counts) + 120),
-                                xaxis_title="عدد الحسابات", show_legend=False, margin=dict(t=70, b=55, l=170, r=60))
-        fig3.update_traces(texttemplate="%{x:,.0f}", textposition="outside", cliponaxis=False, marker_line_width=0,
-                            hovertemplate="<b>%{y}</b><br>عدد الحسابات: %{x:,.0f}<extra></extra>")
+        fig3 = px.bar(
+            agent_counts, x="عدد الحسابات", y="المحصّل", orientation="h", text="عدد الحسابات",
+            color="عدد الحسابات", color_continuous_scale=OPS_SCALE, template=PLOTLY_TEMPLATE,
+        )
+        _apply_ops_chart_style(
+            fig3, "توزيع حسابات المحفظة حسب المحصل",
+            height=max(430, 36 * len(agent_counts) + 120),
+            xaxis_title="عدد الحسابات", show_legend=False, margin=dict(t=70, b=55, l=170, r=60),
+        )
+        fig3.update_traces(
+            texttemplate="%{x:,.0f}", textposition="outside", cliponaxis=False, marker_line_width=0,
+            hovertemplate="<b>%{y}</b><br>عدد الحسابات: %{x:,.0f}<extra></extra>",
+        )
         figs["by_agent_count"] = fig3
 
-        if net_col:
-            by_agent_amt = (
-                work.groupby(work[sales_col].astype(str).str.strip())[net_col].sum()
-                .sort_values(ascending=True).tail(15).reset_index()
-            )
-            by_agent_amt.columns = ["المحصّل", "إجمالي المديونية"]
-            fig4 = px.bar(by_agent_amt, x="إجمالي المديونية", y="المحصّل", orientation="h", text="إجمالي المديونية",
-                          color="إجمالي المديونية", color_continuous_scale=OPS_SCALE, template=PLOTLY_TEMPLATE)
-            _apply_ops_chart_style(fig4, "إجمالي المديونية حسب المحصل", height=max(430, 36 * len(by_agent_amt) + 120),
-                                    xaxis_title="المبلغ", show_legend=False, margin=dict(t=70, b=55, l=170, r=60))
-            fig4.update_traces(texttemplate="%{x:,.0f}", textposition="outside", cliponaxis=False, marker_line_width=0,
-                                hovertemplate="<b>%{y}</b><br>المبلغ: %{x:,.0f}<extra></extra>")
-            figs["by_agent_amount"] = fig4
+    bucket_order = [label for _, _, label in WALLET_AGING_BUCKETS] + ["غير محدد"]
+    aging_summary = (
+        work.groupby(WALLET_AGING_COL, dropna=False)
+        .agg(
+            تم_التحصيل=(WALLET_COLLECTED_COL, "sum"),
+            باقي_المديونية=(WALLET_REMAINING_COL, "sum"),
+            عدد_الحسابات=(WALLET_AGING_COL, "size"),
+        )
+        .reset_index()
+    )
+    aging_summary["_ord"] = aging_summary[WALLET_AGING_COL].map(
+        {lab: i for i, lab in enumerate(bucket_order)}
+    ).fillna(99)
+    aging_summary = aging_summary.sort_values("_ord")
+    if not aging_summary.empty and (
+        aging_summary["تم_التحصيل"].sum() + aging_summary["باقي_المديونية"].sum()
+    ) > 0:
+        aging_long = aging_summary.melt(
+            id_vars=[WALLET_AGING_COL],
+            value_vars=["تم_التحصيل", "باقي_المديونية"],
+            var_name="النوع",
+            value_name="المبلغ",
+        )
+        aging_long["النوع"] = aging_long["النوع"].map({
+            "تم_التحصيل": "تم التحصيل",
+            "باقي_المديونية": "باقي المديونية",
+        })
+        fig_aging = px.bar(
+            aging_long,
+            x=WALLET_AGING_COL,
+            y="المبلغ",
+            color="النوع",
+            barmode="group",
+            text="المبلغ",
+            color_discrete_map={"تم التحصيل": OPS_POSITIVE, "باقي المديونية": OPS_NEGATIVE},
+            template=PLOTLY_TEMPLATE,
+            category_orders={WALLET_AGING_COL: bucket_order},
+        )
+        _apply_ops_chart_style(
+            fig_aging, "عمر الإسناد — التحصيل والمتبقي حسب البوكيت",
+            height=460, xaxis_title="عمر الإسناد", yaxis_title="المبلغ",
+            margin=dict(t=70, b=70, l=60, r=40),
+        )
+        fig_aging.update_traces(
+            texttemplate="%{y:,.0f}", textposition="outside", cliponaxis=False, marker_line_width=0,
+            hovertemplate="<b>%{x}</b><br>%{fullData.name}: %{y:,.0f}<extra></extra>",
+        )
+        figs["aging"] = fig_aging
 
-    return figs, work
+    state_src_col = customer_state_col or sub_col
+    if state_src_col and state_src_col in work.columns:
+        cust_state = (
+            work[state_src_col].astype(str).str.strip()
+            .replace({"": pd.NA, "nan": pd.NA, "none": pd.NA, "null": pd.NA})
+            .dropna().value_counts().head(12).reset_index()
+        )
+        cust_state.columns = ["حالة العميل", "العدد"]
+        if not cust_state.empty:
+            fig_pie = px.pie(
+                cust_state, values="العدد", names="حالة العميل",
+                color="حالة العميل", color_discrete_sequence=OPS_SCALE + ACTIVITY_AGENT_PALETTE,
+                template=PLOTLY_TEMPLATE,
+            )
+            _apply_ops_chart_style(
+                fig_pie, "توزيع حالة العميل", height=430, margin=dict(t=70, b=40, l=40, r=40)
+            )
+            fig_pie.update_traces(
+                texttemplate="%{label}<br>%{percent:.1%}",
+                textposition="inside",
+                hovertemplate="<b>%{label}</b><br>العدد: %{value:,.0f}<br>النسبة: %{percent:.1%}<extra></extra>",
+            )
+            figs["customer_state_pie"] = fig_pie
+
+    if nationality_col and nationality_col in work.columns:
+        nation = (
+            work[nationality_col].astype(str).str.strip()
+            .replace({"": pd.NA, "nan": pd.NA, "none": pd.NA, "null": pd.NA})
+            .dropna().value_counts().head(12).reset_index()
+        )
+        nation.columns = ["الجنسية", "العدد"]
+        if not nation.empty:
+            fig_donut = px.pie(
+                nation, values="العدد", names="الجنسية", hole=0.55,
+                color="الجنسية", color_discrete_sequence=OPS_SCALE + ACTIVITY_AGENT_PALETTE,
+                template=PLOTLY_TEMPLATE,
+            )
+            _apply_ops_chart_style(
+                fig_donut, "توزيع جنسية العميل", height=430, margin=dict(t=70, b=40, l=40, r=40)
+            )
+            fig_donut.update_traces(
+                texttemplate="%{label}<br>%{percent:.1%}",
+                textposition="inside",
+                hovertemplate="<b>%{label}</b><br>العدد: %{value:,.0f}<br>النسبة: %{percent:.1%}<extra></extra>",
+            )
+            figs["nationality_donut"] = fig_donut
+
+    aging_table = _build_wallet_aging_table(work, sub_col)
+    meta = {
+        **cols,
+        "total_accounts": total_accounts,
+        "total_amount": total_amount,
+        "total_collected": total_collected,
+        "agent_count": agent_count,
+        "customer_count": customer_count,
+        "avg_amount": avg_amount,
+    }
+    return figs, work, aging_table, meta
 
 
 def render_wallet_page(df):
     st.subheader("💼 تحليل المحفظة الكاملة")
-    figs, work = _build_wallet_analysis(df)
+    prepared, cols = _wallet_prepare_frame(df)
+
+    with st.expander("🔎 فلاتر المحفظة (Slicers)", expanded=True):
+        filtered, hint = _wallet_apply_slicers(prepared, cols)
+    if hint:
+        st.caption(f"الفلاتر المفعّلة: {hint}")
+    st.caption(f"المعروض: {len(filtered):,} من أصل {len(prepared):,} حساب")
+
+    figs, work, aging_table, meta = _build_wallet_analysis(filtered)
+
     st.plotly_chart(figs["kpi"], use_container_width=True, config=PLOTLY_CONFIG, key="wallet_kpi")
+
     col1, col2 = st.columns(2)
     with col1:
         if "states" in figs:
             with st.container(border=True):
                 st.plotly_chart(figs["states"], use_container_width=True, config=PLOTLY_CONFIG, key="wallet_states")
-        if "by_agent_count" in figs:
-            with st.container(border=True):
-                st.plotly_chart(figs["by_agent_count"], use_container_width=True, config=PLOTLY_CONFIG, key="wallet_agent_count")
     with col2:
         if "state_amount" in figs:
             with st.container(border=True):
                 st.plotly_chart(figs["state_amount"], use_container_width=True, config=PLOTLY_CONFIG, key="wallet_state_amount")
-        if "by_agent_amount" in figs:
+
+    if "by_agent_count" in figs:
+        with st.container(border=True):
+            st.plotly_chart(figs["by_agent_count"], use_container_width=True, config=PLOTLY_CONFIG, key="wallet_agent_count")
+
+    if "aging" in figs:
+        with st.container(border=True):
+            st.plotly_chart(figs["aging"], use_container_width=True, config=PLOTLY_CONFIG, key="wallet_aging")
+    else:
+        st.info("لا يتوفر عمود Assign Date لحساب عمر الإسناد، أو لا توجد مبالغ للعرض.")
+
+    c3, c4 = st.columns(2)
+    with c3:
+        if "customer_state_pie" in figs:
             with st.container(border=True):
-                st.plotly_chart(figs["by_agent_amount"], use_container_width=True, config=PLOTLY_CONFIG, key="wallet_agent_amount")
+                st.plotly_chart(
+                    figs["customer_state_pie"], use_container_width=True,
+                    config=PLOTLY_CONFIG, key="wallet_customer_state",
+                )
+        else:
+            st.info("لا يوجد عمود لحالة العميل.")
+    with c4:
+        if "nationality_donut" in figs:
+            with st.container(border=True):
+                st.plotly_chart(
+                    figs["nationality_donut"], use_container_width=True,
+                    config=PLOTLY_CONFIG, key="wallet_nationality",
+                )
+        else:
+            st.info("لا يوجد عمود لجنسية العميل.")
+
+    st.subheader("📋 جدول عمر الإسناد")
+    if aging_table is not None and not aging_table.empty:
+        display_table = aging_table.copy()
+        for col_name in ("تم التحصيل", "باقي المديونية"):
+            if col_name in display_table.columns:
+                display_table[col_name] = display_table[col_name].map(lambda v: f"{v:,.0f}")
+        st.dataframe(display_table, use_container_width=True, hide_index=True)
+
+        out_excel = io.BytesIO()
+        with pd.ExcelWriter(out_excel, engine="openpyxl") as writer:
+            aging_table.to_excel(writer, index=False, sheet_name="عمر_الاسناد")
+        st.download_button(
+            "⬇️ تحميل جدول عمر الإسناد",
+            data=out_excel.getvalue(),
+            file_name="wallet_aging_table.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            use_container_width=True,
+            key="wallet_aging_download",
+        )
+    else:
+        st.info("لا توجد بيانات لبناء جدول عمر الإسناد.")
+
     with st.expander("📋 عرض بيانات المحفظة"):
         st.dataframe(work, use_container_width=True, hide_index=True)
 
@@ -5511,15 +5952,47 @@ def _fig_html_card(fig, key_prefix, index):
 
 
 def _build_wallet_page_html(wallet_df):
-    figs, _work = _build_wallet_analysis(wallet_df)
-    parts = ["<div id='page-wallet' class='dash-page'>",
-             "<h2 class='section-title'>💼 تحليل المحفظة الكاملة</h2>"]
-    parts.append(_fig_html_card(figs["kpi"], "wallet", 0))
+    figs, _work, aging_table, meta = _build_wallet_analysis(wallet_df)
+    parts = [
+        "<div id='page-wallet' class='dash-page'>",
+        "<h2 class='section-title'>💼 تحليل المحفظة الكاملة</h2>",
+        "<section id='kpi-grid'>",
+        f"<div class='kpi'><div class='label'>💰 إجمالي المديونية</div><div class='value' style='color:{OPS_DARK}'>{meta.get('total_amount', 0):,.0f}</div></div>",
+        f"<div class='kpi'><div class='label'>👥 عدد المحصلين</div><div class='value'>{meta.get('agent_count', 0):,}</div></div>",
+        f"<div class='kpi'><div class='label'>🧑 عدد العملاء</div><div class='value'>{meta.get('customer_count', 0):,}</div></div>",
+        f"<div class='kpi'><div class='label'>📋 عدد الحسابات</div><div class='value'>{meta.get('total_accounts', 0):,}</div></div>",
+        f"<div class='kpi'><div class='label'>📊 متوسط المديونية</div><div class='value' style='color:{OPS_MID}'>{meta.get('avg_amount', 0):,.0f}</div></div>",
+        "</section>",
+    ]
     parts.append("<div class='charts-grid'>")
-    for i, key in enumerate(("states", "state_amount", "by_agent_count", "by_agent_amount"), start=1):
+    chart_idx = 1
+    for key in ("states", "state_amount", "by_agent_count", "aging", "customer_state_pie", "nationality_donut"):
         if key in figs:
-            parts.append(_fig_html_card(figs[key], "wallet", i))
-    parts.append("</div></div>")
+            parts.append(_fig_html_card(figs[key], "wallet", chart_idx))
+            chart_idx += 1
+    parts.append("</div>")
+
+    if aging_table is not None and not aging_table.empty:
+        parts.append("<section class='panel'><h2 class='section-title'>📋 جدول عمر الإسناد</h2>")
+        parts.append("<div class='table-wrap'><table class='data-table'><thead><tr>")
+        for column in aging_table.columns:
+            parts.append(f"<th>{column}</th>")
+        parts.append("</tr></thead><tbody>")
+        for _, row in aging_table.iterrows():
+            parts.append("<tr>")
+            for column in aging_table.columns:
+                val = row[column]
+                if isinstance(val, (int, float)) and column != "عدد الحسابات":
+                    cell = f"{val:,.0f}"
+                elif isinstance(val, (int, float)):
+                    cell = f"{int(val):,}"
+                else:
+                    cell = str(val)
+                parts.append(f"<td>{cell}</td>")
+            parts.append("</tr>")
+        parts.append("</tbody></table></div></section>")
+
+    parts.append("</div>")
     return "".join(parts)
 
 

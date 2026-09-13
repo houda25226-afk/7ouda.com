@@ -2817,7 +2817,7 @@ def build_dashboard_html(df, class_col, sales_col, time_col, source_name="", fil
         f"h2.section-title{{margin:4px 0 12px;text-align:center;font-size:17px;color:{text}}}",
         "#interactive-filters,.filters-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px;align-items:end}",
         ".kpi-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin:10px 0 12px}",
-        ".charts-grid-2{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:22px;margin:0 0 22px;align-items:stretch}",".charts-grid-2 > .chart-card{display:flex;flex-direction:column;min-height:100%;box-shadow:0 4px 14px rgba(15,23,42,.06)}",".charts-grid-2 .js-plotly-plot,.charts-grid-2 .plotly-graph-div{width:100% !important}",".chart-card{margin:0}",
+        ".charts-grid-2{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:28px;margin:0 0 28px;align-items:stretch}",".charts-grid-2 > .panel,.charts-grid-2 > .chart-card{display:flex;flex-direction:column;min-height:100%;margin:0;box-shadow:0 6px 18px rgba(15,23,42,.07)}",".charts-grid-2 .js-plotly-plot,.charts-grid-2 .plotly-graph-div{width:100% !important}",".wallet-charts-row{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:28px;margin:0 0 28px;align-items:stretch}",".wallet-charts-row > .panel{margin:0 !important;min-width:0;box-shadow:0 6px 18px rgba(15,23,42,.07)}","@media (max-width:900px){.wallet-charts-row{grid-template-columns:1fr}}",
         "@media (max-width:900px){.charts-grid-2{grid-template-columns:1fr}}",
         f".filter-field{{display:flex;flex-direction:column;gap:6px;color:{text_dim};font-size:12px}}",
         f".filter-field input,.filter-field select,.filter-field button.multi-trigger{{background:{background};color:{text};border:1px solid {border};border-radius:10px;padding:9px 10px;font-size:13px;text-align:right}}",
@@ -6203,33 +6203,32 @@ def _build_wallet_page_html(wallet_df):
         plot_id_map[key] = pid
         chart_idx += 1
         return (
-            f"<article class='chart-card'>"
-            f"<h3>{title}</h3>"
-            f"<div class='meta' style='text-align:center;margin:0 0 6px;font-size:12px'>{escape(subtitle)}</div>"
+            "<section class='panel' style='margin:0'>"
+            f"<h2 class='section-title' style='margin:4px 0 6px'>{title}</h2>"
+            f"<div class='meta' style='text-align:center;margin:0 0 10px;font-size:12px'>{escape(subtitle)}</div>"
+            f"<div class='chart-card' style='border:none;box-shadow:none;padding:4px 0 0;margin:0'>"
             + _chart_card(figs[key], pid)
-            + "</article>"
+            + "</div></section>"
         )
 
-    # Row 1: states + state amount
-    row1 = [take("states", "📊 توزيع الحسابات حسب الحالة", "عدد الحسابات لكل Sub State"),
-            take("state_amount", "💰 المديونية حسب الحالة", "إجمالي Net Amount لكل حالة")]
-    row1 = [x for x in row1 if x]
-    if row1:
-        parts.append("<div class='charts-grid-2'>" + "".join(row1) + "</div>")
+    def _append_chart_row(items):
+        items = [x for x in items if x]
+        if not items:
+            return
+        parts.append("<div class='wallet-charts-row'>" + "".join(items) + "</div>")
 
-    # Row 2: agent + aging
-    row2 = [take("by_agent_count", "👤 توزيع الحسابات حسب المحصل", "عدد الحسابات المسندة لكل محصل"),
-            take("aging", "⏳ عمر الإسناد — التحصيل والمتبقي", "Payment مقابل الباقي حسب عمود عمر الإسناد")]
-    row2 = [x for x in row2 if x]
-    if row2:
-        parts.append("<div class='charts-grid-2'>" + "".join(row2) + "</div>")
-
-    # Row 3: customer state pie + nationality donut
-    row3 = [take("customer_state_pie", "🏷️ توزيع حالة العميل", "نسب حالات العميل"),
-            take("nationality_donut", "🌍 توزيع جنسية العميل", "نسب جنسيات العملاء")]
-    row3 = [x for x in row3 if x]
-    if row3:
-        parts.append("<div class='charts-grid-2'>" + "".join(row3) + "</div>")
+    _append_chart_row([
+        take("states", "📊 توزيع الحسابات حسب الحالة", "عدد الحسابات لكل Sub State"),
+        take("state_amount", "💰 المديونية حسب الحالة", "إجمالي Net Amount لكل حالة"),
+    ])
+    _append_chart_row([
+        take("by_agent_count", "👤 توزيع الحسابات حسب المحصل", "عدد الحسابات المسندة لكل محصل"),
+        take("aging", "⏳ عمر الإسناد — التحصيل والمتبقي", "Payment مقابل الباقي حسب عمود عمر الإسناد"),
+    ])
+    _append_chart_row([
+        take("customer_state_pie", "🏷️ توزيع حالة العميل", "نسب حالات العميل"),
+        take("nationality_donut", "🌍 توزيع جنسية العميل", "نسب جنسيات العملاء"),
+    ])
 
     # Matrix table (filled by JS on load/filter — Power BI style)
     parts.append("<section class='panel'>")

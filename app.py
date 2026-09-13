@@ -5551,11 +5551,39 @@ def _build_wallet_analysis(df):
         ("🧑<br>عدد العملاء", customer_count, {"valueformat": ",d"}, THEME["text"]),
         ("📋<br>عدد الحسابات", total_accounts, {"valueformat": ",d"}, THEME["text"]),
         ("📊<br>متوسط المديونية", avg_amount, {"valueformat": ",.0f"}, OPS_MID),
-    ], height=180)
+    ], height=160)
+
+    def _wallet_bar_style(fig, title, *, height, xaxis_title="", yaxis_title="", show_legend=False, margin=None):
+        """تنسيق شارتات المحفظة: قيم ظاهرة · جريد خفيف · زي نشاط المحصلين."""
+        _apply_ops_chart_style(
+            fig, title, height=height, xaxis_title=xaxis_title, yaxis_title=yaxis_title,
+            show_legend=show_legend, margin=margin or dict(t=56, b=48, l=120, r=56),
+        )
+        fig.update_layout(
+            uniformtext_minsize=10,
+            uniformtext_mode=False,
+            xaxis=dict(
+                showgrid=True, gridcolor="rgba(128,128,128,0.12)", gridwidth=1,
+                zeroline=False, automargin=True, title_font_size=12,
+            ),
+            yaxis=dict(
+                showgrid=False, zeroline=False, automargin=True, title_font_size=12,
+            ),
+            bargap=0.28,
+        )
+        fig.update_traces(
+            texttemplate="%{x:,.0f}" if fig.data and getattr(fig.data[0], "orientation", None) == "h" else "%{y:,.0f}",
+            textposition="outside",
+            cliponaxis=False,
+            textfont=dict(size=11),
+            marker_line_width=0,
+            constraintext="none",
+        )
+        return fig
 
     if sub_col and sub_col in work.columns:
         state_counts = (
-            work[sub_col].astype(str).str.strip().value_counts().head(15)
+            work[sub_col].astype(str).str.strip().value_counts().head(12)
             .sort_values(ascending=True).reset_index()
         )
         state_counts.columns = ["الحالة", "عدد الحسابات"]
@@ -5563,75 +5591,76 @@ def _build_wallet_analysis(df):
             state_counts, x="عدد الحسابات", y="الحالة", orientation="h", text="عدد الحسابات",
             color="عدد الحسابات", color_continuous_scale=OPS_SCALE, template=PLOTLY_TEMPLATE,
         )
-        _apply_ops_chart_style(
+        h = max(340, 30 * len(state_counts) + 100)
+        _wallet_bar_style(
             fig, "توزيع حسابات المحفظة حسب الحالة",
-            height=max(320, 28 * len(state_counts) + 90),
-            xaxis_title="عدد الحسابات", show_legend=False, margin=dict(t=70, b=55, l=190, r=60),
+            height=h, xaxis_title="عدد الحسابات",
+            margin=dict(t=56, b=40, l=140, r=64),
         )
         fig.update_traces(
-            texttemplate="%{x:,.0f}", textposition="outside", cliponaxis=False, marker_line_width=0,
             hovertemplate="<b>%{y}</b><br>عدد الحسابات: %{x:,.0f}<extra></extra>",
+            texttemplate="%{x:,.0f}",
         )
         figs["states"] = fig
 
         by_state_amt = (
-            work.groupby(work[sub_col].astype(str).str.strip())[WALLET_REMAINING_COL].sum()
-            .sort_values(ascending=True).tail(15).reset_index()
+            work.groupby(work[sub_col].astype(str).str.strip(), dropna=False)[WALLET_REMAINING_COL]
+            .sum().sort_values(ascending=True).tail(12).reset_index()
         )
-        by_state_amt.columns = ["الحالة", "إجمالي المبلغ"]
+        by_state_amt.columns = ["الحالة", "المبلغ"]
         fig2 = px.bar(
-            by_state_amt, x="إجمالي المبلغ", y="الحالة", orientation="h", text="إجمالي المبلغ",
-            color="إجمالي المبلغ", color_continuous_scale=OPS_SCALE, template=PLOTLY_TEMPLATE,
+            by_state_amt, x="المبلغ", y="الحالة", orientation="h", text="المبلغ",
+            color="المبلغ", color_continuous_scale=OPS_SCALE, template=PLOTLY_TEMPLATE,
         )
-        _apply_ops_chart_style(
+        h2 = max(340, 30 * len(by_state_amt) + 100)
+        _wallet_bar_style(
             fig2, "المديونية حسب الحالة",
-            height=max(320, 28 * len(by_state_amt) + 90),
-            xaxis_title="المبلغ", show_legend=False, margin=dict(t=70, b=55, l=190, r=60),
+            height=h2, xaxis_title="المبلغ",
+            margin=dict(t=56, b=40, l=140, r=72),
         )
         fig2.update_traces(
-            texttemplate="%{x:,.0f}", textposition="outside", cliponaxis=False, marker_line_width=0,
             hovertemplate="<b>%{y}</b><br>المبلغ: %{x:,.0f}<extra></extra>",
+            texttemplate="%{x:,.0f}",
         )
         figs["state_amount"] = fig2
 
     if sales_col and sales_col in work.columns:
         agent_counts = (
-            work[sales_col].astype(str).str.strip().value_counts().head(15)
+            work[sales_col].astype(str).str.strip().value_counts().head(12)
             .sort_values(ascending=True).reset_index()
         )
-        agent_counts.columns = ["المحصّل", "عدد الحسابات"]
+        agent_counts.columns = ["المحصل", "عدد الحسابات"]
         fig3 = px.bar(
-            agent_counts, x="عدد الحسابات", y="المحصّل", orientation="h", text="عدد الحسابات",
+            agent_counts, x="عدد الحسابات", y="المحصل", orientation="h", text="عدد الحسابات",
             color="عدد الحسابات", color_continuous_scale=OPS_SCALE, template=PLOTLY_TEMPLATE,
         )
-        _apply_ops_chart_style(
+        h3 = max(340, 30 * len(agent_counts) + 100)
+        _wallet_bar_style(
             fig3, "توزيع حسابات المحفظة حسب المحصل",
-            height=max(320, 28 * len(agent_counts) + 90),
-            xaxis_title="عدد الحسابات", show_legend=False, margin=dict(t=70, b=55, l=170, r=60),
+            height=h3, xaxis_title="عدد الحسابات",
+            margin=dict(t=56, b=40, l=150, r=64),
         )
         fig3.update_traces(
-            texttemplate="%{x:,.0f}", textposition="outside", cliponaxis=False, marker_line_width=0,
             hovertemplate="<b>%{y}</b><br>عدد الحسابات: %{x:,.0f}<extra></extra>",
+            texttemplate="%{x:,.0f}",
         )
         figs["by_agent_count"] = fig3
 
-    bucket_order = [label for _, _, label in WALLET_AGING_BUCKETS] + ["غير محدد"]
-    aging_summary = (
-        work.groupby(WALLET_AGING_COL, dropna=False)
-        .agg(
-            تم_التحصيل=(WALLET_COLLECTED_COL, "sum"),
-            باقي_المديونية=(WALLET_REMAINING_COL, "sum"),
-            عدد_الحسابات=(WALLET_AGING_COL, "size"),
+    if float(work[WALLET_COLLECTED_COL].sum()) > 0 or float(work[WALLET_REMAINING_COL].sum()) > 0:
+        bucket_order = [label for _, _, label in WALLET_AGING_BUCKETS] + ["غير محدد"]
+        aging_summary = (
+            work.groupby(WALLET_AGING_COL, dropna=False)
+            .agg(
+                تم_التحصيل=(WALLET_COLLECTED_COL, "sum"),
+                باقي_المديونية=(WALLET_REMAINING_COL, "sum"),
+                عدد_الحسابات=(WALLET_AGING_COL, "size"),
+            )
+            .reset_index()
         )
-        .reset_index()
-    )
-    aging_summary["_ord"] = aging_summary[WALLET_AGING_COL].map(
-        {lab: i for i, lab in enumerate(bucket_order)}
-    ).fillna(99)
-    aging_summary = aging_summary.sort_values("_ord")
-    if not aging_summary.empty and (
-        aging_summary["تم_التحصيل"].sum() + aging_summary["باقي_المديونية"].sum()
-    ) > 0:
+        aging_summary["_ord"] = aging_summary[WALLET_AGING_COL].map(
+            {lab: i for i, lab in enumerate(bucket_order)}
+        ).fillna(99)
+        aging_summary = aging_summary.sort_values("_ord")
         aging_long = aging_summary.melt(
             id_vars=[WALLET_AGING_COL],
             value_vars=["تم_التحصيل", "باقي_المديونية"],
@@ -5653,13 +5682,23 @@ def _build_wallet_analysis(df):
             template=PLOTLY_TEMPLATE,
             category_orders={WALLET_AGING_COL: bucket_order},
         )
-        _apply_ops_chart_style(
+        _wallet_bar_style(
             fig_aging, "عمر الإسناد — التحصيل والمتبقي حسب البوكيت",
-            height=340, xaxis_title="عمر الإسناد", yaxis_title="المبلغ",
-            margin=dict(t=70, b=70, l=60, r=40),
+            height=380, xaxis_title="عمر الإسناد", yaxis_title="المبلغ",
+            show_legend=True,
+            margin=dict(t=56, b=80, l=64, r=40),
+        )
+        fig_aging.update_layout(
+            xaxis=dict(showgrid=False, automargin=True),
+            yaxis=dict(showgrid=True, gridcolor="rgba(128,128,128,0.12)", gridwidth=1, zeroline=False, automargin=True),
+            legend=dict(orientation="h", yanchor="top", y=-0.22, x=0.5, xanchor="center", bgcolor="rgba(0,0,0,0)"),
         )
         fig_aging.update_traces(
-            texttemplate="%{y:,.0f}", textposition="outside", cliponaxis=False, marker_line_width=0,
+            texttemplate="%{y:,.0f}",
+            textposition="outside",
+            cliponaxis=False,
+            textfont=dict(size=11),
+            marker_line_width=0,
             hovertemplate="<b>%{x}</b><br>%{fullData.name}: %{y:,.0f}<extra></extra>",
         )
         figs["aging"] = fig_aging
@@ -5669,7 +5708,7 @@ def _build_wallet_analysis(df):
         cust_state = (
             work[state_src_col].astype(str).str.strip()
             .replace({"": pd.NA, "nan": pd.NA, "none": pd.NA, "null": pd.NA})
-            .dropna().value_counts().head(12).reset_index()
+            .dropna().value_counts().head(10).reset_index()
         )
         cust_state.columns = ["حالة العميل", "العدد"]
         if not cust_state.empty:
@@ -5679,36 +5718,42 @@ def _build_wallet_analysis(df):
                 template=PLOTLY_TEMPLATE,
             )
             _apply_ops_chart_style(
-                fig_pie, "توزيع حالة العميل", height=320, margin=dict(t=70, b=40, l=40, r=40)
+                fig_pie, "توزيع حالة العميل", height=360, margin=dict(t=56, b=24, l=24, r=24),
+                show_legend=False,
             )
             fig_pie.update_traces(
-                texttemplate="%{label}<br>%{percent:.1%}",
-                textposition="inside",
+                texttemplate="%{label}<br>%{value:,.0f}<br>%{percent:.1%}",
+                textposition="outside",
+                textfont=dict(size=11),
                 hovertemplate="<b>%{label}</b><br>العدد: %{value:,.0f}<br>النسبة: %{percent:.1%}<extra></extra>",
             )
+            fig_pie.update_layout(showlegend=False, uniformtext_minsize=9, uniformtext_mode=False)
             figs["customer_state_pie"] = fig_pie
 
     if nationality_col and nationality_col in work.columns:
         nation = (
             work[nationality_col].astype(str).str.strip()
             .replace({"": pd.NA, "nan": pd.NA, "none": pd.NA, "null": pd.NA})
-            .dropna().value_counts().head(12).reset_index()
+            .dropna().value_counts().head(10).reset_index()
         )
         nation.columns = ["الجنسية", "العدد"]
         if not nation.empty:
             fig_donut = px.pie(
-                nation, values="العدد", names="الجنسية", hole=0.55,
+                nation, values="العدد", names="الجنسية", hole=0.52,
                 color="الجنسية", color_discrete_sequence=OPS_SCALE + ACTIVITY_AGENT_PALETTE,
                 template=PLOTLY_TEMPLATE,
             )
             _apply_ops_chart_style(
-                fig_donut, "توزيع جنسية العميل", height=320, margin=dict(t=70, b=40, l=40, r=40)
+                fig_donut, "توزيع جنسية العميل", height=360, margin=dict(t=56, b=24, l=24, r=24),
+                show_legend=False,
             )
             fig_donut.update_traces(
-                texttemplate="%{label}<br>%{percent:.1%}",
-                textposition="inside",
+                texttemplate="%{label}<br>%{value:,.0f}<br>%{percent:.1%}",
+                textposition="outside",
+                textfont=dict(size=11),
                 hovertemplate="<b>%{label}</b><br>العدد: %{value:,.0f}<br>النسبة: %{percent:.1%}<extra></extra>",
             )
+            fig_donut.update_layout(showlegend=False, uniformtext_minsize=9, uniformtext_mode=False)
             figs["nationality_donut"] = fig_donut
 
     aging_table = _build_wallet_aging_table(work, sub_col)
@@ -5736,12 +5781,7 @@ def render_wallet_page(df):
 
     figs, work, aging_table, meta = _build_wallet_analysis(filtered)
 
-    # توحيد ارتفاع أزواج الشارتات
-    PAIR_H = 300
-    for key in ("states", "state_amount", "by_agent_count", "aging", "customer_state_pie", "nationality_donut"):
-        if key in figs:
-            figs[key].update_layout(height=PAIR_H, margin=dict(t=48, b=40, l=110, r=24), title_font_size=15)
-
+    # لا نفرض ارتفاع ثابت يقص القيم — كل شارت بيحافظ على ارتفاعه المناسب
     st.plotly_chart(figs["kpi"], use_container_width=True, config=PLOTLY_CONFIG, key="wallet_kpi")
 
     col1, col2 = st.columns(2)
@@ -6085,22 +6125,20 @@ def _build_wallet_page_html(wallet_df):
         html.append("</div></div>")
         return "".join(html)
 
-    def _chart_card(fig, plot_id, height=300):
-        # نفس أسلوب شارتات النشاط: ارتفاع موحّد + بدون عنوان مكرر داخل الرسم
+    def _chart_card(fig, plot_id, height=None):
+        # ارتفاع من التحليل نفسه عشان القيم برا الأعمدة ما تتقصّش
+        h = int(height or (fig.layout.height or 360))
         fig = fig.update_layout(
-            height=height,
-            margin=dict(t=36, b=36, l=100, r=20),
+            height=h,
             title=None,
             font=dict(family="Tahoma, Segoe UI, Arial, sans-serif", size=12),
+            paper_bgcolor="rgba(0,0,0,0)",
+            plot_bgcolor="rgba(0,0,0,0)",
         )
-        return (
-            "<article class='chart-card'>"
-            + pio.to_html(
-                fig, full_html=False, include_plotlyjs=False,
-                config={"displayModeBar": False, "responsive": True},
-                div_id=plot_id, default_width="100%", default_height=f"{height}px",
-            )
-            + "</article>"
+        return pio.to_html(
+            fig, full_html=False, include_plotlyjs=False,
+            config={"displayModeBar": False, "responsive": True},
+            div_id=plot_id, default_width="100%", default_height=f"{h}px",
         )
 
     parts = []
@@ -6157,7 +6195,7 @@ def _build_wallet_page_html(wallet_df):
             f"<article class='chart-card'>"
             f"<h3>{title}</h3>"
             f"<div class='meta' style='text-align:center;margin:0 0 6px;font-size:12px'>{escape(subtitle)}</div>"
-            + _chart_card(figs[key], pid, height=300).replace("<article class='chart-card'>", "").replace("</article>", "")
+            + _chart_card(figs[key], pid)
             + "</article>"
         )
 
@@ -6192,7 +6230,7 @@ def _build_wallet_page_html(wallet_df):
     parts.append("</table></div></section>")
     parts.append("</div>")  # page-wallet
 
-    js_tpl = _b64.b64decode("CihmdW5jdGlvbigpewpjb25zdCB3YWxsZXREYXRhID0gX19XQUxMRVRfREFUQV9fOwpjb25zdCB3YWxsZXRQbG90SWRzID0gX19XQUxMRVRfUExPVF9JRFNfXzsKY29uc3QgV19EQVJLID0gIl9fT1BTX0RBUktfXyI7CmNvbnN0IFdfTUlEID0gIl9fT1BTX01JRF9fIjsKY29uc3QgV19MSUdIVCA9ICJfX09QU19MSUdIVF9fIjsKY29uc3QgV19QT1MgPSAiX19PUFNfUE9TX18iOwpjb25zdCBXX05FRyA9ICJfX09QU19ORUdfXyI7CmNvbnN0IFdfQVNTSUdOX01JTiA9ICJfX0FTU0lHTl9NSU5fXyI7CmNvbnN0IFdfQVNTSUdOX01BWCA9ICJfX0FTU0lHTl9NQVhfXyI7CmNvbnN0IFdfREVCSVRfTUlOID0gIl9fREVCSVRfTUlOX18iOwpjb25zdCBXX0RFQklUX01BWCA9ICJfX0RFQklUX01BWF9fIjsKCmZ1bmN0aW9uIHdGbXQobil7IHJldHVybiBOdW1iZXIobnx8MCkudG9Mb2NhbGVTdHJpbmcoImVuLVVTIik7IH0KZnVuY3Rpb24gd0ZtdDAobil7IHJldHVybiBOdW1iZXIobnx8MCkudG9Mb2NhbGVTdHJpbmcoImVuLVVTIiwge21heGltdW1GcmFjdGlvbkRpZ2l0czowfSk7IH0KZnVuY3Rpb24gd1NldEtwaShpZCwgdmFsKXsgY29uc3QgZWw9ZG9jdW1lbnQuZ2V0RWxlbWVudEJ5SWQoaWQpOyBpZihlbCkgZWwudGV4dENvbnRlbnQgPSB2YWw7IH0KZnVuY3Rpb24gd0NoZWNrZWQoY2xzKXsKICByZXR1cm4gQXJyYXkucHJvdG90eXBlLnNsaWNlLmNhbGwoZG9jdW1lbnQucXVlcnlTZWxlY3RvckFsbCgiLiIrY2xzKyI6Y2hlY2tlZCIpKS5tYXAoZnVuY3Rpb24obyl7IHJldHVybiBvLnZhbHVlOyB9KTsKfQoKZnVuY3Rpb24gd1NlbGVjdGVkUm93cygpewogIHZhciByb3dzID0gd2FsbGV0RGF0YS5zbGljZSgpOwogIHZhciBhZ2VudHMgPSB3Q2hlY2tlZCgid2FsbGV0LWFnZW50LW9wdGlvbiIpOwogIGlmIChhZ2VudHMubGVuZ3RoKSByb3dzID0gcm93cy5maWx0ZXIoZnVuY3Rpb24ocil7IHJldHVybiBhZ2VudHMuaW5kZXhPZihyLmFnZW50KSA+PSAwOyB9KTsKICB2YXIgbmF0aW9ucyA9IHdDaGVja2VkKCJ3YWxsZXQtbmF0aW9uLW9wdGlvbiIpOwogIGlmIChuYXRpb25zLmxlbmd0aCkgcm93cyA9IHJvd3MuZmlsdGVyKGZ1bmN0aW9uKHIpeyByZXR1cm4gbmF0aW9ucy5pbmRleE9mKHIubmF0aW9uYWxpdHkpID49IDA7IH0pOwogIHZhciBjc3RhdGVzID0gd0NoZWNrZWQoIndhbGxldC1jc3RhdGUtb3B0aW9uIik7CiAgaWYgKGNzdGF0ZXMubGVuZ3RoKSByb3dzID0gcm93cy5maWx0ZXIoZnVuY3Rpb24ocil7IHJldHVybiBjc3RhdGVzLmluZGV4T2Yoci5jdXN0b21lcl9zdGF0ZSkgPj0gMDsgfSk7CiAgdmFyIGFnaW5nID0gd0NoZWNrZWQoIndhbGxldC1hZ2luZy1vcHRpb24iKTsKICBpZiAoYWdpbmcubGVuZ3RoKSByb3dzID0gcm93cy5maWx0ZXIoZnVuY3Rpb24ocil7IHJldHVybiBhZ2luZy5pbmRleE9mKHIuYWdpbmcpID49IDA7IH0pOwogIHZhciBhZiA9IChkb2N1bWVudC5nZXRFbGVtZW50QnlJZCgid2FsbGV0LWFzc2lnbi1mcm9tIikgfHwge30pLnZhbHVlIHx8ICIiOwogIHZhciBhdCA9IChkb2N1bWVudC5nZXRFbGVtZW50QnlJZCgid2FsbGV0LWFzc2lnbi10byIpIHx8IHt9KS52YWx1ZSB8fCAiIjsKICBpZiAoYWYpIHJvd3MgPSByb3dzLmZpbHRlcihmdW5jdGlvbihyKXsgcmV0dXJuICFyLmFzc2lnbl9kYXRlIHx8IHIuYXNzaWduX2RhdGUgPj0gYWY7IH0pOwogIGlmIChhdCkgcm93cyA9IHJvd3MuZmlsdGVyKGZ1bmN0aW9uKHIpeyByZXR1cm4gIXIuYXNzaWduX2RhdGUgfHwgci5hc3NpZ25fZGF0ZSA8PSBhdDsgfSk7CiAgdmFyIGRmID0gKGRvY3VtZW50LmdldEVsZW1lbnRCeUlkKCJ3YWxsZXQtZGViaXQtZnJvbSIpIHx8IHt9KS52YWx1ZSB8fCAiIjsKICB2YXIgZHQgPSAoZG9jdW1lbnQuZ2V0RWxlbWVudEJ5SWQoIndhbGxldC1kZWJpdC10byIpIHx8IHt9KS52YWx1ZSB8fCAiIjsKICBpZiAoZGYpIHJvd3MgPSByb3dzLmZpbHRlcihmdW5jdGlvbihyKXsgcmV0dXJuICFyLmRlYml0X2RhdGUgfHwgci5kZWJpdF9kYXRlID49IGRmOyB9KTsKICBpZiAoZHQpIHJvd3MgPSByb3dzLmZpbHRlcihmdW5jdGlvbihyKXsgcmV0dXJuICFyLmRlYml0X2RhdGUgfHwgci5kZWJpdF9kYXRlIDw9IGR0OyB9KTsKICByZXR1cm4gcm93czsKfQoKZnVuY3Rpb24gd0NvdW50TWFwKHJvd3MsIGtleSl7CiAgdmFyIG0gPSB7fTsKICByb3dzLmZvckVhY2goZnVuY3Rpb24ocil7IHZhciBrID0gcltrZXldIHx8ICLYutmK2LEg2YXYrdiv2K8iOyBtW2tdID0gKG1ba118fDApICsgMTsgfSk7CiAgcmV0dXJuIG07Cn0KZnVuY3Rpb24gd1N1bU1hcChyb3dzLCBrZXksIHZhbEtleSl7CiAgdmFyIG0gPSB7fTsKICByb3dzLmZvckVhY2goZnVuY3Rpb24ocil7IHZhciBrID0gcltrZXldIHx8ICLYutmK2LEg2YXYrdiv2K8iOyBtW2tdID0gKG1ba118fDApICsgKHJbdmFsS2V5XXx8MCk7IH0pOwogIHJldHVybiBtOwp9CmZ1bmN0aW9uIHdUb3BFbnRyaWVzKG1hcCwgbil7CiAgcmV0dXJuIE9iamVjdC5rZXlzKG1hcCkubWFwKGZ1bmN0aW9uKGspeyByZXR1cm4gW2ssIG1hcFtrXV07IH0pLnNvcnQoZnVuY3Rpb24oYSxiKXsgcmV0dXJuIGFbMV0tYlsxXTsgfSkuc2xpY2UoLW4pOwp9CgpmdW5jdGlvbiB3VXBkYXRlTGFiZWxzKCl7CiAgdmFyIGEgPSB3Q2hlY2tlZCgid2FsbGV0LWFnZW50LW9wdGlvbiIpOwogIHZhciBhbCA9IGRvY3VtZW50LmdldEVsZW1lbnRCeUlkKCJ3YWxsZXQtYWdlbnQtbGFiZWwiKTsKICBpZiAoYWwpIGFsLnRleHRDb250ZW50ID0gYS5sZW5ndGggPyAoYS5sZW5ndGggKyAiINmF2K3YtdmEINmF2K3Yr9ivIikgOiAi2YPZhCDYp9mE2YXYrdi12YTZitmGIjsKICB2YXIgbiA9IHdDaGVja2VkKCJ3YWxsZXQtbmF0aW9uLW9wdGlvbiIpOwogIHZhciBubCA9IGRvY3VtZW50LmdldEVsZW1lbnRCeUlkKCJ3YWxsZXQtbmF0aW9uLWxhYmVsIik7CiAgaWYgKG5sKSBubC50ZXh0Q29udGVudCA9IG4ubGVuZ3RoID8gKG4ubGVuZ3RoICsgIiDYrNmG2LPZitipIikgOiAi2YPZhCDYp9mE2KzZhtiz2YrYp9iqIjsKICB2YXIgYyA9IHdDaGVja2VkKCJ3YWxsZXQtY3N0YXRlLW9wdGlvbiIpOwogIHZhciBjbCA9IGRvY3VtZW50LmdldEVsZW1lbnRCeUlkKCJ3YWxsZXQtY3N0YXRlLWxhYmVsIik7CiAgaWYgKGNsKSBjbC50ZXh0Q29udGVudCA9IGMubGVuZ3RoID8gKGMubGVuZ3RoICsgIiDYrdin2YTYqSIpIDogItmD2YQg2KfZhNit2KfZhNin2KoiOwogIHZhciBnID0gd0NoZWNrZWQoIndhbGxldC1hZ2luZy1vcHRpb24iKTsKICB2YXIgZ2wgPSBkb2N1bWVudC5nZXRFbGVtZW50QnlJZCgid2FsbGV0LWFnaW5nLWxhYmVsIik7CiAgaWYgKGdsKSBnbC50ZXh0Q29udGVudCA9IGcubGVuZ3RoID8gKGcubGVuZ3RoICsgIiDYudmF2LEiKSA6ICLZg9mEINin2YTYo9i52YXYp9ixIjsKfQoKZnVuY3Rpb24gd0JhckgocGxvdCwgZW50cmllcywgaG92ZXJTdWZmaXgpewogIGlmICghcGxvdCkgcmV0dXJuOwogIFBsb3RseS5yZWFjdChwbG90LCBbewogICAgdHlwZTogImJhciIsIG9yaWVudGF0aW9uOiAiaCIsCiAgICB5OiBlbnRyaWVzLm1hcChmdW5jdGlvbihlKXsgcmV0dXJuIGVbMF07IH0pLAogICAgeDogZW50cmllcy5tYXAoZnVuY3Rpb24oZSl7IHJldHVybiBlWzFdOyB9KSwKICAgIHRleHQ6IGVudHJpZXMubWFwKGZ1bmN0aW9uKGUpeyByZXR1cm4gZVsxXTsgfSksCiAgICB0ZXh0dGVtcGxhdGU6ICIle3g6LC4wZn0iLCB0ZXh0cG9zaXRpb246ICJvdXRzaWRlIiwgY2xpcG9uYXhpczogZmFsc2UsCiAgICBtYXJrZXI6IHtjb2xvcjogZW50cmllcy5tYXAoZnVuY3Rpb24oXyxpKXsgcmV0dXJuIFtXX0RBUkssV19NSUQsV19MSUdIVF1baSUzXTsgfSl9LAogICAgaG92ZXJ0ZW1wbGF0ZTogIjxiPiV7eX08L2I+PGJyPiIgKyBob3ZlclN1ZmZpeCArICI6ICV7eDosLjBmfTxleHRyYT48L2V4dHJhPiIKICB9XSwgT2JqZWN0LmFzc2lnbih7fSwgcGxvdC5sYXlvdXQgfHwge30sIHtzaG93bGVnZW5kOiBmYWxzZSwgaGVpZ2h0OiAzMjB9KSk7Cn0KCmZ1bmN0aW9uIHdCdWlsZE1hdHJpeChyb3dzKXsKICB2YXIgc3RhdGVzID0ge307CiAgdmFyIGFnaW5ncyA9IHt9OwogIHZhciBjZWxsID0ge307CiAgdmFyIGNvbGxlY3RlZCA9IHt9OwogIHZhciByZW1haW5pbmcgPSB7fTsKICByb3dzLmZvckVhY2goZnVuY3Rpb24ocil7CiAgICB2YXIgYSA9IHIuYWdpbmcgfHwgIti62YrYsSDZhdit2K/YryI7CiAgICB2YXIgcyA9IHIuc3RhdGUgfHwgIuKAlCI7CiAgICBzdGF0ZXNbc10gPSAxOwogICAgYWdpbmdzW2FdID0gMTsKICAgIHZhciBrID0gYSArICJ8fCIgKyBzOwogICAgY2VsbFtrXSA9IChjZWxsW2tdfHwwKSArIDE7CiAgICBjb2xsZWN0ZWRbYV0gPSAoY29sbGVjdGVkW2FdfHwwKSArIChyLmNvbGxlY3RlZHx8MCk7CiAgICByZW1haW5pbmdbYV0gPSAocmVtYWluaW5nW2FdfHwwKSArIChyLnJlbWFpbmluZ3x8MCk7CiAgfSk7CiAgdmFyIHN0YXRlTGlzdCA9IE9iamVjdC5rZXlzKHN0YXRlcykuc29ydChmdW5jdGlvbihhLGIpewogICAgdmFyIHRhPTAsIHRiPTA7CiAgICBPYmplY3Qua2V5cyhhZ2luZ3MpLmZvckVhY2goZnVuY3Rpb24oYWcpeyB0YSArPSBjZWxsW2FnKyJ8fCIrYV18fDA7IHRiICs9IGNlbGxbYWcrInx8IitiXXx8MDsgfSk7CiAgICByZXR1cm4gdGIgLSB0YTsKICB9KTsKICB2YXIgYWdpbmdMaXN0ID0gT2JqZWN0LmtleXMoYWdpbmdzKS5zb3J0KCk7CiAgdmFyIGhlYWQgPSAiPHRyPjx0aD7YudmF2LEg2KfZhNil2LPZhtin2K88L3RoPiIgKyBzdGF0ZUxpc3QubWFwKGZ1bmN0aW9uKHMpeyByZXR1cm4gIjx0aD4iK3MrIjwvdGg+IjsgfSkuam9pbigiIikgKwogICAgICAgICAgICAgIjx0aD7Yp9mE2KXYrNmF2KfZhNmKPC90aD48dGg+2KrZhSDYp9mE2KrYrdi12YrZhDwvdGg+PHRoPtio2KfZgtmKINin2YTZhdiv2YrZiNmG2YrYqTwvdGg+PC90cj4iOwogIHZhciBib2R5ID0gYWdpbmdMaXN0Lm1hcChmdW5jdGlvbihhKXsKICAgIHZhciByb3dUb3RhbCA9IDA7CiAgICB2YXIgdGRzID0gc3RhdGVMaXN0Lm1hcChmdW5jdGlvbihzKXsKICAgICAgdmFyIHYgPSBjZWxsW2ErInx8IitzXXx8MDsKICAgICAgcm93VG90YWwgKz0gdjsKICAgICAgcmV0dXJuICI8dGQ+IiArICh2ID8gd0ZtdCh2KSA6ICLigJQiKSArICI8L3RkPiI7CiAgICB9KS5qb2luKCIiKTsKICAgIHJldHVybiAiPHRyPjx0ZD4iK2ErIjwvdGQ+Iit0ZHMrIjx0ZD48Yj4iK3dGbXQocm93VG90YWwpKyI8L2I+PC90ZD48dGQ+Iit3Rm10MChjb2xsZWN0ZWRbYV18fDApKyI8L3RkPjx0ZD4iK3dGbXQwKHJlbWFpbmluZ1thXXx8MCkrIjwvdGQ+PC90cj4iOwogIH0pLmpvaW4oIiIpOwogIHZhciBjb2xUb3RhbHMgPSBzdGF0ZUxpc3QubWFwKGZ1bmN0aW9uKHMpewogICAgdmFyIHQgPSAwOwogICAgYWdpbmdMaXN0LmZvckVhY2goZnVuY3Rpb24oYSl7IHQgKz0gY2VsbFthKyJ8fCIrc118fDA7IH0pOwogICAgcmV0dXJuIHQ7CiAgfSk7CiAgdmFyIGdyYW5kID0gY29sVG90YWxzLnJlZHVjZShmdW5jdGlvbihzLHYpeyByZXR1cm4gcyt2OyB9LCAwKTsKICB2YXIgc3VtQyA9IGFnaW5nTGlzdC5yZWR1Y2UoZnVuY3Rpb24ocyxhKXsgcmV0dXJuIHMrKGNvbGxlY3RlZFthXXx8MCk7IH0sIDApOwogIHZhciBzdW1SID0gYWdpbmdMaXN0LnJlZHVjZShmdW5jdGlvbihzLGEpeyByZXR1cm4gcysocmVtYWluaW5nW2FdfHwwKTsgfSwgMCk7CiAgdmFyIGZvb3QgPSAiPHRyIHN0eWxlPSdmb250LXdlaWdodDo3MDA7YmFja2dyb3VuZDojRTdGMUYxJz48dGQ+2KfZhNil2KzZhdin2YTZijwvdGQ+IiArCiAgICAgICAgICAgICBjb2xUb3RhbHMubWFwKGZ1bmN0aW9uKHYpeyByZXR1cm4gIjx0ZD4iK3dGbXQodikrIjwvdGQ+IjsgfSkuam9pbigiIikgKwogICAgICAgICAgICAgIjx0ZD4iK3dGbXQoZ3JhbmQpKyI8L3RkPjx0ZD4iK3dGbXQwKHN1bUMpKyI8L3RkPjx0ZD4iK3dGbXQwKHN1bVIpKyI8L3RkPjwvdHI+IjsKICByZXR1cm4geyBoZWFkOiBoZWFkLCBib2R5OiBib2R5ICsgZm9vdCB9Owp9CgpmdW5jdGlvbiB3UmVmcmVzaCgpewogIHZhciByb3dzID0gd1NlbGVjdGVkUm93cygpOwogIHZhciBhZ2VudHMgPSBbXSwgc2VlbkEgPSB7fTsKICByb3dzLmZvckVhY2goZnVuY3Rpb24ocil7IGlmIChyLmFnZW50ICYmICFzZWVuQVtyLmFnZW50XSkgeyBzZWVuQVtyLmFnZW50XT0xOyBhZ2VudHMucHVzaChyLmFnZW50KTsgfSB9KTsKICB2YXIgY3VzdG9tZXJzID0gW10sIHNlZW5DID0ge307CiAgcm93cy5mb3JFYWNoKGZ1bmN0aW9uKHIpeyBpZiAoci5jdXN0b21lciAmJiAhc2VlbkNbci5jdXN0b21lcl0pIHsgc2VlbkNbci5jdXN0b21lcl09MTsgY3VzdG9tZXJzLnB1c2goci5jdXN0b21lcik7IH0gfSk7CiAgdmFyIHJlbWFpbmluZyA9IHJvd3MucmVkdWNlKGZ1bmN0aW9uKHMscil7IHJldHVybiBzICsgKHIucmVtYWluaW5nfHwwKTsgfSwgMCk7CiAgdmFyIGF2ZyA9IHJvd3MubGVuZ3RoID8gcmVtYWluaW5nIC8gcm93cy5sZW5ndGggOiAwOwogIHdTZXRLcGkoIndhbGxldC1rcGktYW1vdW50Iiwgd0ZtdDAocmVtYWluaW5nKSk7CiAgd1NldEtwaSgid2FsbGV0LWtwaS1hZ2VudHMiLCB3Rm10KGFnZW50cy5sZW5ndGgpKTsKICB3U2V0S3BpKCJ3YWxsZXQta3BpLWN1c3RvbWVycyIsIHdGbXQoY3VzdG9tZXJzLmxlbmd0aCB8fCByb3dzLmxlbmd0aCkpOwogIHdTZXRLcGkoIndhbGxldC1rcGktYWNjb3VudHMiLCB3Rm10KHJvd3MubGVuZ3RoKSk7CiAgd1NldEtwaSgid2FsbGV0LWtwaS1hdmciLCB3Rm10MChhdmcpKTsKICB2YXIgc3QgPSBkb2N1bWVudC5nZXRFbGVtZW50QnlJZCgid2FsbGV0LWZpbHRlci1zdGF0dXMiKTsKICBpZiAoc3QpIHN0LnRleHRDb250ZW50ID0gIti52LHYtiAiICsgd0ZtdChyb3dzLmxlbmd0aCkgKyAiINit2LPYp9ioINmF2YYg2KPYtdmEICIgKyB3Rm10KHdhbGxldERhdGEubGVuZ3RoKSArICIgIHwgICIgKyB3Rm10KGFnZW50cy5sZW5ndGgpICsgIiDZhdit2LXZhCI7CgogIHdCYXJIKHdhbGxldFBsb3RJZHMuc3RhdGVzICYmIGRvY3VtZW50LmdldEVsZW1lbnRCeUlkKHdhbGxldFBsb3RJZHMuc3RhdGVzKSwgd1RvcEVudHJpZXMod0NvdW50TWFwKHJvd3MsInN0YXRlIiksIDEyKSwgIti52K/YryDYp9mE2K3Ys9in2KjYp9iqIik7CiAgd0Jhckgod2FsbGV0UGxvdElkcy5zdGF0ZV9hbW91bnQgJiYgZG9jdW1lbnQuZ2V0RWxlbWVudEJ5SWQod2FsbGV0UGxvdElkcy5zdGF0ZV9hbW91bnQpLCB3VG9wRW50cmllcyh3U3VtTWFwKHJvd3MsInN0YXRlIiwicmVtYWluaW5nIiksIDEyKSwgItin2YTZhdio2YTYuiIpOwogIHdCYXJIKHdhbGxldFBsb3RJZHMuYnlfYWdlbnRfY291bnQgJiYgZG9jdW1lbnQuZ2V0RWxlbWVudEJ5SWQod2FsbGV0UGxvdElkcy5ieV9hZ2VudF9jb3VudCksIHdUb3BFbnRyaWVzKHdDb3VudE1hcChyb3dzLCJhZ2VudCIpLCAxMiksICLYudiv2K8g2KfZhNit2LPYp9io2KfYqiIpOwoKICB2YXIgYWdpbmdQbG90ID0gd2FsbGV0UGxvdElkcy5hZ2luZyAmJiBkb2N1bWVudC5nZXRFbGVtZW50QnlJZCh3YWxsZXRQbG90SWRzLmFnaW5nKTsKICBpZiAoYWdpbmdQbG90KSB7CiAgICB2YXIgY29sbCA9IHdTdW1NYXAocm93cywiYWdpbmciLCJjb2xsZWN0ZWQiKTsKICAgIHZhciByZW0gPSB3U3VtTWFwKHJvd3MsImFnaW5nIiwicmVtYWluaW5nIik7CiAgICB2YXIgbGFiZWxzID0gW10sIHNlZW5MID0ge307CiAgICBPYmplY3Qua2V5cyhjb2xsKS5jb25jYXQoT2JqZWN0LmtleXMocmVtKSkuZm9yRWFjaChmdW5jdGlvbihrKXsgaWYgKCFzZWVuTFtrXSkgeyBzZWVuTFtrXT0xOyBsYWJlbHMucHVzaChrKTsgfSB9KTsKICAgIGxhYmVscy5zb3J0KCk7CiAgICBQbG90bHkucmVhY3QoYWdpbmdQbG90LCBbCiAgICAgIHt0eXBlOiJiYXIiLCBuYW1lOiLYqtmFINin2YTYqtit2LXZitmEIiwgeDpsYWJlbHMsIHk6bGFiZWxzLm1hcChmdW5jdGlvbihrKXtyZXR1cm4gY29sbFtrXXx8MDt9KSwgbWFya2VyOntjb2xvcjpXX1BPU30sCiAgICAgICB0ZXh0OmxhYmVscy5tYXAoZnVuY3Rpb24oayl7cmV0dXJuIGNvbGxba118fDA7fSksIHRleHR0ZW1wbGF0ZToiJXt5OiwuMGZ9IiwgdGV4dHBvc2l0aW9uOiJvdXRzaWRlIiwgY2xpcG9uYXhpczpmYWxzZSwKICAgICAgIGhvdmVydGVtcGxhdGU6IjxiPiV7eH08L2I+PGJyPtiq2YUg2KfZhNiq2K3YtdmK2YQ6ICV7eTosLjBmfTxleHRyYT48L2V4dHJhPiJ9LAogICAgICB7dHlwZToiYmFyIiwgbmFtZToi2KjYp9mC2Yog2KfZhNmF2K/ZitmI2YbZitipIiwgeDpsYWJlbHMsIHk6bGFiZWxzLm1hcChmdW5jdGlvbihrKXtyZXR1cm4gcmVtW2tdfHwwO30pLCBtYXJrZXI6e2NvbG9yOldfTkVHfSwKICAgICAgIHRleHQ6bGFiZWxzLm1hcChmdW5jdGlvbihrKXtyZXR1cm4gcmVtW2tdfHwwO30pLCB0ZXh0dGVtcGxhdGU6IiV7eTosLjBmfSIsIHRleHRwb3NpdGlvbjoib3V0c2lkZSIsIGNsaXBvbmF4aXM6ZmFsc2UsCiAgICAgICBob3ZlcnRlbXBsYXRlOiI8Yj4le3h9PC9iPjxicj7YqNin2YLZiiDYp9mE2YXYr9mK2YjZhtmK2Kk6ICV7eTosLjBmfTxleHRyYT48L2V4dHJhPiJ9CiAgICBdLCBPYmplY3QuYXNzaWduKHt9LCBhZ2luZ1Bsb3QubGF5b3V0fHx7fSwge2Jhcm1vZGU6Imdyb3VwIiwgaGVpZ2h0OjM0MH0pKTsKICB9CgogIHZhciBwaWVQbG90ID0gd2FsbGV0UGxvdElkcy5jdXN0b21lcl9zdGF0ZV9waWUgJiYgZG9jdW1lbnQuZ2V0RWxlbWVudEJ5SWQod2FsbGV0UGxvdElkcy5jdXN0b21lcl9zdGF0ZV9waWUpOwogIGlmIChwaWVQbG90KSB7CiAgICB2YXIgZW50cmllcyA9IHdUb3BFbnRyaWVzKHdDb3VudE1hcChyb3dzLCJjdXN0b21lcl9zdGF0ZSIpLCAxMCkucmV2ZXJzZSgpOwogICAgUGxvdGx5LnJlYWN0KHBpZVBsb3QsIFt7CiAgICAgIHR5cGU6InBpZSIsIGxhYmVsczplbnRyaWVzLm1hcChmdW5jdGlvbihlKXtyZXR1cm4gZVswXTt9KSwgdmFsdWVzOmVudHJpZXMubWFwKGZ1bmN0aW9uKGUpe3JldHVybiBlWzFdO30pLAogICAgICBtYXJrZXI6e2NvbG9yczpbV19EQVJLLFdfTUlELFdfTElHSFQsIiNCOEM1QzgiLCIjM0Q3RTgyIiwiIzdFQUJBRSJdfSwKICAgICAgdGV4dGluZm86ImxhYmVsK3BlcmNlbnQiLAogICAgICBob3ZlcnRlbXBsYXRlOiI8Yj4le2xhYmVsfTwvYj48YnI+2KfZhNi52K/YrzogJXt2YWx1ZTosLjBmfTxicj7Yp9mE2YbYs9io2Kk6ICV7cGVyY2VudDouMSV9PGV4dHJhPjwvZXh0cmE+IgogICAgfV0sIE9iamVjdC5hc3NpZ24oe30sIHBpZVBsb3QubGF5b3V0fHx7fSwge2hlaWdodDozMjB9KSk7CiAgfQoKICB2YXIgZG9udXRQbG90ID0gd2FsbGV0UGxvdElkcy5uYXRpb25hbGl0eV9kb251dCAmJiBkb2N1bWVudC5nZXRFbGVtZW50QnlJZCh3YWxsZXRQbG90SWRzLm5hdGlvbmFsaXR5X2RvbnV0KTsKICBpZiAoZG9udXRQbG90KSB7CiAgICB2YXIgbkVudHJpZXMgPSB3VG9wRW50cmllcyh3Q291bnRNYXAocm93cywibmF0aW9uYWxpdHkiKSwgMTApLnJldmVyc2UoKTsKICAgIFBsb3RseS5yZWFjdChkb251dFBsb3QsIFt7CiAgICAgIHR5cGU6InBpZSIsIGxhYmVsczpuRW50cmllcy5tYXAoZnVuY3Rpb24oZSl7cmV0dXJuIGVbMF07fSksIHZhbHVlczpuRW50cmllcy5tYXAoZnVuY3Rpb24oZSl7cmV0dXJuIGVbMV07fSksIGhvbGU6MC41NSwKICAgICAgbWFya2VyOntjb2xvcnM6W1dfREFSSyxXX01JRCxXX0xJR0hULCIjQjhDNUM4IiwiIzNEN0U4MiIsIiM3RUFCQUUiXX0sCiAgICAgIHRleHRpbmZvOiJsYWJlbCtwZXJjZW50IiwKICAgICAgaG92ZXJ0ZW1wbGF0ZToiPGI+JXtsYWJlbH08L2I+PGJyPtin2YTYudiv2K86ICV7dmFsdWU6LC4wZn08YnI+2KfZhNmG2LPYqNipOiAle3BlcmNlbnQ6LjElfTxleHRyYT48L2V4dHJhPiIKICAgIH1dLCBPYmplY3QuYXNzaWduKHt9LCBkb251dFBsb3QubGF5b3V0fHx7fSwge2hlaWdodDozMjB9KSk7CiAgfQoKICB2YXIgdGhlYWQgPSBkb2N1bWVudC5nZXRFbGVtZW50QnlJZCgid2FsbGV0LW1hdHJpeC10aGVhZCIpOwogIHZhciB0Ym9keSA9IGRvY3VtZW50LmdldEVsZW1lbnRCeUlkKCJ3YWxsZXQtbWF0cml4LXRib2R5Iik7CiAgaWYgKHRoZWFkICYmIHRib2R5KSB7CiAgICB2YXIgbXggPSB3QnVpbGRNYXRyaXgocm93cyk7CiAgICB0aGVhZC5pbm5lckhUTUwgPSBteC5oZWFkOwogICAgdGJvZHkuaW5uZXJIVE1MID0gbXguYm9keTsKICB9Cn0KCmZ1bmN0aW9uIHdCaW5kKCl7CiAgWyJ3YWxsZXQtYWdlbnQtb3B0aW9uIiwid2FsbGV0LW5hdGlvbi1vcHRpb24iLCJ3YWxsZXQtY3N0YXRlLW9wdGlvbiIsIndhbGxldC1hZ2luZy1vcHRpb24iXS5mb3JFYWNoKGZ1bmN0aW9uKGNscyl7CiAgICBBcnJheS5wcm90b3R5cGUuc2xpY2UuY2FsbChkb2N1bWVudC5xdWVyeVNlbGVjdG9yQWxsKCIuIitjbHMpKS5mb3JFYWNoKGZ1bmN0aW9uKG8pewogICAgICBvLmFkZEV2ZW50TGlzdGVuZXIoImNoYW5nZSIsIGZ1bmN0aW9uKCl7IHdVcGRhdGVMYWJlbHMoKTsgd1JlZnJlc2goKTsgfSk7CiAgICB9KTsKICB9KTsKICBmdW5jdGlvbiBiaW5kU2VsZWN0QWxsKGFsbENscywgb3B0Q2xzKXsKICAgIHZhciBlbCA9IGRvY3VtZW50LnF1ZXJ5U2VsZWN0b3IoIi4iK2FsbENscyk7CiAgICBpZiAoIWVsKSByZXR1cm47CiAgICBlbC5hZGRFdmVudExpc3RlbmVyKCJjaGFuZ2UiLCBmdW5jdGlvbihlKXsKICAgICAgQXJyYXkucHJvdG90eXBlLnNsaWNlLmNhbGwoZG9jdW1lbnQucXVlcnlTZWxlY3RvckFsbCgiLiIrb3B0Q2xzKSkuZm9yRWFjaChmdW5jdGlvbihvKXsgby5jaGVja2VkID0gZS50YXJnZXQuY2hlY2tlZDsgfSk7CiAgICAgIHdVcGRhdGVMYWJlbHMoKTsgd1JlZnJlc2goKTsKICAgIH0pOwogIH0KICBiaW5kU2VsZWN0QWxsKCJ3YWxsZXQtc2VsZWN0LWFsbC1hZ2VudCIsICJ3YWxsZXQtYWdlbnQtb3B0aW9uIik7CiAgYmluZFNlbGVjdEFsbCgid2FsbGV0LXNlbGVjdC1hbGwtbmF0aW9uIiwgIndhbGxldC1uYXRpb24tb3B0aW9uIik7CiAgYmluZFNlbGVjdEFsbCgid2FsbGV0LXNlbGVjdC1hbGwtY3N0YXRlIiwgIndhbGxldC1jc3RhdGUtb3B0aW9uIik7CiAgYmluZFNlbGVjdEFsbCgid2FsbGV0LXNlbGVjdC1hbGwtYWdpbmciLCAid2FsbGV0LWFnaW5nLW9wdGlvbiIpOwogIFsid2FsbGV0LWFzc2lnbi1mcm9tIiwid2FsbGV0LWFzc2lnbi10byIsIndhbGxldC1kZWJpdC1mcm9tIiwid2FsbGV0LWRlYml0LXRvIl0uZm9yRWFjaChmdW5jdGlvbihpZCl7CiAgICB2YXIgZWwgPSBkb2N1bWVudC5nZXRFbGVtZW50QnlJZChpZCk7CiAgICBpZiAoZWwpIGVsLmFkZEV2ZW50TGlzdGVuZXIoImNoYW5nZSIsIHdSZWZyZXNoKTsKICB9KTsKICB2YXIgcmVzZXQgPSBkb2N1bWVudC5nZXRFbGVtZW50QnlJZCgid2FsbGV0LXJlc2V0LWZpbHRlcnMiKTsKICBpZiAocmVzZXQpIHJlc2V0LmFkZEV2ZW50TGlzdGVuZXIoImNsaWNrIiwgZnVuY3Rpb24oKXsKICAgIEFycmF5LnByb3RvdHlwZS5zbGljZS5jYWxsKGRvY3VtZW50LnF1ZXJ5U2VsZWN0b3JBbGwoIi53YWxsZXQtYWdlbnQtb3B0aW9uLC53YWxsZXQtbmF0aW9uLW9wdGlvbiwud2FsbGV0LWNzdGF0ZS1vcHRpb24sLndhbGxldC1hZ2luZy1vcHRpb24sLndhbGxldC1zZWxlY3QtYWxsLWFnZW50LC53YWxsZXQtc2VsZWN0LWFsbC1uYXRpb24sLndhbGxldC1zZWxlY3QtYWxsLWNzdGF0ZSwud2FsbGV0LXNlbGVjdC1hbGwtYWdpbmciKSkuZm9yRWFjaChmdW5jdGlvbihvKXsgby5jaGVja2VkID0gZmFsc2U7IH0pOwogICAgdmFyIGFmID0gZG9jdW1lbnQuZ2V0RWxlbWVudEJ5SWQoIndhbGxldC1hc3NpZ24tZnJvbSIpOyBpZiAoYWYpIGFmLnZhbHVlID0gV19BU1NJR05fTUlOOwogICAgdmFyIGF0ID0gZG9jdW1lbnQuZ2V0RWxlbWVudEJ5SWQoIndhbGxldC1hc3NpZ24tdG8iKTsgaWYgKGF0KSBhdC52YWx1ZSA9IFdfQVNTSUdOX01BWDsKICAgIHZhciBkZiA9IGRvY3VtZW50LmdldEVsZW1lbnRCeUlkKCJ3YWxsZXQtZGViaXQtZnJvbSIpOyBpZiAoZGYpIGRmLnZhbHVlID0gV19ERUJJVF9NSU47CiAgICB2YXIgZHQgPSBkb2N1bWVudC5nZXRFbGVtZW50QnlJZCgid2FsbGV0LWRlYml0LXRvIik7IGlmIChkdCkgZHQudmFsdWUgPSBXX0RFQklUX01BWDsKICAgIHdVcGRhdGVMYWJlbHMoKTsgd1JlZnJlc2goKTsKICB9KTsKICB3VXBkYXRlTGFiZWxzKCk7CiAgd1JlZnJlc2goKTsKfQppZiAoZG9jdW1lbnQucmVhZHlTdGF0ZSA9PT0gImxvYWRpbmciKSBkb2N1bWVudC5hZGRFdmVudExpc3RlbmVyKCJET01Db250ZW50TG9hZGVkIiwgd0JpbmQpOwplbHNlIHdCaW5kKCk7Cn0pKCk7Cg==").decode("utf-8")
+    js_tpl = _b64.b64decode("CihmdW5jdGlvbigpewpjb25zdCB3YWxsZXREYXRhID0gX19XQUxMRVRfREFUQV9fOwpjb25zdCB3YWxsZXRQbG90SWRzID0gX19XQUxMRVRfUExPVF9JRFNfXzsKY29uc3QgV19EQVJLID0gIl9fT1BTX0RBUktfXyI7CmNvbnN0IFdfTUlEID0gIl9fT1BTX01JRF9fIjsKY29uc3QgV19MSUdIVCA9ICJfX09QU19MSUdIVF9fIjsKY29uc3QgV19QT1MgPSAiX19PUFNfUE9TX18iOwpjb25zdCBXX05FRyA9ICJfX09QU19ORUdfXyI7CmNvbnN0IFdfQVNTSUdOX01JTiA9ICJfX0FTU0lHTl9NSU5fXyI7CmNvbnN0IFdfQVNTSUdOX01BWCA9ICJfX0FTU0lHTl9NQVhfXyI7CmNvbnN0IFdfREVCSVRfTUlOID0gIl9fREVCSVRfTUlOX18iOwpjb25zdCBXX0RFQklUX01BWCA9ICJfX0RFQklUX01BWF9fIjsKCmZ1bmN0aW9uIHdGbXQobil7IHJldHVybiBOdW1iZXIobnx8MCkudG9Mb2NhbGVTdHJpbmcoImVuLVVTIik7IH0KZnVuY3Rpb24gd0ZtdDAobil7IHJldHVybiBOdW1iZXIobnx8MCkudG9Mb2NhbGVTdHJpbmcoImVuLVVTIiwge21heGltdW1GcmFjdGlvbkRpZ2l0czowfSk7IH0KZnVuY3Rpb24gd1NldEtwaShpZCwgdmFsKXsgY29uc3QgZWw9ZG9jdW1lbnQuZ2V0RWxlbWVudEJ5SWQoaWQpOyBpZihlbCkgZWwudGV4dENvbnRlbnQgPSB2YWw7IH0KZnVuY3Rpb24gd0NoZWNrZWQoY2xzKXsKICByZXR1cm4gQXJyYXkucHJvdG90eXBlLnNsaWNlLmNhbGwoZG9jdW1lbnQucXVlcnlTZWxlY3RvckFsbCgiLiIrY2xzKyI6Y2hlY2tlZCIpKS5tYXAoZnVuY3Rpb24obyl7IHJldHVybiBvLnZhbHVlOyB9KTsKfQoKZnVuY3Rpb24gd1NlbGVjdGVkUm93cygpewogIHZhciByb3dzID0gd2FsbGV0RGF0YS5zbGljZSgpOwogIHZhciBhZ2VudHMgPSB3Q2hlY2tlZCgid2FsbGV0LWFnZW50LW9wdGlvbiIpOwogIGlmIChhZ2VudHMubGVuZ3RoKSByb3dzID0gcm93cy5maWx0ZXIoZnVuY3Rpb24ocil7IHJldHVybiBhZ2VudHMuaW5kZXhPZihyLmFnZW50KSA+PSAwOyB9KTsKICB2YXIgbmF0aW9ucyA9IHdDaGVja2VkKCJ3YWxsZXQtbmF0aW9uLW9wdGlvbiIpOwogIGlmIChuYXRpb25zLmxlbmd0aCkgcm93cyA9IHJvd3MuZmlsdGVyKGZ1bmN0aW9uKHIpeyByZXR1cm4gbmF0aW9ucy5pbmRleE9mKHIubmF0aW9uYWxpdHkpID49IDA7IH0pOwogIHZhciBjc3RhdGVzID0gd0NoZWNrZWQoIndhbGxldC1jc3RhdGUtb3B0aW9uIik7CiAgaWYgKGNzdGF0ZXMubGVuZ3RoKSByb3dzID0gcm93cy5maWx0ZXIoZnVuY3Rpb24ocil7IHJldHVybiBjc3RhdGVzLmluZGV4T2Yoci5jdXN0b21lcl9zdGF0ZSkgPj0gMDsgfSk7CiAgdmFyIGFnaW5nID0gd0NoZWNrZWQoIndhbGxldC1hZ2luZy1vcHRpb24iKTsKICBpZiAoYWdpbmcubGVuZ3RoKSByb3dzID0gcm93cy5maWx0ZXIoZnVuY3Rpb24ocil7IHJldHVybiBhZ2luZy5pbmRleE9mKHIuYWdpbmcpID49IDA7IH0pOwogIHZhciBhZiA9IChkb2N1bWVudC5nZXRFbGVtZW50QnlJZCgid2FsbGV0LWFzc2lnbi1mcm9tIikgfHwge30pLnZhbHVlIHx8ICIiOwogIHZhciBhdCA9IChkb2N1bWVudC5nZXRFbGVtZW50QnlJZCgid2FsbGV0LWFzc2lnbi10byIpIHx8IHt9KS52YWx1ZSB8fCAiIjsKICBpZiAoYWYpIHJvd3MgPSByb3dzLmZpbHRlcihmdW5jdGlvbihyKXsgcmV0dXJuICFyLmFzc2lnbl9kYXRlIHx8IHIuYXNzaWduX2RhdGUgPj0gYWY7IH0pOwogIGlmIChhdCkgcm93cyA9IHJvd3MuZmlsdGVyKGZ1bmN0aW9uKHIpeyByZXR1cm4gIXIuYXNzaWduX2RhdGUgfHwgci5hc3NpZ25fZGF0ZSA8PSBhdDsgfSk7CiAgdmFyIGRmID0gKGRvY3VtZW50LmdldEVsZW1lbnRCeUlkKCJ3YWxsZXQtZGViaXQtZnJvbSIpIHx8IHt9KS52YWx1ZSB8fCAiIjsKICB2YXIgZHQgPSAoZG9jdW1lbnQuZ2V0RWxlbWVudEJ5SWQoIndhbGxldC1kZWJpdC10byIpIHx8IHt9KS52YWx1ZSB8fCAiIjsKICBpZiAoZGYpIHJvd3MgPSByb3dzLmZpbHRlcihmdW5jdGlvbihyKXsgcmV0dXJuICFyLmRlYml0X2RhdGUgfHwgci5kZWJpdF9kYXRlID49IGRmOyB9KTsKICBpZiAoZHQpIHJvd3MgPSByb3dzLmZpbHRlcihmdW5jdGlvbihyKXsgcmV0dXJuICFyLmRlYml0X2RhdGUgfHwgci5kZWJpdF9kYXRlIDw9IGR0OyB9KTsKICByZXR1cm4gcm93czsKfQoKZnVuY3Rpb24gd0NvdW50TWFwKHJvd3MsIGtleSl7CiAgdmFyIG0gPSB7fTsKICByb3dzLmZvckVhY2goZnVuY3Rpb24ocil7IHZhciBrID0gcltrZXldIHx8ICLYutmK2LEg2YXYrdiv2K8iOyBtW2tdID0gKG1ba118fDApICsgMTsgfSk7CiAgcmV0dXJuIG07Cn0KZnVuY3Rpb24gd1N1bU1hcChyb3dzLCBrZXksIHZhbEtleSl7CiAgdmFyIG0gPSB7fTsKICByb3dzLmZvckVhY2goZnVuY3Rpb24ocil7IHZhciBrID0gcltrZXldIHx8ICLYutmK2LEg2YXYrdiv2K8iOyBtW2tdID0gKG1ba118fDApICsgKHJbdmFsS2V5XXx8MCk7IH0pOwogIHJldHVybiBtOwp9CmZ1bmN0aW9uIHdUb3BFbnRyaWVzKG1hcCwgbil7CiAgcmV0dXJuIE9iamVjdC5rZXlzKG1hcCkubWFwKGZ1bmN0aW9uKGspeyByZXR1cm4gW2ssIG1hcFtrXV07IH0pLnNvcnQoZnVuY3Rpb24oYSxiKXsgcmV0dXJuIGFbMV0tYlsxXTsgfSkuc2xpY2UoLW4pOwp9CgpmdW5jdGlvbiB3VXBkYXRlTGFiZWxzKCl7CiAgdmFyIGEgPSB3Q2hlY2tlZCgid2FsbGV0LWFnZW50LW9wdGlvbiIpOwogIHZhciBhbCA9IGRvY3VtZW50LmdldEVsZW1lbnRCeUlkKCJ3YWxsZXQtYWdlbnQtbGFiZWwiKTsKICBpZiAoYWwpIGFsLnRleHRDb250ZW50ID0gYS5sZW5ndGggPyAoYS5sZW5ndGggKyAiINmF2K3YtdmEINmF2K3Yr9ivIikgOiAi2YPZhCDYp9mE2YXYrdi12YTZitmGIjsKICB2YXIgbiA9IHdDaGVja2VkKCJ3YWxsZXQtbmF0aW9uLW9wdGlvbiIpOwogIHZhciBubCA9IGRvY3VtZW50LmdldEVsZW1lbnRCeUlkKCJ3YWxsZXQtbmF0aW9uLWxhYmVsIik7CiAgaWYgKG5sKSBubC50ZXh0Q29udGVudCA9IG4ubGVuZ3RoID8gKG4ubGVuZ3RoICsgIiDYrNmG2LPZitipIikgOiAi2YPZhCDYp9mE2KzZhtiz2YrYp9iqIjsKICB2YXIgYyA9IHdDaGVja2VkKCJ3YWxsZXQtY3N0YXRlLW9wdGlvbiIpOwogIHZhciBjbCA9IGRvY3VtZW50LmdldEVsZW1lbnRCeUlkKCJ3YWxsZXQtY3N0YXRlLWxhYmVsIik7CiAgaWYgKGNsKSBjbC50ZXh0Q29udGVudCA9IGMubGVuZ3RoID8gKGMubGVuZ3RoICsgIiDYrdin2YTYqSIpIDogItmD2YQg2KfZhNit2KfZhNin2KoiOwogIHZhciBnID0gd0NoZWNrZWQoIndhbGxldC1hZ2luZy1vcHRpb24iKTsKICB2YXIgZ2wgPSBkb2N1bWVudC5nZXRFbGVtZW50QnlJZCgid2FsbGV0LWFnaW5nLWxhYmVsIik7CiAgaWYgKGdsKSBnbC50ZXh0Q29udGVudCA9IGcubGVuZ3RoID8gKGcubGVuZ3RoICsgIiDYudmF2LEiKSA6ICLZg9mEINin2YTYo9i52YXYp9ixIjsKfQoKZnVuY3Rpb24gd0JhckgocGxvdCwgZW50cmllcywgaG92ZXJTdWZmaXgpewogIGlmICghcGxvdCkgcmV0dXJuOwogIHZhciBoID0gTWF0aC5tYXgoMzQwLCAzMCAqIGVudHJpZXMubGVuZ3RoICsgMTAwKTsKICBQbG90bHkucmVhY3QocGxvdCwgW3sKICAgIHR5cGU6ICJiYXIiLCBvcmllbnRhdGlvbjogImgiLAogICAgeTogZW50cmllcy5tYXAoZnVuY3Rpb24oZSl7IHJldHVybiBlWzBdOyB9KSwKICAgIHg6IGVudHJpZXMubWFwKGZ1bmN0aW9uKGUpeyByZXR1cm4gZVsxXTsgfSksCiAgICB0ZXh0OiBlbnRyaWVzLm1hcChmdW5jdGlvbihlKXsgcmV0dXJuIGVbMV07IH0pLAogICAgdGV4dHRlbXBsYXRlOiAiJXt4OiwuMGZ9IiwgdGV4dHBvc2l0aW9uOiAib3V0c2lkZSIsIGNsaXBvbmF4aXM6IGZhbHNlLAogICAgdGV4dGZvbnQ6IHtzaXplOiAxMX0sCiAgICBtYXJrZXI6IHtjb2xvcjogZW50cmllcy5tYXAoZnVuY3Rpb24oXyxpKXsgcmV0dXJuIFtXX0RBUkssV19NSUQsV19MSUdIVF1baSUzXTsgfSksIGxpbmU6IHt3aWR0aDogMH19LAogICAgaG92ZXJ0ZW1wbGF0ZTogIjxiPiV7eX08L2I+PGJyPiIgKyBob3ZlclN1ZmZpeCArICI6ICV7eDosLjBmfTxleHRyYT48L2V4dHJhPiIKICB9XSwgT2JqZWN0LmFzc2lnbih7fSwgcGxvdC5sYXlvdXQgfHwge30sIHsKICAgIHNob3dsZWdlbmQ6IGZhbHNlLCBoZWlnaHQ6IGgsCiAgICBtYXJnaW46IE9iamVjdC5hc3NpZ24oe30sIChwbG90LmxheW91dCAmJiBwbG90LmxheW91dC5tYXJnaW4pIHx8IHt9LCB7dDogNDAsIGI6IDQwLCBsOiAxNDAsIHI6IDY0fSksCiAgICB4YXhpczogT2JqZWN0LmFzc2lnbih7fSwgKHBsb3QubGF5b3V0ICYmIHBsb3QubGF5b3V0LnhheGlzKSB8fCB7fSwgewogICAgICBzaG93Z3JpZDogdHJ1ZSwgZ3JpZGNvbG9yOiAicmdiYSgxMjgsMTI4LDEyOCwwLjEyKSIsIGdyaWR3aWR0aDogMSwgemVyb2xpbmU6IGZhbHNlLCBhdXRvbWFyZ2luOiB0cnVlCiAgICB9KSwKICAgIHlheGlzOiBPYmplY3QuYXNzaWduKHt9LCAocGxvdC5sYXlvdXQgJiYgcGxvdC5sYXlvdXQueWF4aXMpIHx8IHt9LCB7CiAgICAgIHNob3dncmlkOiBmYWxzZSwgemVyb2xpbmU6IGZhbHNlLCBhdXRvbWFyZ2luOiB0cnVlCiAgICB9KQogIH0pKTsKfQoKZnVuY3Rpb24gd0J1aWxkTWF0cml4KHJvd3MpewogIHZhciBzdGF0ZXMgPSB7fTsKICB2YXIgYWdpbmdzID0ge307CiAgdmFyIGNlbGwgPSB7fTsKICB2YXIgY29sbGVjdGVkID0ge307CiAgdmFyIHJlbWFpbmluZyA9IHt9OwogIHJvd3MuZm9yRWFjaChmdW5jdGlvbihyKXsKICAgIHZhciBhID0gci5hZ2luZyB8fCAi2LrZitixINmF2K3Yr9ivIjsKICAgIHZhciBzID0gci5zdGF0ZSB8fCAi4oCUIjsKICAgIHN0YXRlc1tzXSA9IDE7CiAgICBhZ2luZ3NbYV0gPSAxOwogICAgdmFyIGsgPSBhICsgInx8IiArIHM7CiAgICBjZWxsW2tdID0gKGNlbGxba118fDApICsgMTsKICAgIGNvbGxlY3RlZFthXSA9IChjb2xsZWN0ZWRbYV18fDApICsgKHIuY29sbGVjdGVkfHwwKTsKICAgIHJlbWFpbmluZ1thXSA9IChyZW1haW5pbmdbYV18fDApICsgKHIucmVtYWluaW5nfHwwKTsKICB9KTsKICB2YXIgc3RhdGVMaXN0ID0gT2JqZWN0LmtleXMoc3RhdGVzKS5zb3J0KGZ1bmN0aW9uKGEsYil7CiAgICB2YXIgdGE9MCwgdGI9MDsKICAgIE9iamVjdC5rZXlzKGFnaW5ncykuZm9yRWFjaChmdW5jdGlvbihhZyl7IHRhICs9IGNlbGxbYWcrInx8IithXXx8MDsgdGIgKz0gY2VsbFthZysifHwiK2JdfHwwOyB9KTsKICAgIHJldHVybiB0YiAtIHRhOwogIH0pOwogIHZhciBhZ2luZ0xpc3QgPSBPYmplY3Qua2V5cyhhZ2luZ3MpLnNvcnQoKTsKICB2YXIgaGVhZCA9ICI8dHI+PHRoPti52YXYsSDYp9mE2KXYs9mG2KfYrzwvdGg+IiArIHN0YXRlTGlzdC5tYXAoZnVuY3Rpb24ocyl7IHJldHVybiAiPHRoPiIrcysiPC90aD4iOyB9KS5qb2luKCIiKSArCiAgICAgICAgICAgICAiPHRoPtin2YTYpdis2YXYp9mE2Yo8L3RoPjx0aD7YqtmFINin2YTYqtit2LXZitmEPC90aD48dGg+2KjYp9mC2Yog2KfZhNmF2K/ZitmI2YbZitipPC90aD48L3RyPiI7CiAgdmFyIGJvZHkgPSBhZ2luZ0xpc3QubWFwKGZ1bmN0aW9uKGEpewogICAgdmFyIHJvd1RvdGFsID0gMDsKICAgIHZhciB0ZHMgPSBzdGF0ZUxpc3QubWFwKGZ1bmN0aW9uKHMpewogICAgICB2YXIgdiA9IGNlbGxbYSsifHwiK3NdfHwwOwogICAgICByb3dUb3RhbCArPSB2OwogICAgICByZXR1cm4gIjx0ZD4iICsgKHYgPyB3Rm10KHYpIDogIuKAlCIpICsgIjwvdGQ+IjsKICAgIH0pLmpvaW4oIiIpOwogICAgcmV0dXJuICI8dHI+PHRkPiIrYSsiPC90ZD4iK3RkcysiPHRkPjxiPiIrd0ZtdChyb3dUb3RhbCkrIjwvYj48L3RkPjx0ZD4iK3dGbXQwKGNvbGxlY3RlZFthXXx8MCkrIjwvdGQ+PHRkPiIrd0ZtdDAocmVtYWluaW5nW2FdfHwwKSsiPC90ZD48L3RyPiI7CiAgfSkuam9pbigiIik7CiAgdmFyIGNvbFRvdGFscyA9IHN0YXRlTGlzdC5tYXAoZnVuY3Rpb24ocyl7CiAgICB2YXIgdCA9IDA7CiAgICBhZ2luZ0xpc3QuZm9yRWFjaChmdW5jdGlvbihhKXsgdCArPSBjZWxsW2ErInx8IitzXXx8MDsgfSk7CiAgICByZXR1cm4gdDsKICB9KTsKICB2YXIgZ3JhbmQgPSBjb2xUb3RhbHMucmVkdWNlKGZ1bmN0aW9uKHMsdil7IHJldHVybiBzK3Y7IH0sIDApOwogIHZhciBzdW1DID0gYWdpbmdMaXN0LnJlZHVjZShmdW5jdGlvbihzLGEpeyByZXR1cm4gcysoY29sbGVjdGVkW2FdfHwwKTsgfSwgMCk7CiAgdmFyIHN1bVIgPSBhZ2luZ0xpc3QucmVkdWNlKGZ1bmN0aW9uKHMsYSl7IHJldHVybiBzKyhyZW1haW5pbmdbYV18fDApOyB9LCAwKTsKICB2YXIgZm9vdCA9ICI8dHIgc3R5bGU9J2ZvbnQtd2VpZ2h0OjcwMDtiYWNrZ3JvdW5kOiNFN0YxRjEnPjx0ZD7Yp9mE2KXYrNmF2KfZhNmKPC90ZD4iICsKICAgICAgICAgICAgIGNvbFRvdGFscy5tYXAoZnVuY3Rpb24odil7IHJldHVybiAiPHRkPiIrd0ZtdCh2KSsiPC90ZD4iOyB9KS5qb2luKCIiKSArCiAgICAgICAgICAgICAiPHRkPiIrd0ZtdChncmFuZCkrIjwvdGQ+PHRkPiIrd0ZtdDAoc3VtQykrIjwvdGQ+PHRkPiIrd0ZtdDAoc3VtUikrIjwvdGQ+PC90cj4iOwogIHJldHVybiB7IGhlYWQ6IGhlYWQsIGJvZHk6IGJvZHkgKyBmb290IH07Cn0KCmZ1bmN0aW9uIHdSZWZyZXNoKCl7CiAgdmFyIHJvd3MgPSB3U2VsZWN0ZWRSb3dzKCk7CiAgdmFyIGFnZW50cyA9IFtdLCBzZWVuQSA9IHt9OwogIHJvd3MuZm9yRWFjaChmdW5jdGlvbihyKXsgaWYgKHIuYWdlbnQgJiYgIXNlZW5BW3IuYWdlbnRdKSB7IHNlZW5BW3IuYWdlbnRdPTE7IGFnZW50cy5wdXNoKHIuYWdlbnQpOyB9IH0pOwogIHZhciBjdXN0b21lcnMgPSBbXSwgc2VlbkMgPSB7fTsKICByb3dzLmZvckVhY2goZnVuY3Rpb24ocil7IGlmIChyLmN1c3RvbWVyICYmICFzZWVuQ1tyLmN1c3RvbWVyXSkgeyBzZWVuQ1tyLmN1c3RvbWVyXT0xOyBjdXN0b21lcnMucHVzaChyLmN1c3RvbWVyKTsgfSB9KTsKICB2YXIgcmVtYWluaW5nID0gcm93cy5yZWR1Y2UoZnVuY3Rpb24ocyxyKXsgcmV0dXJuIHMgKyAoci5yZW1haW5pbmd8fDApOyB9LCAwKTsKICB2YXIgYXZnID0gcm93cy5sZW5ndGggPyByZW1haW5pbmcgLyByb3dzLmxlbmd0aCA6IDA7CiAgd1NldEtwaSgid2FsbGV0LWtwaS1hbW91bnQiLCB3Rm10MChyZW1haW5pbmcpKTsKICB3U2V0S3BpKCJ3YWxsZXQta3BpLWFnZW50cyIsIHdGbXQoYWdlbnRzLmxlbmd0aCkpOwogIHdTZXRLcGkoIndhbGxldC1rcGktY3VzdG9tZXJzIiwgd0ZtdChjdXN0b21lcnMubGVuZ3RoIHx8IHJvd3MubGVuZ3RoKSk7CiAgd1NldEtwaSgid2FsbGV0LWtwaS1hY2NvdW50cyIsIHdGbXQocm93cy5sZW5ndGgpKTsKICB3U2V0S3BpKCJ3YWxsZXQta3BpLWF2ZyIsIHdGbXQwKGF2ZykpOwogIHZhciBzdCA9IGRvY3VtZW50LmdldEVsZW1lbnRCeUlkKCJ3YWxsZXQtZmlsdGVyLXN0YXR1cyIpOwogIGlmIChzdCkgc3QudGV4dENvbnRlbnQgPSAi2LnYsdi2ICIgKyB3Rm10KHJvd3MubGVuZ3RoKSArICIg2K3Ys9in2Kgg2YXZhiDYo9i12YQgIiArIHdGbXQod2FsbGV0RGF0YS5sZW5ndGgpICsgIiAgfCAgIiArIHdGbXQoYWdlbnRzLmxlbmd0aCkgKyAiINmF2K3YtdmEIjsKCiAgd0Jhckgod2FsbGV0UGxvdElkcy5zdGF0ZXMgJiYgZG9jdW1lbnQuZ2V0RWxlbWVudEJ5SWQod2FsbGV0UGxvdElkcy5zdGF0ZXMpLCB3VG9wRW50cmllcyh3Q291bnRNYXAocm93cywic3RhdGUiKSwgMTIpLCAi2LnYr9ivINin2YTYrdiz2KfYqNin2KoiKTsKICB3QmFySCh3YWxsZXRQbG90SWRzLnN0YXRlX2Ftb3VudCAmJiBkb2N1bWVudC5nZXRFbGVtZW50QnlJZCh3YWxsZXRQbG90SWRzLnN0YXRlX2Ftb3VudCksIHdUb3BFbnRyaWVzKHdTdW1NYXAocm93cywic3RhdGUiLCJyZW1haW5pbmciKSwgMTIpLCAi2KfZhNmF2KjZhNi6Iik7CiAgd0Jhckgod2FsbGV0UGxvdElkcy5ieV9hZ2VudF9jb3VudCAmJiBkb2N1bWVudC5nZXRFbGVtZW50QnlJZCh3YWxsZXRQbG90SWRzLmJ5X2FnZW50X2NvdW50KSwgd1RvcEVudHJpZXMod0NvdW50TWFwKHJvd3MsImFnZW50IiksIDEyKSwgIti52K/YryDYp9mE2K3Ys9in2KjYp9iqIik7CgogIHZhciBhZ2luZ1Bsb3QgPSB3YWxsZXRQbG90SWRzLmFnaW5nICYmIGRvY3VtZW50LmdldEVsZW1lbnRCeUlkKHdhbGxldFBsb3RJZHMuYWdpbmcpOwogIGlmIChhZ2luZ1Bsb3QpIHsKICAgIHZhciBjb2xsID0gd1N1bU1hcChyb3dzLCJhZ2luZyIsImNvbGxlY3RlZCIpOwogICAgdmFyIHJlbSA9IHdTdW1NYXAocm93cywiYWdpbmciLCJyZW1haW5pbmciKTsKICAgIHZhciBsYWJlbHMgPSBbXSwgc2VlbkwgPSB7fTsKICAgIE9iamVjdC5rZXlzKGNvbGwpLmNvbmNhdChPYmplY3Qua2V5cyhyZW0pKS5mb3JFYWNoKGZ1bmN0aW9uKGspeyBpZiAoIXNlZW5MW2tdKSB7IHNlZW5MW2tdPTE7IGxhYmVscy5wdXNoKGspOyB9IH0pOwogICAgbGFiZWxzLnNvcnQoKTsKICAgIFBsb3RseS5yZWFjdChhZ2luZ1Bsb3QsIFsKICAgICAge3R5cGU6ImJhciIsIG5hbWU6Itiq2YUg2KfZhNiq2K3YtdmK2YQiLCB4OmxhYmVscywgeTpsYWJlbHMubWFwKGZ1bmN0aW9uKGspe3JldHVybiBjb2xsW2tdfHwwO30pLCBtYXJrZXI6e2NvbG9yOldfUE9TfSwKICAgICAgIHRleHQ6bGFiZWxzLm1hcChmdW5jdGlvbihrKXtyZXR1cm4gY29sbFtrXXx8MDt9KSwgdGV4dHRlbXBsYXRlOiIle3k6LC4wZn0iLCB0ZXh0cG9zaXRpb246Im91dHNpZGUiLCBjbGlwb25heGlzOmZhbHNlLAogICAgICAgaG92ZXJ0ZW1wbGF0ZToiPGI+JXt4fTwvYj48YnI+2KrZhSDYp9mE2KrYrdi12YrZhDogJXt5OiwuMGZ9PGV4dHJhPjwvZXh0cmE+In0sCiAgICAgIHt0eXBlOiJiYXIiLCBuYW1lOiLYqNin2YLZiiDYp9mE2YXYr9mK2YjZhtmK2KkiLCB4OmxhYmVscywgeTpsYWJlbHMubWFwKGZ1bmN0aW9uKGspe3JldHVybiByZW1ba118fDA7fSksIG1hcmtlcjp7Y29sb3I6V19ORUd9LAogICAgICAgdGV4dDpsYWJlbHMubWFwKGZ1bmN0aW9uKGspe3JldHVybiByZW1ba118fDA7fSksIHRleHR0ZW1wbGF0ZToiJXt5OiwuMGZ9IiwgdGV4dHBvc2l0aW9uOiJvdXRzaWRlIiwgY2xpcG9uYXhpczpmYWxzZSwKICAgICAgIGhvdmVydGVtcGxhdGU6IjxiPiV7eH08L2I+PGJyPtio2KfZgtmKINin2YTZhdiv2YrZiNmG2YrYqTogJXt5OiwuMGZ9PGV4dHJhPjwvZXh0cmE+In0KICAgIF0sIE9iamVjdC5hc3NpZ24oe30sIGFnaW5nUGxvdC5sYXlvdXR8fHt9LCB7YmFybW9kZToiZ3JvdXAiLCBoZWlnaHQ6MzgwLCBtYXJnaW46T2JqZWN0LmFzc2lnbih7fSwgKGFnaW5nUGxvdC5sYXlvdXQmJmFnaW5nUGxvdC5sYXlvdXQubWFyZ2luKXx8e30sIHt0OjQ4LGI6ODAsbDo2NCxyOjQwfSksIHhheGlzOk9iamVjdC5hc3NpZ24oe30sIChhZ2luZ1Bsb3QubGF5b3V0JiZhZ2luZ1Bsb3QubGF5b3V0LnhheGlzKXx8e30sIHtzaG93Z3JpZDpmYWxzZSxhdXRvbWFyZ2luOnRydWV9KSwgeWF4aXM6T2JqZWN0LmFzc2lnbih7fSwgKGFnaW5nUGxvdC5sYXlvdXQmJmFnaW5nUGxvdC5sYXlvdXQueWF4aXMpfHx7fSwge3Nob3dncmlkOnRydWUsZ3JpZGNvbG9yOiJyZ2JhKDEyOCwxMjgsMTI4LDAuMTIpIix6ZXJvbGluZTpmYWxzZSxhdXRvbWFyZ2luOnRydWV9KX0pKTsKICB9CgogIHZhciBwaWVQbG90ID0gd2FsbGV0UGxvdElkcy5jdXN0b21lcl9zdGF0ZV9waWUgJiYgZG9jdW1lbnQuZ2V0RWxlbWVudEJ5SWQod2FsbGV0UGxvdElkcy5jdXN0b21lcl9zdGF0ZV9waWUpOwogIGlmIChwaWVQbG90KSB7CiAgICB2YXIgZW50cmllcyA9IHdUb3BFbnRyaWVzKHdDb3VudE1hcChyb3dzLCJjdXN0b21lcl9zdGF0ZSIpLCAxMCkucmV2ZXJzZSgpOwogICAgUGxvdGx5LnJlYWN0KHBpZVBsb3QsIFt7CiAgICAgIHR5cGU6InBpZSIsIGxhYmVsczplbnRyaWVzLm1hcChmdW5jdGlvbihlKXtyZXR1cm4gZVswXTt9KSwgdmFsdWVzOmVudHJpZXMubWFwKGZ1bmN0aW9uKGUpe3JldHVybiBlWzFdO30pLAogICAgICBtYXJrZXI6e2NvbG9yczpbV19EQVJLLFdfTUlELFdfTElHSFQsIiNCOEM1QzgiLCIjM0Q3RTgyIiwiIzdFQUJBRSJdfSwKICAgICAgdGV4dGluZm86ImxhYmVsK3BlcmNlbnQiLAogICAgICBob3ZlcnRlbXBsYXRlOiI8Yj4le2xhYmVsfTwvYj48YnI+2KfZhNi52K/YrzogJXt2YWx1ZTosLjBmfTxicj7Yp9mE2YbYs9io2Kk6ICV7cGVyY2VudDouMSV9PGV4dHJhPjwvZXh0cmE+IgogICAgfV0sIE9iamVjdC5hc3NpZ24oe30sIHBpZVBsb3QubGF5b3V0fHx7fSwge2hlaWdodDozNjAsIHNob3dsZWdlbmQ6ZmFsc2V9KSk7CiAgfQoKICB2YXIgZG9udXRQbG90ID0gd2FsbGV0UGxvdElkcy5uYXRpb25hbGl0eV9kb251dCAmJiBkb2N1bWVudC5nZXRFbGVtZW50QnlJZCh3YWxsZXRQbG90SWRzLm5hdGlvbmFsaXR5X2RvbnV0KTsKICBpZiAoZG9udXRQbG90KSB7CiAgICB2YXIgbkVudHJpZXMgPSB3VG9wRW50cmllcyh3Q291bnRNYXAocm93cywibmF0aW9uYWxpdHkiKSwgMTApLnJldmVyc2UoKTsKICAgIFBsb3RseS5yZWFjdChkb251dFBsb3QsIFt7CiAgICAgIHR5cGU6InBpZSIsIGxhYmVsczpuRW50cmllcy5tYXAoZnVuY3Rpb24oZSl7cmV0dXJuIGVbMF07fSksIHZhbHVlczpuRW50cmllcy5tYXAoZnVuY3Rpb24oZSl7cmV0dXJuIGVbMV07fSksIGhvbGU6MC41NSwKICAgICAgbWFya2VyOntjb2xvcnM6W1dfREFSSyxXX01JRCxXX0xJR0hULCIjQjhDNUM4IiwiIzNEN0U4MiIsIiM3RUFCQUUiXX0sCiAgICAgIHRleHRpbmZvOiJsYWJlbCtwZXJjZW50IiwKICAgICAgaG92ZXJ0ZW1wbGF0ZToiPGI+JXtsYWJlbH08L2I+PGJyPtin2YTYudiv2K86ICV7dmFsdWU6LC4wZn08YnI+2KfZhNmG2LPYqNipOiAle3BlcmNlbnQ6LjElfTxleHRyYT48L2V4dHJhPiIKICAgIH1dLCBPYmplY3QuYXNzaWduKHt9LCBkb251dFBsb3QubGF5b3V0fHx7fSwge2hlaWdodDozNjAsIHNob3dsZWdlbmQ6ZmFsc2V9KSk7CiAgfQoKICB2YXIgdGhlYWQgPSBkb2N1bWVudC5nZXRFbGVtZW50QnlJZCgid2FsbGV0LW1hdHJpeC10aGVhZCIpOwogIHZhciB0Ym9keSA9IGRvY3VtZW50LmdldEVsZW1lbnRCeUlkKCJ3YWxsZXQtbWF0cml4LXRib2R5Iik7CiAgaWYgKHRoZWFkICYmIHRib2R5KSB7CiAgICB2YXIgbXggPSB3QnVpbGRNYXRyaXgocm93cyk7CiAgICB0aGVhZC5pbm5lckhUTUwgPSBteC5oZWFkOwogICAgdGJvZHkuaW5uZXJIVE1MID0gbXguYm9keTsKICB9Cn0KCmZ1bmN0aW9uIHdCaW5kKCl7CiAgWyJ3YWxsZXQtYWdlbnQtb3B0aW9uIiwid2FsbGV0LW5hdGlvbi1vcHRpb24iLCJ3YWxsZXQtY3N0YXRlLW9wdGlvbiIsIndhbGxldC1hZ2luZy1vcHRpb24iXS5mb3JFYWNoKGZ1bmN0aW9uKGNscyl7CiAgICBBcnJheS5wcm90b3R5cGUuc2xpY2UuY2FsbChkb2N1bWVudC5xdWVyeVNlbGVjdG9yQWxsKCIuIitjbHMpKS5mb3JFYWNoKGZ1bmN0aW9uKG8pewogICAgICBvLmFkZEV2ZW50TGlzdGVuZXIoImNoYW5nZSIsIGZ1bmN0aW9uKCl7IHdVcGRhdGVMYWJlbHMoKTsgd1JlZnJlc2goKTsgfSk7CiAgICB9KTsKICB9KTsKICBmdW5jdGlvbiBiaW5kU2VsZWN0QWxsKGFsbENscywgb3B0Q2xzKXsKICAgIHZhciBlbCA9IGRvY3VtZW50LnF1ZXJ5U2VsZWN0b3IoIi4iK2FsbENscyk7CiAgICBpZiAoIWVsKSByZXR1cm47CiAgICBlbC5hZGRFdmVudExpc3RlbmVyKCJjaGFuZ2UiLCBmdW5jdGlvbihlKXsKICAgICAgQXJyYXkucHJvdG90eXBlLnNsaWNlLmNhbGwoZG9jdW1lbnQucXVlcnlTZWxlY3RvckFsbCgiLiIrb3B0Q2xzKSkuZm9yRWFjaChmdW5jdGlvbihvKXsgby5jaGVja2VkID0gZS50YXJnZXQuY2hlY2tlZDsgfSk7CiAgICAgIHdVcGRhdGVMYWJlbHMoKTsgd1JlZnJlc2goKTsKICAgIH0pOwogIH0KICBiaW5kU2VsZWN0QWxsKCJ3YWxsZXQtc2VsZWN0LWFsbC1hZ2VudCIsICJ3YWxsZXQtYWdlbnQtb3B0aW9uIik7CiAgYmluZFNlbGVjdEFsbCgid2FsbGV0LXNlbGVjdC1hbGwtbmF0aW9uIiwgIndhbGxldC1uYXRpb24tb3B0aW9uIik7CiAgYmluZFNlbGVjdEFsbCgid2FsbGV0LXNlbGVjdC1hbGwtY3N0YXRlIiwgIndhbGxldC1jc3RhdGUtb3B0aW9uIik7CiAgYmluZFNlbGVjdEFsbCgid2FsbGV0LXNlbGVjdC1hbGwtYWdpbmciLCAid2FsbGV0LWFnaW5nLW9wdGlvbiIpOwogIFsid2FsbGV0LWFzc2lnbi1mcm9tIiwid2FsbGV0LWFzc2lnbi10byIsIndhbGxldC1kZWJpdC1mcm9tIiwid2FsbGV0LWRlYml0LXRvIl0uZm9yRWFjaChmdW5jdGlvbihpZCl7CiAgICB2YXIgZWwgPSBkb2N1bWVudC5nZXRFbGVtZW50QnlJZChpZCk7CiAgICBpZiAoZWwpIGVsLmFkZEV2ZW50TGlzdGVuZXIoImNoYW5nZSIsIHdSZWZyZXNoKTsKICB9KTsKICB2YXIgcmVzZXQgPSBkb2N1bWVudC5nZXRFbGVtZW50QnlJZCgid2FsbGV0LXJlc2V0LWZpbHRlcnMiKTsKICBpZiAocmVzZXQpIHJlc2V0LmFkZEV2ZW50TGlzdGVuZXIoImNsaWNrIiwgZnVuY3Rpb24oKXsKICAgIEFycmF5LnByb3RvdHlwZS5zbGljZS5jYWxsKGRvY3VtZW50LnF1ZXJ5U2VsZWN0b3JBbGwoIi53YWxsZXQtYWdlbnQtb3B0aW9uLC53YWxsZXQtbmF0aW9uLW9wdGlvbiwud2FsbGV0LWNzdGF0ZS1vcHRpb24sLndhbGxldC1hZ2luZy1vcHRpb24sLndhbGxldC1zZWxlY3QtYWxsLWFnZW50LC53YWxsZXQtc2VsZWN0LWFsbC1uYXRpb24sLndhbGxldC1zZWxlY3QtYWxsLWNzdGF0ZSwud2FsbGV0LXNlbGVjdC1hbGwtYWdpbmciKSkuZm9yRWFjaChmdW5jdGlvbihvKXsgby5jaGVja2VkID0gZmFsc2U7IH0pOwogICAgdmFyIGFmID0gZG9jdW1lbnQuZ2V0RWxlbWVudEJ5SWQoIndhbGxldC1hc3NpZ24tZnJvbSIpOyBpZiAoYWYpIGFmLnZhbHVlID0gV19BU1NJR05fTUlOOwogICAgdmFyIGF0ID0gZG9jdW1lbnQuZ2V0RWxlbWVudEJ5SWQoIndhbGxldC1hc3NpZ24tdG8iKTsgaWYgKGF0KSBhdC52YWx1ZSA9IFdfQVNTSUdOX01BWDsKICAgIHZhciBkZiA9IGRvY3VtZW50LmdldEVsZW1lbnRCeUlkKCJ3YWxsZXQtZGViaXQtZnJvbSIpOyBpZiAoZGYpIGRmLnZhbHVlID0gV19ERUJJVF9NSU47CiAgICB2YXIgZHQgPSBkb2N1bWVudC5nZXRFbGVtZW50QnlJZCgid2FsbGV0LWRlYml0LXRvIik7IGlmIChkdCkgZHQudmFsdWUgPSBXX0RFQklUX01BWDsKICAgIHdVcGRhdGVMYWJlbHMoKTsgd1JlZnJlc2goKTsKICB9KTsKICB3VXBkYXRlTGFiZWxzKCk7CiAgd1JlZnJlc2goKTsKfQppZiAoZG9jdW1lbnQucmVhZHlTdGF0ZSA9PT0gImxvYWRpbmciKSBkb2N1bWVudC5hZGRFdmVudExpc3RlbmVyKCJET01Db250ZW50TG9hZGVkIiwgd0JpbmQpOwplbHNlIHdCaW5kKCk7Cn0pKCk7Cg==").decode("utf-8")
     js_out = (
         js_tpl
         .replace("__WALLET_DATA__", _json.dumps(records, ensure_ascii=False))

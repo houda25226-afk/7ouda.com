@@ -2816,8 +2816,8 @@ def build_dashboard_html(df, class_col, sales_col, time_col, source_name="", fil
         f".panel{{background:{surface};border:1px solid {border};border-radius:16px;padding:16px 16px 12px;margin-bottom:16px}}",
         f"h2.section-title{{margin:4px 0 12px;text-align:center;font-size:17px;color:{text}}}",
         "#interactive-filters,.filters-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px;align-items:end}",
-        ".kpi-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin:16px 0}",
-        ".charts-grid-2{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;margin:0 0 16px}",
+        ".kpi-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin:10px 0 12px}",
+        ".charts-grid-2{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin:0 0 12px}",
         "@media (max-width:900px){.charts-grid-2{grid-template-columns:1fr}}",
         f".filter-field{{display:flex;flex-direction:column;gap:6px;color:{text_dim};font-size:12px}}",
         f".filter-field input,.filter-field select,.filter-field button.multi-trigger{{background:{background};color:{text};border:1px solid {border};border-radius:10px;padding:9px 10px;font-size:13px;text-align:right}}",
@@ -4967,9 +4967,8 @@ def page_dashboard():
     # 💾 لو الملف ده اتعرج قبل كده — نعرض الكاش من غير إعادة معالجة
     current_file_hash = uploaded_file_hash(dash_file)
     if current_source_hash == current_file_hash and cached is not None:
-        df_show, hint = _render_slicers(cached["df"], cached["sales_col"], cached["time_col"])
-        _render_dashboard(df_show, cached["class_col"], cached["sales_col"],
-                          cached["time_col"], dash_file.name, filter_hint=hint,
+        _render_dashboard(cached["df"], cached["class_col"], cached["sales_col"],
+                          cached["time_col"], dash_file.name, filter_hint="",
                           break_start=break_start, break_end=break_end)
         return
 
@@ -4999,8 +4998,7 @@ def page_dashboard():
     }
 
     # 🎚️ السلايسرز: فلتر المحصّلين + فلتر التواريخ (للعرض فقط — الكاش محفوظ)
-    df_show, hint = _render_slicers(df, sales_col, time_col)
-    _render_dashboard(df_show, class_col, sales_col, time_col, dash_file.name, filter_hint=hint,
+    _render_dashboard(df, class_col, sales_col, time_col, dash_file.name, filter_hint="",
                       break_start=break_start, break_end=break_end)
 
 
@@ -5057,6 +5055,7 @@ def _sync_dashboard_side_file(uploaded_file, cache_key):
 
 
 def _render_dashboard(df, class_col, sales_col, time_col, source_name, filter_hint="", break_start=None, break_end=None):
+    """يعرض صفحة واحدة فقط مع سلايسرزها: النشاط / المحفظة / السداد / الربط."""
     wallet_info = st.session_state.get(DASH_WALLET_CACHE_KEY)
     payments_info = st.session_state.get(DASH_PAYMENTS_CACHE_KEY)
     has_extra_pages = bool(wallet_info) and bool(payments_info)
@@ -5071,11 +5070,16 @@ def _render_dashboard(df, class_col, sales_col, time_col, source_name, filter_hi
         active_page = chosen or pages[0]
         st.divider()
 
+    activity_df = df
+    activity_hint = filter_hint or ""
     if active_page == "📊 نشاط المحصلين":
-        if filter_hint:
-            st.info(f"الفلاتر المطبقة: {filter_hint}")
-        render_full_dashboard(df, class_col=class_col, sales_col=sales_col, time_col=time_col,
-                              break_start=break_start, break_end=break_end)
+        activity_df, activity_hint = _render_slicers(df, sales_col, time_col)
+        if activity_hint:
+            st.caption(f"الفلاتر المطبقة: {activity_hint}")
+        render_full_dashboard(
+            activity_df, class_col=class_col, sales_col=sales_col, time_col=time_col,
+            break_start=break_start, break_end=break_end,
+        )
     elif active_page == "💼 المحفظة" and wallet_info:
         render_wallet_page(wallet_info["df"])
     elif active_page == "💰 السداد" and payments_info:
@@ -5084,9 +5088,10 @@ def _render_dashboard(df, class_col, sales_col, time_col, source_name, filter_hi
         render_activity_payments_link_page(df, sales_col, class_col, payments_info["df"])
 
     st.divider()
+    # التصدير من البيانات الأصلية؛ كل صفحة HTML فيها سلايسرزها التفاعلية
     dashboard_html = build_dashboard_html(
         df, class_col=class_col, sales_col=sales_col, time_col=time_col,
-        source_name=source_name, filter_hint=filter_hint,
+        source_name=source_name, filter_hint=activity_hint if active_page == "📊 نشاط المحصلين" else "",
         filter_summary=st.session_state.get("dashboard_filter_summary", {}),
         wallet_df=(wallet_info["df"] if wallet_info else None),
         payments_df=(payments_info["df"] if payments_info else None),
@@ -5220,9 +5225,8 @@ def _show_dashboard_from_cache(break_start=None, break_end=None):
     if cached is None:
         return
     st.info(f"📌 لوحة التحكم محفوظة في الذاكرة — آخر ملف مرفوع: {cached['source_name']}")
-    df, hint = _render_slicers(cached["df"], cached["sales_col"], cached["time_col"])
-    _render_dashboard(df, cached["class_col"], cached["sales_col"],
-                      cached["time_col"], cached["source_name"], filter_hint=hint,
+    _render_dashboard(cached["df"], cached["class_col"], cached["sales_col"],
+                      cached["time_col"], cached["source_name"], filter_hint="",
                       break_start=break_start, break_end=break_end)
 
 
@@ -5724,13 +5728,19 @@ def render_wallet_page(df):
     st.subheader("💼 تحليل المحفظة الكاملة")
     prepared, cols = _wallet_prepare_frame(df)
 
-    with st.expander("🔎 فلاتر المحفظة (Slicers)", expanded=True):
+    with st.expander("🔎 فلاتر المحفظة", expanded=True):
         filtered, hint = _wallet_apply_slicers(prepared, cols)
     if hint:
-        st.caption(f"الفلاتر المفعّلة: {hint}")
-    st.caption(f"المعروض: {len(filtered):,} من أصل {len(prepared):,} حساب")
+        st.caption(f"الفلاتر: {hint}")
+    st.caption(f"المعروض: {len(filtered):,} / {len(prepared):,} حساب")
 
     figs, work, aging_table, meta = _build_wallet_analysis(filtered)
+
+    # توحيد ارتفاع أزواج الشارتات
+    PAIR_H = 300
+    for key in ("states", "state_amount", "by_agent_count", "aging", "customer_state_pie", "nationality_donut"):
+        if key in figs:
+            figs[key].update_layout(height=PAIR_H, margin=dict(t=48, b=40, l=110, r=24), title_font_size=15)
 
     st.plotly_chart(figs["kpi"], use_container_width=True, config=PLOTLY_CONFIG, key="wallet_kpi")
 
@@ -5744,33 +5754,31 @@ def render_wallet_page(df):
             with st.container(border=True):
                 st.plotly_chart(figs["state_amount"], use_container_width=True, config=PLOTLY_CONFIG, key="wallet_state_amount")
 
-    if "by_agent_count" in figs:
-        with st.container(border=True):
-            st.plotly_chart(figs["by_agent_count"], use_container_width=True, config=PLOTLY_CONFIG, key="wallet_agent_count")
+    col3, col4 = st.columns(2)
+    with col3:
+        if "by_agent_count" in figs:
+            with st.container(border=True):
+                st.plotly_chart(figs["by_agent_count"], use_container_width=True, config=PLOTLY_CONFIG, key="wallet_agent_count")
+        else:
+            st.info("لا يوجد عمود محصل.")
+    with col4:
+        if "aging" in figs:
+            with st.container(border=True):
+                st.plotly_chart(figs["aging"], use_container_width=True, config=PLOTLY_CONFIG, key="wallet_aging")
+        else:
+            st.info("لا يتوفر عمود عمر الاسناد في ملف المحفظة، أو لا توجد مبالغ للعرض.")
 
-    if "aging" in figs:
-        with st.container(border=True):
-            st.plotly_chart(figs["aging"], use_container_width=True, config=PLOTLY_CONFIG, key="wallet_aging")
-    else:
-        st.info("لا يتوفر عمود عمر الاسناد في ملف المحفظة، أو لا توجد مبالغ للعرض.")
-
-    c3, c4 = st.columns(2)
-    with c3:
+    c5, c6 = st.columns(2)
+    with c5:
         if "customer_state_pie" in figs:
             with st.container(border=True):
-                st.plotly_chart(
-                    figs["customer_state_pie"], use_container_width=True,
-                    config=PLOTLY_CONFIG, key="wallet_customer_state",
-                )
+                st.plotly_chart(figs["customer_state_pie"], use_container_width=True, config=PLOTLY_CONFIG, key="wallet_customer_state")
         else:
             st.info("لا يوجد عمود لحالة العميل.")
-    with c4:
+    with c6:
         if "nationality_donut" in figs:
             with st.container(border=True):
-                st.plotly_chart(
-                    figs["nationality_donut"], use_container_width=True,
-                    config=PLOTLY_CONFIG, key="wallet_nationality",
-                )
+                st.plotly_chart(figs["nationality_donut"], use_container_width=True, config=PLOTLY_CONFIG, key="wallet_nationality")
         else:
             st.info("لا يوجد عمود لجنسية العميل.")
 
@@ -5788,20 +5796,21 @@ def render_wallet_page(df):
 
         out_excel = io.BytesIO()
         with pd.ExcelWriter(out_excel, engine="openpyxl") as writer:
-            aging_table.to_excel(writer, index=False, sheet_name="عمر_الاسناد")
+            aging_table.to_excel(writer, index=False, sheet_name="ماتريكس_عمر_الاسناد")
         st.download_button(
-            "⬇️ تحميل جدول عمر الإسناد",
+            "⬇️ تحميل الماتريكس",
             data=out_excel.getvalue(),
-            file_name="wallet_aging_table.xlsx",
+            file_name="wallet_aging_matrix.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             use_container_width=True,
             key="wallet_aging_download",
         )
     else:
-        st.info("لا توجد بيانات لبناء جدول عمر الإسناد.")
+        st.info("لا توجد بيانات لبناء ماتريكس عمر الإسناد.")
 
     with st.expander("📋 عرض بيانات المحفظة"):
         st.dataframe(work, use_container_width=True, hide_index=True)
+
 
 
 def _build_payments_analysis(df):
@@ -5879,6 +5888,7 @@ def _build_payments_analysis(df):
         figs["amount_hist"] = fig4
 
     return figs, work, collector_col, amount_col
+
 
 
 def render_payments_page(df):
@@ -6075,8 +6085,14 @@ def _build_wallet_page_html(wallet_df):
         html.append("</div></div>")
         return "".join(html)
 
-    def _chart_card(fig, plot_id):
-        height = int(fig.layout.height or 420)
+    def _chart_card(fig, plot_id, height=300):
+        # نفس أسلوب شارتات النشاط: ارتفاع موحّد + بدون عنوان مكرر داخل الرسم
+        fig = fig.update_layout(
+            height=height,
+            margin=dict(t=36, b=36, l=100, r=20),
+            title=None,
+            font=dict(family="Tahoma, Segoe UI, Arial, sans-serif", size=12),
+        )
         return (
             "<article class='chart-card'>"
             + pio.to_html(
@@ -6138,9 +6154,11 @@ def _build_wallet_page_html(wallet_df):
         plot_id_map[key] = pid
         chart_idx += 1
         return (
-            f"<div><h2 class='section-title' style='margin-bottom:4px'>{title}</h2>"
-            f"<div class='meta' style='text-align:center;margin-bottom:8px'>{escape(subtitle)}</div>"
-            f"{_chart_card(figs[key], pid)}</div>"
+            f"<article class='chart-card'>"
+            f"<h3>{title}</h3>"
+            f"<div class='meta' style='text-align:center;margin:0 0 6px;font-size:12px'>{escape(subtitle)}</div>"
+            + _chart_card(figs[key], pid, height=300).replace("<article class='chart-card'>", "").replace("</article>", "")
+            + "</article>"
         )
 
     # Row 1: states + state amount

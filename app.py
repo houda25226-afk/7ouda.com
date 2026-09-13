@@ -199,6 +199,12 @@ WALLET_AGING_BUCKETS = [
     (91, 180, "91 — 180 يوم"),
     (181, None, "أكثر من 180 يوم"),
 ]
+# عمود عمر الإسناد الجاهز في ملف المحفظة (مش بنحسبه من Assign Date)
+WALLET_AGING_SOURCE_CANDIDATES = [
+    "عمر الاسناد", "عمر الإسناد", "عمر_الاسناد", "عمر الاسناد ",
+    "Assignment Age", "assignment age", "Aging", "aging", "Age Bucket",
+    "Aging Bucket", "عمر الإسناد بالأيام", "عمر الاسناد بالايام",
+]
 WALLET_AGING_COL = "عمر_الاسناد"
 WALLET_COLLECTED_COL = "تم_التحصيل"
 WALLET_REMAINING_COL = "باقي_المديونية"
@@ -5293,23 +5299,26 @@ def _wallet_prepare_frame(df):
     else:
         work[WALLET_COLLECTED_COL] = 0.0
 
-    today = datetime.now().date()
+    # تواريخ للسلايسرز فقط — مش بنحسب عمر الإسناد منها
     if assign_col and assign_col in work.columns:
-        assign_dates = work[assign_col].map(parse_date_cell)
-        work["_assign_date"] = assign_dates
-        work["_aging_days"] = assign_dates.map(
-            lambda d: (today - d).days if d is not None else None
-        )
-        work[WALLET_AGING_COL] = work["_aging_days"].map(_wallet_aging_bucket)
+        work["_assign_date"] = work[assign_col].map(parse_date_cell)
     else:
         work["_assign_date"] = None
-        work["_aging_days"] = None
-        work[WALLET_AGING_COL] = "غير محدد"
 
     if debit_col and debit_col in work.columns:
         work["_debit_date"] = work[debit_col].map(parse_date_cell)
     else:
         work["_debit_date"] = None
+
+    # عمر الإسناد من العمود الجاهز في ملف المحفظة
+    aging_src_col = find_column(work, WALLET_AGING_SOURCE_CANDIDATES)
+    if aging_src_col and aging_src_col in work.columns:
+        work[WALLET_AGING_COL] = (
+            work[aging_src_col].astype(str).str.strip()
+            .replace({"": "غير محدد", "nan": "غير محدد", "None": "غير محدد", "none": "غير محدد", "null": "غير محدد"})
+        )
+    else:
+        work[WALLET_AGING_COL] = "غير محدد"
 
     cols = {
         "sales_col": sales_col,
@@ -5322,6 +5331,7 @@ def _wallet_prepare_frame(df):
         "nationality_col": nationality_col,
         "customer_state_col": customer_state_col,
         "customer_id_col": customer_id_col,
+        "aging_src_col": aging_src_col,
     }
     return work, cols
 
@@ -5695,7 +5705,7 @@ def render_wallet_page(df):
         with st.container(border=True):
             st.plotly_chart(figs["aging"], use_container_width=True, config=PLOTLY_CONFIG, key="wallet_aging")
     else:
-        st.info("لا يتوفر عمود Assign Date لحساب عمر الإسناد، أو لا توجد مبالغ للعرض.")
+        st.info("لا يتوفر عمود عمر الاسناد في ملف المحفظة، أو لا توجد مبالغ للعرض.")
 
     c3, c4 = st.columns(2)
     with c3:
@@ -5952,48 +5962,199 @@ def _fig_html_card(fig, key_prefix, index):
 
 
 def _build_wallet_page_html(wallet_df):
-    figs, _work, aging_table, meta = _build_wallet_analysis(wallet_df)
-    parts = [
-        "<div id='page-wallet' class='dash-page'>",
-        "<h2 class='section-title'>💼 تحليل المحفظة الكاملة</h2>",
-        "<section id='kpi-grid'>",
-        f"<div class='kpi'><div class='label'>💰 إجمالي المديونية</div><div class='value' style='color:{OPS_DARK}'>{meta.get('total_amount', 0):,.0f}</div></div>",
-        f"<div class='kpi'><div class='label'>👥 عدد المحصلين</div><div class='value'>{meta.get('agent_count', 0):,}</div></div>",
-        f"<div class='kpi'><div class='label'>🧑 عدد العملاء</div><div class='value'>{meta.get('customer_count', 0):,}</div></div>",
-        f"<div class='kpi'><div class='label'>📋 عدد الحسابات</div><div class='value'>{meta.get('total_accounts', 0):,}</div></div>",
-        f"<div class='kpi'><div class='label'>📊 متوسط المديونية</div><div class='value' style='color:{OPS_MID}'>{meta.get('avg_amount', 0):,.0f}</div></div>",
-        "</section>",
-    ]
-    parts.append("<div class='charts-grid'>")
-    chart_idx = 1
-    for key in ("states", "state_amount", "by_agent_count", "aging", "customer_state_pie", "nationality_donut"):
-        if key in figs:
-            parts.append(_fig_html_card(figs[key], "wallet", chart_idx))
-            chart_idx += 1
-    parts.append("</div>")
+    """صفحة HTML للمحفظة بنفس أسلوب نشاط المحصلين: سلايسرز + كروت + شارتات واضحة + جدول."""
+    from html import escape
+    import json as _json
 
+    figs, work, aging_table, meta = _build_wallet_analysis(wallet_df)
+    sales_col = meta.get("sales_col")
+    sub_col = meta.get("sub_col")
+    nationality_col = meta.get("nationality_col")
+    customer_state_col = meta.get("customer_state_col") or sub_col
+
+    def _clean(v):
+        s = str(v).strip() if v is not None and not (isinstance(v, float) and pd.isna(v)) else ""
+        if s.lower() in {"", "nan", "none", "null"}:
+            return ""
+        return s
+
+    records = []
+    for _, row in work.iterrows():
+        ad = row.get("_assign_date")
+        dd = row.get("_debit_date")
+        records.append({
+            "agent": _clean(row[sales_col]) if sales_col and sales_col in work.columns else "",
+            "state": _clean(row[sub_col]) if sub_col and sub_col in work.columns else "",
+            "customer_state": _clean(row[customer_state_col]) if customer_state_col and customer_state_col in work.columns else "",
+            "nationality": _clean(row[nationality_col]) if nationality_col and nationality_col in work.columns else "",
+            "aging": _clean(row.get(WALLET_AGING_COL, "غير محدد")) or "غير محدد",
+            "collected": float(row.get(WALLET_COLLECTED_COL, 0) or 0),
+            "remaining": float(row.get(WALLET_REMAINING_COL, 0) or 0),
+            "assign_date": ad.isoformat() if hasattr(ad, "isoformat") else "",
+            "debit_date": dd.isoformat() if hasattr(dd, "isoformat") else "",
+            "customer": _clean(row[meta["customer_id_col"]]) if meta.get("customer_id_col") and meta["customer_id_col"] in work.columns else "",
+        })
+
+    agents = sorted({r["agent"] for r in records if r["agent"]})
+    nations = sorted({r["nationality"] for r in records if r["nationality"]})
+    cust_states = sorted({r["customer_state"] for r in records if r["customer_state"]})
+    aging_vals = sorted({r["aging"] for r in records if r["aging"]})
+    assign_dates = sorted(d for d in (r["assign_date"] for r in records) if d)
+    debit_dates = sorted(d for d in (r["debit_date"] for r in records) if d)
+    assign_min = assign_dates[0] if assign_dates else ""
+    assign_max = assign_dates[-1] if assign_dates else ""
+    debit_min = debit_dates[0] if debit_dates else ""
+    debit_max = debit_dates[-1] if debit_dates else ""
+
+    records_json = _json.dumps(records, ensure_ascii=False)
+    ops_dark, ops_mid, ops_light = OPS_DARK, OPS_MID, OPS_LIGHT
+    ops_pos, ops_neg = OPS_POSITIVE, OPS_NEGATIVE
+
+    parts = []
+    parts.append("<div id='page-wallet' class='dash-page'>")
+    parts.append("<h2 class='section-title'>💼 تحليل المحفظة الكاملة</h2>")
+    parts.append("<div class='meta' style='text-align:center;margin-bottom:12px'>المحفظة · سلايسرز تفاعلية · نفس تنسيق نشاط المحصلين</div>")
+
+    parts.append("<section class='panel'><h2 class='section-title'>🎚️ فلاتر المحفظة</h2>")
+    parts.append("<div id='wallet-interactive-filters'>")
+
+    parts.append("<div class='filter-field' style='position:relative'><span>👤 المحصل</span>")
+    parts.append("<button type='button' class='multi-trigger' data-target='wallet-agent-menu'><span id='wallet-agent-label'>كل المحصلين</span> ⌄</button>")
+    parts.append("<div id='wallet-agent-menu' class='multi-menu'><label style='display:block;padding:6px;font-weight:700'><input type='checkbox' class='wallet-select-all-agent'> كل المحصلين</label>")
+    for value in agents:
+        parts.append(f"<label style='display:block;padding:6px'><input type='checkbox' class='wallet-agent-option' value='{escape(value, quote=True)}'> {escape(value)}</label>")
+    parts.append("</div></div>")
+
+    parts.append("<div class='filter-field' style='position:relative'><span>🌍 الجنسية</span>")
+    parts.append("<button type='button' class='multi-trigger' data-target='wallet-nation-menu'><span id='wallet-nation-label'>كل الجنسيات</span> ⌄</button>")
+    parts.append("<div id='wallet-nation-menu' class='multi-menu'><label style='display:block;padding:6px;font-weight:700'><input type='checkbox' class='wallet-select-all-nation'> كل الجنسيات</label>")
+    for value in nations:
+        parts.append(f"<label style='display:block;padding:6px'><input type='checkbox' class='wallet-nation-option' value='{escape(value, quote=True)}'> {escape(value)}</label>")
+    parts.append("</div></div>")
+
+    parts.append("<div class='filter-field' style='position:relative'><span>🏷️ حالة العميل</span>")
+    parts.append("<button type='button' class='multi-trigger' data-target='wallet-cstate-menu'><span id='wallet-cstate-label'>كل الحالات</span> ⌄</button>")
+    parts.append("<div id='wallet-cstate-menu' class='multi-menu'><label style='display:block;padding:6px;font-weight:700'><input type='checkbox' class='wallet-select-all-cstate'> كل الحالات</label>")
+    for value in cust_states:
+        parts.append(f"<label style='display:block;padding:6px'><input type='checkbox' class='wallet-cstate-option' value='{escape(value, quote=True)}'> {escape(value)}</label>")
+    parts.append("</div></div>")
+
+    parts.append("<div class='filter-field' style='position:relative'><span>⏳ عمر الإسناد</span>")
+    parts.append("<button type='button' class='multi-trigger' data-target='wallet-aging-menu'><span id='wallet-aging-label'>كل الأعمار</span> ⌄</button>")
+    parts.append("<div id='wallet-aging-menu' class='multi-menu'><label style='display:block;padding:6px;font-weight:700'><input type='checkbox' class='wallet-select-all-aging'> كل الأعمار</label>")
+    for value in aging_vals:
+        parts.append(f"<label style='display:block;padding:6px'><input type='checkbox' class='wallet-aging-option' value='{escape(value, quote=True)}'> {escape(value)}</label>")
+    parts.append("</div></div>")
+
+    if assign_min:
+        parts.append(
+            f"<div class='filter-field'><span>📅 تاريخ الإسناد من</span>"
+            f"<input id='wallet-assign-from' type='date' value='{assign_min}' min='{assign_min}' max='{assign_max}'></div>"
+        )
+        parts.append(
+            f"<div class='filter-field'><span>📅 تاريخ الإسناد إلى</span>"
+            f"<input id='wallet-assign-to' type='date' value='{assign_max}' min='{assign_min}' max='{assign_max}'></div>"
+        )
+    if debit_min:
+        parts.append(
+            f"<div class='filter-field'><span>📅 تاريخ الحادث من</span>"
+            f"<input id='wallet-debit-from' type='date' value='{debit_min}' min='{debit_min}' max='{debit_max}'></div>"
+        )
+        parts.append(
+            f"<div class='filter-field'><span>📅 تاريخ الحادث إلى</span>"
+            f"<input id='wallet-debit-to' type='date' value='{debit_max}' min='{debit_min}' max='{debit_max}'></div>"
+        )
+
+    parts.append("<div class='filter-field'><span>&nbsp;</span><button id='wallet-reset-filters' class='btn-reset' type='button'>↺ إعادة ضبط</button></div>")
+    parts.append("</div>")
+    parts.append("<div id='wallet-filter-status' class='meta' style='margin-top:10px;text-align:center'></div>")
+    parts.append("</section>")
+
+    parts.append("<section id='wallet-kpi-grid' style='display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin:16px 0'>")
+    kpi_items = [
+        ("wallet-kpi-amount", "💰 إجمالي المديونية", f"{meta.get('total_amount', 0):,.0f}", ops_dark),
+        ("wallet-kpi-agents", "👥 عدد المحصلين", f"{meta.get('agent_count', 0):,}", None),
+        ("wallet-kpi-customers", "🧑 عدد العملاء", f"{meta.get('customer_count', 0):,}", None),
+        ("wallet-kpi-accounts", "📋 عدد الحسابات", f"{meta.get('total_accounts', 0):,}", None),
+        ("wallet-kpi-avg", "📊 متوسط المديونية", f"{meta.get('avg_amount', 0):,.0f}", ops_mid),
+    ]
+    for kid, label, val, color in kpi_items:
+        style = f" style='color:{color}'" if color else ""
+        parts.append(f"<div class='kpi'><div class='label'>{label}</div><div class='value' id='{kid}'{style}>{val}</div></div>")
+    parts.append("</section>")
+
+    chart_specs = [
+        ("states", "📊 توزيع الحسابات حسب الحالة", "عدد الحسابات في كل Sub State"),
+        ("state_amount", "💰 المديونية حسب الحالة", "إجمالي Net Amount لكل حالة"),
+        ("by_agent_count", "👤 توزيع الحسابات حسب المحصل", "عدد الحسابات المسندة لكل محصل"),
+        ("aging", "⏳ عمر الإسناد — التحصيل والمتبقي", "تم التحصيل (Payment) مقابل باقي المديونية حسب عمود عمر الإسناد في الملف"),
+        ("customer_state_pie", "🏷️ توزيع حالة العميل", "نسب حالات العميل في المحفظة"),
+        ("nationality_donut", "🌍 توزيع جنسية العميل", "نسب جنسيات العملاء"),
+    ]
+    chart_idx = 1
+    plot_id_map = {}
+    for key, title, subtitle in chart_specs:
+        if key not in figs:
+            continue
+        plot_id = f"wallet_{chart_idx}"
+        plot_id_map[key] = plot_id
+        height = int(figs[key].layout.height or 420)
+        parts.append("<section class='panel'>")
+        parts.append(f"<h2 class='section-title'>{title}</h2>")
+        parts.append(f"<div class='meta' style='text-align:center;margin:-4px 0 10px'>{escape(subtitle)}</div>")
+        parts.append(
+            "<article class='chart-card'>"
+            + pio.to_html(
+                figs[key], full_html=False, include_plotlyjs=False,
+                config={"displayModeBar": False, "responsive": True},
+                div_id=plot_id, default_width="100%", default_height=f"{height}px",
+            )
+            + "</article>"
+        )
+        parts.append("</section>")
+        chart_idx += 1
+
+    parts.append("<section class='panel'><h2 class='section-title'>📋 جدول عمر الإسناد</h2>")
+    parts.append("<div class='meta' style='text-align:center;margin-bottom:8px'>عمر الإسناد من عمود الملف · تم التحصيل من Payment · باقي المديونية من Net Amount</div>")
+    parts.append("<div class='table-wrap'><table class='data-table' id='wallet-aging-table'><thead><tr>")
+    table_cols = ["عمر الإسناد", "تم التحصيل", "باقي المديونية", "الحالة", "عدد الحسابات"]
+    for column in table_cols:
+        parts.append(f"<th>{column}</th>")
+    parts.append("</tr></thead><tbody id='wallet-aging-tbody'>")
     if aging_table is not None and not aging_table.empty:
-        parts.append("<section class='panel'><h2 class='section-title'>📋 جدول عمر الإسناد</h2>")
-        parts.append("<div class='table-wrap'><table class='data-table'><thead><tr>")
-        for column in aging_table.columns:
-            parts.append(f"<th>{column}</th>")
-        parts.append("</tr></thead><tbody>")
         for _, row in aging_table.iterrows():
             parts.append("<tr>")
-            for column in aging_table.columns:
-                val = row[column]
+            for column in table_cols:
+                val = row[column] if column in row.index else ""
                 if isinstance(val, (int, float)) and column != "عدد الحسابات":
                     cell = f"{val:,.0f}"
                 elif isinstance(val, (int, float)):
                     cell = f"{int(val):,}"
                 else:
-                    cell = str(val)
+                    cell = escape(str(val))
                 parts.append(f"<td>{cell}</td>")
             parts.append("</tr>")
-        parts.append("</tbody></table></div></section>")
-
+    parts.append("</tbody></table></div></section>")
     parts.append("</div>")
+
+    js = __import__("base64").b64decode("KGZ1bmN0aW9uKCl7CmNvbnN0IHdhbGxldERhdGEgPSBfX1dBTExFVF9EQVRBX187CmNvbnN0IHdhbGxldFBsb3RJZHMgPSBfX1dBTExFVF9QTE9UX0lEU19fOwpjb25zdCBXX0RBUksgPSAiX19PUFNfREFSS19fIjsKY29uc3QgV19NSUQgPSAiX19PUFNfTUlEX18iOwpjb25zdCBXX0xJR0hUID0gIl9fT1BTX0xJR0hUX18iOwpjb25zdCBXX1BPUyA9ICJfX09QU19QT1NfXyI7CmNvbnN0IFdfTkVHID0gIl9fT1BTX05FR19fIjsKY29uc3QgV19BU1NJR05fTUlOID0gIl9fQVNTSUdOX01JTl9fIjsKY29uc3QgV19BU1NJR05fTUFYID0gIl9fQVNTSUdOX01BWF9fIjsKY29uc3QgV19ERUJJVF9NSU4gPSAiX19ERUJJVF9NSU5fXyI7CmNvbnN0IFdfREVCSVRfTUFYID0gIl9fREVCSVRfTUFYX18iOwoKZnVuY3Rpb24gd0ZtdChuKXsgcmV0dXJuIE51bWJlcihufHwwKS50b0xvY2FsZVN0cmluZygiZW4tVVMiKTsgfQpmdW5jdGlvbiB3Rm10MChuKXsgcmV0dXJuIE51bWJlcihufHwwKS50b0xvY2FsZVN0cmluZygiZW4tVVMiLCB7bWF4aW11bUZyYWN0aW9uRGlnaXRzOjB9KTsgfQpmdW5jdGlvbiB3U2V0S3BpKGlkLCB2YWwpeyBjb25zdCBlbD1kb2N1bWVudC5nZXRFbGVtZW50QnlJZChpZCk7IGlmKGVsKSBlbC50ZXh0Q29udGVudCA9IHZhbDsgfQpmdW5jdGlvbiB3Q2hlY2tlZChjbHMpeyByZXR1cm4gWy4uLmRvY3VtZW50LnF1ZXJ5U2VsZWN0b3JBbGwoIi4iK2NscysiOmNoZWNrZWQiKV0ubWFwKG89Pm8udmFsdWUpOyB9CmZ1bmN0aW9uIHdTZWxlY3RlZFJvd3MoKXsKICBsZXQgcm93cyA9IHdhbGxldERhdGEuc2xpY2UoKTsKICBjb25zdCBhZ2VudHMgPSB3Q2hlY2tlZCgid2FsbGV0LWFnZW50LW9wdGlvbiIpOwogIGlmIChhZ2VudHMubGVuZ3RoKSByb3dzID0gcm93cy5maWx0ZXIociA9PiBhZ2VudHMuaW5jbHVkZXMoci5hZ2VudCkpOwogIGNvbnN0IG5hdGlvbnMgPSB3Q2hlY2tlZCgid2FsbGV0LW5hdGlvbi1vcHRpb24iKTsKICBpZiAobmF0aW9ucy5sZW5ndGgpIHJvd3MgPSByb3dzLmZpbHRlcihyID0+IG5hdGlvbnMuaW5jbHVkZXMoci5uYXRpb25hbGl0eSkpOwogIGNvbnN0IGNzdGF0ZXMgPSB3Q2hlY2tlZCgid2FsbGV0LWNzdGF0ZS1vcHRpb24iKTsKICBpZiAoY3N0YXRlcy5sZW5ndGgpIHJvd3MgPSByb3dzLmZpbHRlcihyID0+IGNzdGF0ZXMuaW5jbHVkZXMoci5jdXN0b21lcl9zdGF0ZSkpOwogIGNvbnN0IGFnaW5nID0gd0NoZWNrZWQoIndhbGxldC1hZ2luZy1vcHRpb24iKTsKICBpZiAoYWdpbmcubGVuZ3RoKSByb3dzID0gcm93cy5maWx0ZXIociA9PiBhZ2luZy5pbmNsdWRlcyhyLmFnaW5nKSk7CiAgY29uc3QgYWYgPSBkb2N1bWVudC5nZXRFbGVtZW50QnlJZCgid2FsbGV0LWFzc2lnbi1mcm9tIik/LnZhbHVlIHx8ICIiOwogIGNvbnN0IGF0ID0gZG9jdW1lbnQuZ2V0RWxlbWVudEJ5SWQoIndhbGxldC1hc3NpZ24tdG8iKT8udmFsdWUgfHwgIiI7CiAgaWYgKGFmKSByb3dzID0gcm93cy5maWx0ZXIociA9PiAhci5hc3NpZ25fZGF0ZSB8fCByLmFzc2lnbl9kYXRlID49IGFmKTsKICBpZiAoYXQpIHJvd3MgPSByb3dzLmZpbHRlcihyID0+ICFyLmFzc2lnbl9kYXRlIHx8IHIuYXNzaWduX2RhdGUgPD0gYXQpOwogIGNvbnN0IGRmID0gZG9jdW1lbnQuZ2V0RWxlbWVudEJ5SWQoIndhbGxldC1kZWJpdC1mcm9tIik/LnZhbHVlIHx8ICIiOwogIGNvbnN0IGR0ID0gZG9jdW1lbnQuZ2V0RWxlbWVudEJ5SWQoIndhbGxldC1kZWJpdC10byIpPy52YWx1ZSB8fCAiIjsKICBpZiAoZGYpIHJvd3MgPSByb3dzLmZpbHRlcihyID0+ICFyLmRlYml0X2RhdGUgfHwgci5kZWJpdF9kYXRlID49IGRmKTsKICBpZiAoZHQpIHJvd3MgPSByb3dzLmZpbHRlcihyID0+ICFyLmRlYml0X2RhdGUgfHwgci5kZWJpdF9kYXRlIDw9IGR0KTsKICByZXR1cm4gcm93czsKfQpmdW5jdGlvbiB3Q291bnRNYXAocm93cywga2V5KXsKICBjb25zdCBtID0ge307CiAgcm93cy5mb3JFYWNoKHIgPT4geyBjb25zdCBrID0gcltrZXldIHx8ICLYutmK2LEg2YXYrdiv2K8iOyBtW2tdID0gKG1ba118fDApICsgMTsgfSk7CiAgcmV0dXJuIG07Cn0KZnVuY3Rpb24gd1N1bU1hcChyb3dzLCBrZXksIHZhbEtleSl7CiAgY29uc3QgbSA9IHt9OwogIHJvd3MuZm9yRWFjaChyID0+IHsgY29uc3QgayA9IHJba2V5XSB8fCAi2LrZitixINmF2K3Yr9ivIjsgbVtrXSA9IChtW2tdfHwwKSArIChyW3ZhbEtleV18fDApOyB9KTsKICByZXR1cm4gbTsKfQpmdW5jdGlvbiB3VG9wRW50cmllcyhtYXAsIG4pewogIHJldHVybiBPYmplY3QuZW50cmllcyhtYXApLnNvcnQoKGEsYik9PmFbMV0tYlsxXSkuc2xpY2UoLW4pOwp9CmZ1bmN0aW9uIHdVcGRhdGVMYWJlbHMoKXsKICBjb25zdCBhID0gd0NoZWNrZWQoIndhbGxldC1hZ2VudC1vcHRpb24iKTsKICBjb25zdCBhbCA9IGRvY3VtZW50LmdldEVsZW1lbnRCeUlkKCJ3YWxsZXQtYWdlbnQtbGFiZWwiKTsKICBpZiAoYWwpIGFsLnRleHRDb250ZW50ID0gYS5sZW5ndGggPyAoYS5sZW5ndGggKyAiINmF2K3YtdmEINmF2K3Yr9ivIikgOiAi2YPZhCDYp9mE2YXYrdi12YTZitmGIjsKICBjb25zdCBuID0gd0NoZWNrZWQoIndhbGxldC1uYXRpb24tb3B0aW9uIik7CiAgY29uc3QgbmwgPSBkb2N1bWVudC5nZXRFbGVtZW50QnlJZCgid2FsbGV0LW5hdGlvbi1sYWJlbCIpOwogIGlmIChubCkgbmwudGV4dENvbnRlbnQgPSBuLmxlbmd0aCA/IChuLmxlbmd0aCArICIg2KzZhtiz2YrYqSIpIDogItmD2YQg2KfZhNis2YbYs9mK2KfYqiI7CiAgY29uc3QgYyA9IHdDaGVja2VkKCJ3YWxsZXQtY3N0YXRlLW9wdGlvbiIpOwogIGNvbnN0IGNsID0gZG9jdW1lbnQuZ2V0RWxlbWVudEJ5SWQoIndhbGxldC1jc3RhdGUtbGFiZWwiKTsKICBpZiAoY2wpIGNsLnRleHRDb250ZW50ID0gYy5sZW5ndGggPyAoYy5sZW5ndGggKyAiINit2KfZhNipIikgOiAi2YPZhCDYp9mE2K3Yp9mE2KfYqiI7CiAgY29uc3QgZyA9IHdDaGVja2VkKCJ3YWxsZXQtYWdpbmctb3B0aW9uIik7CiAgY29uc3QgZ2wgPSBkb2N1bWVudC5nZXRFbGVtZW50QnlJZCgid2FsbGV0LWFnaW5nLWxhYmVsIik7CiAgaWYgKGdsKSBnbC50ZXh0Q29udGVudCA9IGcubGVuZ3RoID8gKGcubGVuZ3RoICsgIiDYudmF2LEiKSA6ICLZg9mEINin2YTYo9i52YXYp9ixIjsKfQoKZnVuY3Rpb24gd1JlZnJlc2goKXsKICBjb25zdCByb3dzID0gd1NlbGVjdGVkUm93cygpOwogIGNvbnN0IGFnZW50cyA9IFsuLi5uZXcgU2V0KHJvd3MubWFwKHI9PnIuYWdlbnQpLmZpbHRlcihCb29sZWFuKSldOwogIGNvbnN0IGN1c3RvbWVycyA9IFsuLi5uZXcgU2V0KHJvd3MubWFwKHI9PnIuY3VzdG9tZXIpLmZpbHRlcihCb29sZWFuKSldOwogIGNvbnN0IHJlbWFpbmluZyA9IHJvd3MucmVkdWNlKChzLHIpPT5zKyhyLnJlbWFpbmluZ3x8MCksMCk7CiAgY29uc3QgYXZnID0gcm93cy5sZW5ndGggPyByZW1haW5pbmcgLyByb3dzLmxlbmd0aCA6IDA7CiAgd1NldEtwaSgid2FsbGV0LWtwaS1hbW91bnQiLCB3Rm10MChyZW1haW5pbmcpKTsKICB3U2V0S3BpKCJ3YWxsZXQta3BpLWFnZW50cyIsIHdGbXQoYWdlbnRzLmxlbmd0aCkpOwogIHdTZXRLcGkoIndhbGxldC1rcGktY3VzdG9tZXJzIiwgd0ZtdChjdXN0b21lcnMubGVuZ3RoIHx8IHJvd3MubGVuZ3RoKSk7CiAgd1NldEtwaSgid2FsbGV0LWtwaS1hY2NvdW50cyIsIHdGbXQocm93cy5sZW5ndGgpKTsKICB3U2V0S3BpKCJ3YWxsZXQta3BpLWF2ZyIsIHdGbXQwKGF2ZykpOwogIGNvbnN0IHN0ID0gZG9jdW1lbnQuZ2V0RWxlbWVudEJ5SWQoIndhbGxldC1maWx0ZXItc3RhdHVzIik7CiAgaWYgKHN0KSBzdC50ZXh0Q29udGVudCA9ICLYudix2LYgIiArIHdGbXQocm93cy5sZW5ndGgpICsgIiDYrdiz2KfYqCDZhdmGINij2LXZhCAiICsgd0ZtdCh3YWxsZXREYXRhLmxlbmd0aCkgKyAiIHwgIiArIHdGbXQoYWdlbnRzLmxlbmd0aCkgKyAiINmF2K3YtdmEIjsKCiAgY29uc3Qgc3RhdGVzUGxvdCA9IHdhbGxldFBsb3RJZHMuc3RhdGVzICYmIGRvY3VtZW50LmdldEVsZW1lbnRCeUlkKHdhbGxldFBsb3RJZHMuc3RhdGVzKTsKICBpZiAoc3RhdGVzUGxvdCkgewogICAgY29uc3QgZW50cmllcyA9IHdUb3BFbnRyaWVzKHdDb3VudE1hcChyb3dzLCJzdGF0ZSIpLCAxNSk7CiAgICBQbG90bHkucmVhY3Qoc3RhdGVzUGxvdCwgW3sKICAgICAgdHlwZToiYmFyIiwgb3JpZW50YXRpb246ImgiLAogICAgICB5OiBlbnRyaWVzLm1hcChlPT5lWzBdKSwgeDogZW50cmllcy5tYXAoZT0+ZVsxXSksCiAgICAgIHRleHQ6IGVudHJpZXMubWFwKGU9PmVbMV0pLCB0ZXh0dGVtcGxhdGU6IiV7eDosLjBmfSIsIHRleHRwb3NpdGlvbjoib3V0c2lkZSIsIGNsaXBvbmF4aXM6ZmFsc2UsCiAgICAgIG1hcmtlcjp7Y29sb3I6IGVudHJpZXMubWFwKChfLGkpPT4gW1dfREFSSyxXX01JRCxXX0xJR0hUXVtpJTNdKX0sCiAgICAgIGhvdmVydGVtcGxhdGU6IjxiPiV7eX08L2I+PGJyPti52K/YryDYp9mE2K3Ys9in2KjYp9iqOiAle3g6LC4wZn08ZXh0cmE+PC9leHRyYT4iCiAgICB9XSwgT2JqZWN0LmFzc2lnbih7fSwgc3RhdGVzUGxvdC5sYXlvdXR8fHt9LCB7c2hvd2xlZ2VuZDpmYWxzZX0pKTsKICB9CgogIGNvbnN0IHN0YXRlQW10UGxvdCA9IHdhbGxldFBsb3RJZHMuc3RhdGVfYW1vdW50ICYmIGRvY3VtZW50LmdldEVsZW1lbnRCeUlkKHdhbGxldFBsb3RJZHMuc3RhdGVfYW1vdW50KTsKICBpZiAoc3RhdGVBbXRQbG90KSB7CiAgICBjb25zdCBlbnRyaWVzID0gd1RvcEVudHJpZXMod1N1bU1hcChyb3dzLCJzdGF0ZSIsInJlbWFpbmluZyIpLCAxNSk7CiAgICBQbG90bHkucmVhY3Qoc3RhdGVBbXRQbG90LCBbewogICAgICB0eXBlOiJiYXIiLCBvcmllbnRhdGlvbjoiaCIsCiAgICAgIHk6IGVudHJpZXMubWFwKGU9PmVbMF0pLCB4OiBlbnRyaWVzLm1hcChlPT5lWzFdKSwKICAgICAgdGV4dDogZW50cmllcy5tYXAoZT0+ZVsxXSksIHRleHR0ZW1wbGF0ZToiJXt4OiwuMGZ9IiwgdGV4dHBvc2l0aW9uOiJvdXRzaWRlIiwgY2xpcG9uYXhpczpmYWxzZSwKICAgICAgbWFya2VyOntjb2xvcjogZW50cmllcy5tYXAoKF8saSk9PiBbV19EQVJLLFdfTUlELFdfTElHSFRdW2klM10pfSwKICAgICAgaG92ZXJ0ZW1wbGF0ZToiPGI+JXt5fTwvYj48YnI+2KfZhNmF2KjZhNi6OiAle3g6LC4wZn08ZXh0cmE+PC9leHRyYT4iCiAgICB9XSwgT2JqZWN0LmFzc2lnbih7fSwgc3RhdGVBbXRQbG90LmxheW91dHx8e30sIHtzaG93bGVnZW5kOmZhbHNlfSkpOwogIH0KCiAgY29uc3QgYWdlbnRQbG90ID0gd2FsbGV0UGxvdElkcy5ieV9hZ2VudF9jb3VudCAmJiBkb2N1bWVudC5nZXRFbGVtZW50QnlJZCh3YWxsZXRQbG90SWRzLmJ5X2FnZW50X2NvdW50KTsKICBpZiAoYWdlbnRQbG90KSB7CiAgICBjb25zdCBlbnRyaWVzID0gd1RvcEVudHJpZXMod0NvdW50TWFwKHJvd3MsImFnZW50IiksIDE1KTsKICAgIFBsb3RseS5yZWFjdChhZ2VudFBsb3QsIFt7CiAgICAgIHR5cGU6ImJhciIsIG9yaWVudGF0aW9uOiJoIiwKICAgICAgeTogZW50cmllcy5tYXAoZT0+ZVswXSksIHg6IGVudHJpZXMubWFwKGU9PmVbMV0pLAogICAgICB0ZXh0OiBlbnRyaWVzLm1hcChlPT5lWzFdKSwgdGV4dHRlbXBsYXRlOiIle3g6LC4wZn0iLCB0ZXh0cG9zaXRpb246Im91dHNpZGUiLCBjbGlwb25heGlzOmZhbHNlLAogICAgICBtYXJrZXI6e2NvbG9yOiBlbnRyaWVzLm1hcCgoXyxpKT0+IFtXX0RBUkssV19NSUQsV19MSUdIVF1baSUzXSl9LAogICAgICBob3ZlcnRlbXBsYXRlOiI8Yj4le3l9PC9iPjxicj7Yudiv2K8g2KfZhNit2LPYp9io2KfYqjogJXt4OiwuMGZ9PGV4dHJhPjwvZXh0cmE+IgogICAgfV0sIE9iamVjdC5hc3NpZ24oe30sIGFnZW50UGxvdC5sYXlvdXR8fHt9LCB7c2hvd2xlZ2VuZDpmYWxzZX0pKTsKICB9CgogIGNvbnN0IGFnaW5nUGxvdCA9IHdhbGxldFBsb3RJZHMuYWdpbmcgJiYgZG9jdW1lbnQuZ2V0RWxlbWVudEJ5SWQod2FsbGV0UGxvdElkcy5hZ2luZyk7CiAgaWYgKGFnaW5nUGxvdCkgewogICAgY29uc3QgY29sbCA9IHdTdW1NYXAocm93cywiYWdpbmciLCJjb2xsZWN0ZWQiKTsKICAgIGNvbnN0IHJlbSA9IHdTdW1NYXAocm93cywiYWdpbmciLCJyZW1haW5pbmciKTsKICAgIGNvbnN0IGxhYmVscyA9IFsuLi5uZXcgU2V0KFsuLi5PYmplY3Qua2V5cyhjb2xsKSwgLi4uT2JqZWN0LmtleXMocmVtKV0pXS5zb3J0KCk7CiAgICBQbG90bHkucmVhY3QoYWdpbmdQbG90LCBbCiAgICAgIHt0eXBlOiJiYXIiLCBuYW1lOiLYqtmFINin2YTYqtit2LXZitmEIiwgeDpsYWJlbHMsIHk6bGFiZWxzLm1hcChrPT5jb2xsW2tdfHwwKSwgbWFya2VyOntjb2xvcjpXX1BPU30sCiAgICAgICB0ZXh0OmxhYmVscy5tYXAoaz0+Y29sbFtrXXx8MCksIHRleHR0ZW1wbGF0ZToiJXt5OiwuMGZ9IiwgdGV4dHBvc2l0aW9uOiJvdXRzaWRlIiwgY2xpcG9uYXhpczpmYWxzZSwKICAgICAgIGhvdmVydGVtcGxhdGU6IjxiPiV7eH08L2I+PGJyPtiq2YUg2KfZhNiq2K3YtdmK2YQ6ICV7eTosLjBmfTxleHRyYT48L2V4dHJhPiJ9LAogICAgICB7dHlwZToiYmFyIiwgbmFtZToi2KjYp9mC2Yog2KfZhNmF2K/ZitmI2YbZitipIiwgeDpsYWJlbHMsIHk6bGFiZWxzLm1hcChrPT5yZW1ba118fDApLCBtYXJrZXI6e2NvbG9yOldfTkVHfSwKICAgICAgIHRleHQ6bGFiZWxzLm1hcChrPT5yZW1ba118fDApLCB0ZXh0dGVtcGxhdGU6IiV7eTosLjBmfSIsIHRleHRwb3NpdGlvbjoib3V0c2lkZSIsIGNsaXBvbmF4aXM6ZmFsc2UsCiAgICAgICBob3ZlcnRlbXBsYXRlOiI8Yj4le3h9PC9iPjxicj7YqNin2YLZiiDYp9mE2YXYr9mK2YjZhtmK2Kk6ICV7eTosLjBmfTxleHRyYT48L2V4dHJhPiJ9CiAgICBdLCBPYmplY3QuYXNzaWduKHt9LCBhZ2luZ1Bsb3QubGF5b3V0fHx7fSwge2Jhcm1vZGU6Imdyb3VwIn0pKTsKICB9CgogIGNvbnN0IHBpZVBsb3QgPSB3YWxsZXRQbG90SWRzLmN1c3RvbWVyX3N0YXRlX3BpZSAmJiBkb2N1bWVudC5nZXRFbGVtZW50QnlJZCh3YWxsZXRQbG90SWRzLmN1c3RvbWVyX3N0YXRlX3BpZSk7CiAgaWYgKHBpZVBsb3QpIHsKICAgIGNvbnN0IGVudHJpZXMgPSBPYmplY3QuZW50cmllcyh3Q291bnRNYXAocm93cywiY3VzdG9tZXJfc3RhdGUiKSkuc29ydCgoYSxiKT0+YlsxXS1hWzFdKS5zbGljZSgwLDEyKTsKICAgIFBsb3RseS5yZWFjdChwaWVQbG90LCBbewogICAgICB0eXBlOiJwaWUiLCBsYWJlbHM6ZW50cmllcy5tYXAoZT0+ZVswXSksIHZhbHVlczplbnRyaWVzLm1hcChlPT5lWzFdKSwKICAgICAgbWFya2VyOntjb2xvcnM6W1dfREFSSyxXX01JRCxXX0xJR0hULCIjQjhDNUM4IiwiIzNEN0U4MiIsIiM3RUFCQUUiXX0sCiAgICAgIHRleHRpbmZvOiJsYWJlbCtwZXJjZW50IiwKICAgICAgaG92ZXJ0ZW1wbGF0ZToiPGI+JXtsYWJlbH08L2I+PGJyPtin2YTYudiv2K86ICV7dmFsdWU6LC4wZn08YnI+2KfZhNmG2LPYqNipOiAle3BlcmNlbnQ6LjElfTxleHRyYT48L2V4dHJhPiIKICAgIH1dLCBwaWVQbG90LmxheW91dHx8e30pOwogIH0KCiAgY29uc3QgZG9udXRQbG90ID0gd2FsbGV0UGxvdElkcy5uYXRpb25hbGl0eV9kb251dCAmJiBkb2N1bWVudC5nZXRFbGVtZW50QnlJZCh3YWxsZXRQbG90SWRzLm5hdGlvbmFsaXR5X2RvbnV0KTsKICBpZiAoZG9udXRQbG90KSB7CiAgICBjb25zdCBlbnRyaWVzID0gT2JqZWN0LmVudHJpZXMod0NvdW50TWFwKHJvd3MsIm5hdGlvbmFsaXR5IikpLnNvcnQoKGEsYik9PmJbMV0tYVsxXSkuc2xpY2UoMCwxMik7CiAgICBQbG90bHkucmVhY3QoZG9udXRQbG90LCBbewogICAgICB0eXBlOiJwaWUiLCBsYWJlbHM6ZW50cmllcy5tYXAoZT0+ZVswXSksIHZhbHVlczplbnRyaWVzLm1hcChlPT5lWzFdKSwgaG9sZTowLjU1LAogICAgICBtYXJrZXI6e2NvbG9yczpbV19EQVJLLFdfTUlELFdfTElHSFQsIiNCOEM1QzgiLCIjM0Q3RTgyIiwiIzdFQUJBRSJdfSwKICAgICAgdGV4dGluZm86ImxhYmVsK3BlcmNlbnQiLAogICAgICBob3ZlcnRlbXBsYXRlOiI8Yj4le2xhYmVsfTwvYj48YnI+2KfZhNi52K/YrzogJXt2YWx1ZTosLjBmfTxicj7Yp9mE2YbYs9io2Kk6ICV7cGVyY2VudDouMSV9PGV4dHJhPjwvZXh0cmE+IgogICAgfV0sIGRvbnV0UGxvdC5sYXlvdXR8fHt9KTsKICB9CgogIGNvbnN0IHRib2R5ID0gZG9jdW1lbnQuZ2V0RWxlbWVudEJ5SWQoIndhbGxldC1hZ2luZy10Ym9keSIpOwogIGlmICh0Ym9keSkgewogICAgY29uc3QgZ3JvdXBzID0ge307CiAgICByb3dzLmZvckVhY2gociA9PiB7CiAgICAgIGNvbnN0IGsgPSAoci5hZ2luZ3x8Iti62YrYsSDZhdit2K/YryIpICsgInx8IiArIChyLnN0YXRlfHwiLSIpOwogICAgICBpZiAoIWdyb3Vwc1trXSkgZ3JvdXBzW2tdID0ge2FnaW5nOnIuYWdpbmd8fCLYutmK2LEg2YXYrdiv2K8iLCBzdGF0ZTpyLnN0YXRlfHwiLSIsIGNvbGxlY3RlZDowLCByZW1haW5pbmc6MCwgY291bnQ6MH07CiAgICAgIGdyb3Vwc1trXS5jb2xsZWN0ZWQgKz0gci5jb2xsZWN0ZWR8fDA7CiAgICAgIGdyb3Vwc1trXS5yZW1haW5pbmcgKz0gci5yZW1haW5pbmd8fDA7CiAgICAgIGdyb3Vwc1trXS5jb3VudCArPSAxOwogICAgfSk7CiAgICBjb25zdCBsaXN0ID0gT2JqZWN0LnZhbHVlcyhncm91cHMpLnNvcnQoKGEsYik9PiBiLmNvdW50IC0gYS5jb3VudCk7CiAgICB0Ym9keS5pbm5lckhUTUwgPSBsaXN0Lm1hcChnID0+CiAgICAgICI8dHI+PHRkPiIrZy5hZ2luZysiPC90ZD48dGQ+Iit3Rm10MChnLmNvbGxlY3RlZCkrIjwvdGQ+PHRkPiIrd0ZtdDAoZy5yZW1haW5pbmcpKyI8L3RkPjx0ZD4iK2cuc3RhdGUrIjwvdGQ+PHRkPiIrd0ZtdChnLmNvdW50KSsiPC90ZD48L3RyPiIKICAgICkuam9pbigiIik7CiAgfQp9Cgpkb2N1bWVudC5xdWVyeVNlbGVjdG9yQWxsKCIud2FsbGV0LWFnZW50LW9wdGlvbiwud2FsbGV0LW5hdGlvbi1vcHRpb24sLndhbGxldC1jc3RhdGUtb3B0aW9uLC53YWxsZXQtYWdpbmctb3B0aW9uIikuZm9yRWFjaChvID0+IHsKICBvLmFkZEV2ZW50TGlzdGVuZXIoImNoYW5nZSIsICgpID0+IHsgd1VwZGF0ZUxhYmVscygpOyB3UmVmcmVzaCgpOyB9KTsKfSk7CmRvY3VtZW50LnF1ZXJ5U2VsZWN0b3IoIi53YWxsZXQtc2VsZWN0LWFsbC1hZ2VudCIpPy5hZGRFdmVudExpc3RlbmVyKCJjaGFuZ2UiLCBlID0+IHsKICBkb2N1bWVudC5xdWVyeVNlbGVjdG9yQWxsKCIud2FsbGV0LWFnZW50LW9wdGlvbiIpLmZvckVhY2gobyA9PiBvLmNoZWNrZWQgPSBlLnRhcmdldC5jaGVja2VkKTsKICB3VXBkYXRlTGFiZWxzKCk7IHdSZWZyZXNoKCk7Cn0pOwpkb2N1bWVudC5xdWVyeVNlbGVjdG9yKCIud2FsbGV0LXNlbGVjdC1hbGwtbmF0aW9uIik/LmFkZEV2ZW50TGlzdGVuZXIoImNoYW5nZSIsIGUgPT4gewogIGRvY3VtZW50LnF1ZXJ5U2VsZWN0b3JBbGwoIi53YWxsZXQtbmF0aW9uLW9wdGlvbiIpLmZvckVhY2gobyA9PiBvLmNoZWNrZWQgPSBlLnRhcmdldC5jaGVja2VkKTsKICB3VXBkYXRlTGFiZWxzKCk7IHdSZWZyZXNoKCk7Cn0pOwpkb2N1bWVudC5xdWVyeVNlbGVjdG9yKCIud2FsbGV0LXNlbGVjdC1hbGwtY3N0YXRlIik/LmFkZEV2ZW50TGlzdGVuZXIoImNoYW5nZSIsIGUgPT4gewogIGRvY3VtZW50LnF1ZXJ5U2VsZWN0b3JBbGwoIi53YWxsZXQtY3N0YXRlLW9wdGlvbiIpLmZvckVhY2gobyA9PiBvLmNoZWNrZWQgPSBlLnRhcmdldC5jaGVja2VkKTsKICB3VXBkYXRlTGFiZWxzKCk7IHdSZWZyZXNoKCk7Cn0pOwpkb2N1bWVudC5xdWVyeVNlbGVjdG9yKCIud2FsbGV0LXNlbGVjdC1hbGwtYWdpbmciKT8uYWRkRXZlbnRMaXN0ZW5lcigiY2hhbmdlIiwgZSA9PiB7CiAgZG9jdW1lbnQucXVlcnlTZWxlY3RvckFsbCgiLndhbGxldC1hZ2luZy1vcHRpb24iKS5mb3JFYWNoKG8gPT4gby5jaGVja2VkID0gZS50YXJnZXQuY2hlY2tlZCk7CiAgd1VwZGF0ZUxhYmVscygpOyB3UmVmcmVzaCgpOwp9KTsKWyJ3YWxsZXQtYXNzaWduLWZyb20iLCJ3YWxsZXQtYXNzaWduLXRvIiwid2FsbGV0LWRlYml0LWZyb20iLCJ3YWxsZXQtZGViaXQtdG8iXS5mb3JFYWNoKGlkID0+IHsKICBkb2N1bWVudC5nZXRFbGVtZW50QnlJZChpZCk/LmFkZEV2ZW50TGlzdGVuZXIoImNoYW5nZSIsIHdSZWZyZXNoKTsKfSk7CmRvY3VtZW50LmdldEVsZW1lbnRCeUlkKCJ3YWxsZXQtcmVzZXQtZmlsdGVycyIpPy5hZGRFdmVudExpc3RlbmVyKCJjbGljayIsICgpID0+IHsKICBkb2N1bWVudC5xdWVyeVNlbGVjdG9yQWxsKCIud2FsbGV0LWFnZW50LW9wdGlvbiwud2FsbGV0LW5hdGlvbi1vcHRpb24sLndhbGxldC1jc3RhdGUtb3B0aW9uLC53YWxsZXQtYWdpbmctb3B0aW9uLC53YWxsZXQtc2VsZWN0LWFsbC1hZ2VudCwud2FsbGV0LXNlbGVjdC1hbGwtbmF0aW9uLC53YWxsZXQtc2VsZWN0LWFsbC1jc3RhdGUsLndhbGxldC1zZWxlY3QtYWxsLWFnaW5nIikuZm9yRWFjaChvID0+IG8uY2hlY2tlZCA9IGZhbHNlKTsKICBjb25zdCBhZiA9IGRvY3VtZW50LmdldEVsZW1lbnRCeUlkKCJ3YWxsZXQtYXNzaWduLWZyb20iKTsgaWYgKGFmKSBhZi52YWx1ZSA9IFdfQVNTSUdOX01JTjsKICBjb25zdCBhdCA9IGRvY3VtZW50LmdldEVsZW1lbnRCeUlkKCJ3YWxsZXQtYXNzaWduLXRvIik7IGlmIChhdCkgYXQudmFsdWUgPSBXX0FTU0lHTl9NQVg7CiAgY29uc3QgZGYgPSBkb2N1bWVudC5nZXRFbGVtZW50QnlJZCgid2FsbGV0LWRlYml0LWZyb20iKTsgaWYgKGRmKSBkZi52YWx1ZSA9IFdfREVCSVRfTUlOOwogIGNvbnN0IGR0ID0gZG9jdW1lbnQuZ2V0RWxlbWVudEJ5SWQoIndhbGxldC1kZWJpdC10byIpOyBpZiAoZHQpIGR0LnZhbHVlID0gV19ERUJJVF9NQVg7CiAgd1VwZGF0ZUxhYmVscygpOyB3UmVmcmVzaCgpOwp9KTsKd1VwZGF0ZUxhYmVscygpOwp3UmVmcmVzaCgpOwp9KSgpOwo=").decode("utf-8")
+    js = (
+        js
+        .replace("__WALLET_DATA__", records_json)
+        .replace("__WALLET_PLOT_IDS__", _json.dumps(plot_id_map, ensure_ascii=False))
+        .replace("__OPS_DARK__", ops_dark)
+        .replace("__OPS_MID__", ops_mid)
+        .replace("__OPS_LIGHT__", ops_light)
+        .replace("__OPS_POS__", ops_pos)
+        .replace("__OPS_NEG__", ops_neg)
+        .replace("__ASSIGN_MIN__", assign_min)
+        .replace("__ASSIGN_MAX__", assign_max)
+        .replace("__DEBIT_MIN__", debit_min)
+        .replace("__DEBIT_MAX__", debit_max)
+    )
+    parts.append("<script>\n" + js + "\n</script>")
     return "".join(parts)
+
 
 
 def _build_payments_page_html(payments_df):

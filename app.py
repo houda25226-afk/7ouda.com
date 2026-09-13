@@ -162,6 +162,11 @@ NEGLECT_RESULT_KEY = "neglect_result"
 APP_DATA_CACHE_KEY = "app_uploaded_data_cache"
 DASHBOARD_SOURCE_HASH_KEY = "dashboard_source_hash"
 
+# صفحات إضافية اختيارية في تحليل نشاط المحصلين: المحفظة + السداد + الربط بينهما
+DASH_WALLET_CACHE_KEY = "dashboard_wallet_cache"
+DASH_PAYMENTS_CACHE_KEY = "dashboard_payments_cache"
+DASH_ACTIVE_PAGE_KEY = "dashboard_active_page"
+
 # ==========================================================
 # إعدادات تويب الجدولة المتعثرة
 # ==========================================================
@@ -2334,7 +2339,8 @@ def render_full_dashboard(df, class_col=None, sales_col=None, time_col=None, bre
 # ==========================================================
 
 
-def build_dashboard_html(df, class_col, sales_col, time_col, source_name="", filter_hint="", filter_summary=None) -> str:
+def build_dashboard_html(df, class_col, sales_col, time_col, source_name="", filter_hint="", filter_summary=None,
+                          wallet_df=None, payments_df=None) -> str:
     """إنشاء نسخة HTML مستقلة من Dashboard النشاط — تنسيق واضح وشارتات بـ IDs ثابتة."""
     from html import escape
     import json
@@ -2735,6 +2741,24 @@ def build_dashboard_html(df, class_col, sales_col, time_col, source_name="", fil
         if str(s).strip() and str(s).strip().lower() not in {"nan", "none", "null", "غير محدد", "أخرى"}
     })
 
+    has_extra_pages = wallet_df is not None and payments_df is not None
+    nav_html = ""
+    if has_extra_pages:
+        nav_html = (
+            "<nav id='dash-page-nav'>"
+            "<button type='button' class='active-page' onclick=\"showDashPage(this,'page-activity')\">📊 نشاط المحصلين</button>"
+            "<button type='button' onclick=\"showDashPage(this,'page-wallet')\">💼 المحفظة</button>"
+            "<button type='button' onclick=\"showDashPage(this,'page-payments')\">💰 السداد</button>"
+            "<button type='button' onclick=\"showDashPage(this,'page-link')\">🔗 نشاط × سداد</button>"
+            "</nav>"
+            "<script>function showDashPage(btn,id){"
+            "document.querySelectorAll('.dash-page').forEach(function(p){p.classList.remove('active');});"
+            "document.getElementById(id).classList.add('active');"
+            "document.querySelectorAll('#dash-page-nav button').forEach(function(b){b.classList.remove('active-page');});"
+            "btn.classList.add('active-page');"
+            "}</script>"
+        )
+
     parts = [
         "<!doctype html><html lang='ar' dir='rtl'><head><meta charset='utf-8'>",
         "<meta name='viewport' content='width=device-width, initial-scale=1'>",
@@ -2759,6 +2783,11 @@ def build_dashboard_html(df, class_col, sales_col, time_col, source_name="", fil
         f"#filter-status{{text-align:center;color:{text_dim};font-size:12px;margin-top:10px}}",
         ".charts-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(480px,1fr));gap:20px;margin:14px 0 24px}",
         f".chart-card{{background:{surface};border:1px solid {border};border-radius:16px;padding:16px 14px 12px;min-width:0;overflow:visible}}",
+        ".dash-page{display:none}",
+        ".dash-page.active{display:block}",
+        f"#dash-page-nav{{display:flex;gap:10px;justify-content:center;flex-wrap:wrap;max-width:1400px;margin:16px auto 0;padding:0 18px}}",
+        f"#dash-page-nav button{{background:{surface};color:{text};border:1px solid {border};border-radius:12px;padding:10px 18px;font-size:14px;cursor:pointer;font-family:inherit}}",
+        f"#dash-page-nav button.active-page{{background:{export_dark};color:#fff;border-color:{export_dark}}}",
         f".chart-card h3{{margin:6px 8px 4px;text-align:center;font-size:15px;color:{text}}}",
         f".table-wrap{{overflow-x:auto;border:1px solid {border};border-radius:14px;background:{surface}}}",
         f"table.data-table{{width:100%;border-collapse:separate;border-spacing:0;font-size:13px}}",
@@ -2772,7 +2801,9 @@ def build_dashboard_html(df, class_col, sales_col, time_col, source_name="", fil
         f".btn-reset{{background:{export_dark};color:#fff;border:0;border-radius:10px;padding:10px 12px;font-size:13px;cursor:pointer}}",
         f".btn-reset:hover{{background:{export_mid}}}",
         "@media (max-width:900px){.charts-grid{grid-template-columns:1fr}}",
-        "</style></head><body><main>",
+        "</style></head><body>",
+        nav_html,
+        "<main id='page-activity' class='dash-page active'>",
         "<header class='hero'>",
         "<div class='eyebrow'>ACTIVITY DASHBOARD</div>",
         "<h1>📊 تحليل نشاط المحصلين</h1>",
@@ -3133,7 +3164,14 @@ setTimeout(_resizeAllPlots, 100);
         .replace("__DATE_MAX__", export_date_max)
     )
     parts.append(interactive_js)
-    parts.append("<footer>تم إنشاء التقرير من لوحة تحليل نشاط المحصلين</footer></main></body></html>")
+    parts.append("<footer>تم إنشاء التقرير من لوحة تحليل نشاط المحصلين</footer></main>")
+
+    if has_extra_pages:
+        parts.append(_build_wallet_page_html(wallet_df))
+        parts.append(_build_payments_page_html(payments_df))
+        parts.append(_build_link_page_html(df, sales_col, class_col, payments_df))
+
+    parts.append("</body></html>")
     return "".join(parts)
 
 
@@ -4856,6 +4894,9 @@ def page_dashboard():
         st.info("ارفع ملف النشاط بعد تصنيفه، وسيتم بناء لوحة التحكم فورًا.")
         return
 
+    # 🆕 رفع اختياري للمحفظة + السداد لبناء صفحات تحليل إضافية والربط بينهم وبين النشاط
+    _render_dashboard_extra_uploaders()
+
     # لو اتشال الملف والنتيجة لسه في الذاكرة — نعرضها من الكاش
     if dash_file is None:
         _show_dashboard_from_cache(break_start, break_end)
@@ -4901,15 +4942,92 @@ def page_dashboard():
                       break_start=break_start, break_end=break_end)
 
 
+def _render_dashboard_extra_uploaders():
+    """رفع اختياري للمحفظة الحديثة وملف السداد — يفعّل 3 صفحات تحليل إضافية (المحفظة/السداد/الربط)
+    بجانب صفحة نشاط المحصلين الأساسية، في التطبيق وفي ملف HTML المُصدَّر معًا."""
+    with st.expander("➕ إضافة المحفظة والسداد (اختياري) — لعرض تحليل موسّع بأربع صفحات", expanded=False):
+        st.caption(
+            "الرفع هنا اختياري بالكامل. لو سبت الخانتين فاضيين هتفضل شايف صفحة نشاط المحصلين بس. "
+            "ولو رفعت المحفظة والسداد مع بعض، هتتضاف 3 صفحات: تحليل المحفظة، تحليل السداد، وربط نشاط المحصلين بالسداد — "
+            "وكلهم هيظهروا كمان جوه ملف الـ HTML اللي بتنزّله، مع أزرار للتنقل بين الصفحات."
+        )
+        c1, c2 = st.columns(2)
+        with c1:
+            wallet_file = st.file_uploader(
+                "📂 ارفع المحفظة الحديثة (Excel أو CSV)",
+                type=["csv", "xlsx", "xls"], key="dash_wallet_upload",
+            )
+        with c2:
+            payments_file = st.file_uploader(
+                "📂 ارفع ملف السداد (Excel أو CSV)",
+                type=["csv", "xlsx", "xls"], key="dash_payments_upload",
+            )
+        _sync_dashboard_side_file(wallet_file, DASH_WALLET_CACHE_KEY)
+        _sync_dashboard_side_file(payments_file, DASH_PAYMENTS_CACHE_KEY)
+
+        wallet_info = st.session_state.get(DASH_WALLET_CACHE_KEY)
+        payments_info = st.session_state.get(DASH_PAYMENTS_CACHE_KEY)
+        if wallet_info and payments_info:
+            st.success(
+                f"✅ هيتم بناء 4 صفحات: نشاط المحصلين + المحفظة ({wallet_info['name']}) "
+                f"+ السداد ({payments_info['name']}) + الربط بينهم."
+            )
+        elif wallet_info or payments_info:
+            st.info("محتاج ترفع الملفين (المحفظة والسداد) مع بعض عشان تظهر صفحات التحليل الإضافية وصفحة الربط.")
+
+
+def _sync_dashboard_side_file(uploaded_file, cache_key):
+    """كاش بسيط بالهاش لملف جانبي (محفظة/سداد) في تويب النشاط."""
+    if uploaded_file is None:
+        st.session_state.pop(cache_key, None)
+        return
+    file_hash = uploaded_file_hash(uploaded_file)
+    cached = st.session_state.get(cache_key)
+    if cached and cached.get("hash") == file_hash:
+        return
+    try:
+        df = read_uploaded_dataframe(uploaded_file)
+    except Exception as e:
+        st.error(f"تعذر قراءة الملف: {e}")
+        st.session_state.pop(cache_key, None)
+        return
+    st.session_state[cache_key] = {"df": df, "hash": file_hash, "name": uploaded_file.name}
+
+
 def _render_dashboard(df, class_col, sales_col, time_col, source_name, filter_hint="", break_start=None, break_end=None):
-    if filter_hint:
-        st.info(f"الفلاتر المطبقة: {filter_hint}")
-    render_full_dashboard(df, class_col=class_col, sales_col=sales_col, time_col=time_col,
-                          break_start=break_start, break_end=break_end)
+    wallet_info = st.session_state.get(DASH_WALLET_CACHE_KEY)
+    payments_info = st.session_state.get(DASH_PAYMENTS_CACHE_KEY)
+    has_extra_pages = bool(wallet_info) and bool(payments_info)
+
+    active_page = "📊 نشاط المحصلين"
+    if has_extra_pages:
+        pages = ["📊 نشاط المحصلين", "💼 المحفظة", "💰 السداد", "🔗 نشاط × سداد"]
+        chosen = st.segmented_control(
+            "اختر الصفحة", pages, default=pages[0], key=DASH_ACTIVE_PAGE_KEY,
+            label_visibility="collapsed",
+        )
+        active_page = chosen or pages[0]
+        st.divider()
+
+    if active_page == "📊 نشاط المحصلين":
+        if filter_hint:
+            st.info(f"الفلاتر المطبقة: {filter_hint}")
+        render_full_dashboard(df, class_col=class_col, sales_col=sales_col, time_col=time_col,
+                              break_start=break_start, break_end=break_end)
+    elif active_page == "💼 المحفظة" and wallet_info:
+        render_wallet_page(wallet_info["df"])
+    elif active_page == "💰 السداد" and payments_info:
+        render_payments_page(payments_info["df"])
+    elif active_page == "🔗 نشاط × سداد" and payments_info:
+        render_activity_payments_link_page(df, sales_col, class_col, payments_info["df"])
+
+    st.divider()
     dashboard_html = build_dashboard_html(
         df, class_col=class_col, sales_col=sales_col, time_col=time_col,
         source_name=source_name, filter_hint=filter_hint,
         filter_summary=st.session_state.get("dashboard_filter_summary", {}),
+        wallet_df=(wallet_info["df"] if wallet_info else None),
+        payments_df=(payments_info["df"] if payments_info else None),
     )
     st.download_button("🌐 تحميل لوحة التحكم كصفحة ويب HTML", data=dashboard_html.encode("utf-8"), file_name="داشبورد_النشاط.html", mime="text/html", use_container_width=True, key="dash_html_download_v3", type="primary")
     st.download_button("⬇️ تحميل البيانات كـ CSV", data=df.to_csv(index=False).encode("utf-8-sig"), file_name="بيانات_النشاط.csv", mime="text/csv", use_container_width=True, key="dash_csv_download_v3")
@@ -5044,6 +5162,412 @@ def _show_dashboard_from_cache(break_start=None, break_end=None):
     _render_dashboard(df, cached["class_col"], cached["sales_col"],
                       cached["time_col"], cached["source_name"], filter_hint=hint,
                       break_start=break_start, break_end=break_end)
+
+
+# ==========================================================
+# صفحات إضافية اختيارية داخل تحليل نشاط المحصلين: المحفظة / السداد / الربط
+# ==========================================================
+
+def _build_kpi_figure(cards, height=200):
+    """كروت KPI عامة (نفس أسلوب كروت الجدولة/الإهمال) — قابلة لإعادة الاستخدام
+    في أي صفحة تحليل جديدة، وتصلح للتصدير كـ HTML لأنها Plotly figure عادية."""
+    figure = go.Figure()
+    count = len(cards)
+    gap = 0.018
+    width = (1 - gap * (count + 1)) / count
+    for index, (label, value, number_format, number_color) in enumerate(cards):
+        x0 = gap + index * (width + gap)
+        x1 = x0 + width
+        figure.add_shape(
+            type="path", xref="paper", yref="paper",
+            path=_rounded_rect_path(x0, x1, 0.06, 0.94, radius=0.022),
+            line={"color": THEME["border"], "width": 1}, fillcolor=THEME["surface"], layer="below",
+        )
+        figure.add_trace(go.Indicator(
+            mode="number", value=float(value or 0),
+            domain={"x": [x0 + 0.012, x1 - 0.012], "y": [0.12, 0.88]},
+            title={"text": label, "font": {"size": 17, "color": THEME["text_dim"]}, "align": "center"},
+            number={"font": {"size": 30, "color": number_color}, **number_format},
+        ))
+    figure.update_layout(
+        height=height, template=PLOTLY_TEMPLATE,
+        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+        font={"family": "Tajawal, sans-serif", "color": THEME["text"]},
+        margin={"t": 8, "b": 8, "l": 8, "r": 8},
+    )
+    return figure
+
+
+def _build_wallet_analysis(df):
+    """تحليل كامل لملف المحفظة: KPIs + توزيع الحالات + المديونية حسب المحصل/الحالة."""
+    sales_col = find_column(df, SALES_PERSON_CANDIDATES)
+    sub_col = find_column(df, PROMISE_SUB_STATE_CANDIDATES)
+    net_col = find_column(df, PROMISE_NET_AMOUNT_CANDIDATES)
+    work = df.copy()
+    if net_col and net_col in work.columns:
+        work[net_col] = pd.to_numeric(work[net_col], errors="coerce").fillna(0)
+
+    total_accounts = len(work)
+    total_amount = float(work[net_col].sum()) if net_col else 0.0
+    agent_count = int(work[sales_col].astype(str).str.strip().nunique()) if sales_col and sales_col in work.columns else 0
+    avg_amount = (total_amount / total_accounts) if total_accounts and net_col else 0.0
+
+    figs = {}
+    figs["kpi"] = _build_kpi_figure([
+        ("📋<br>إجمالي حسابات المحفظة", total_accounts, {"valueformat": ",d"}, THEME["text"]),
+        ("👥<br>عدد المحصلين", agent_count, {"valueformat": ",d"}, THEME["text"]),
+        ("💰<br>إجمالي المديونية", total_amount, {"valueformat": ",.0f"}, OPS_DARK),
+        ("📊<br>متوسط المديونية للحساب", avg_amount, {"valueformat": ",.0f"}, OPS_MID),
+    ])
+
+    if sub_col and sub_col in work.columns:
+        state_counts = (
+            work[sub_col].astype(str).str.strip().value_counts().head(15)
+            .sort_values(ascending=True).reset_index()
+        )
+        state_counts.columns = ["الحالة", "عدد الحسابات"]
+        fig = px.bar(state_counts, x="عدد الحسابات", y="الحالة", orientation="h", text="عدد الحسابات",
+                     color="عدد الحسابات", color_continuous_scale=OPS_SCALE, template=PLOTLY_TEMPLATE)
+        _apply_ops_chart_style(fig, "توزيع حسابات المحفظة حسب الحالة", height=max(430, 36 * len(state_counts) + 120),
+                                xaxis_title="عدد الحسابات", show_legend=False, margin=dict(t=70, b=55, l=190, r=60))
+        fig.update_traces(texttemplate="%{x:,.0f}", textposition="outside", cliponaxis=False, marker_line_width=0,
+                           hovertemplate="<b>%{y}</b><br>عدد الحسابات: %{x:,.0f}<extra></extra>")
+        figs["states"] = fig
+
+        if net_col:
+            by_state_amt = (
+                work.groupby(work[sub_col].astype(str).str.strip())[net_col].sum()
+                .sort_values(ascending=True).tail(15).reset_index()
+            )
+            by_state_amt.columns = ["الحالة", "إجمالي المبلغ"]
+            fig2 = px.bar(by_state_amt, x="إجمالي المبلغ", y="الحالة", orientation="h", text="إجمالي المبلغ",
+                          color="إجمالي المبلغ", color_continuous_scale=OPS_SCALE, template=PLOTLY_TEMPLATE)
+            _apply_ops_chart_style(fig2, "إجمالي المديونية حسب الحالة", height=max(430, 36 * len(by_state_amt) + 120),
+                                    xaxis_title="المبلغ", show_legend=False, margin=dict(t=70, b=55, l=190, r=60))
+            fig2.update_traces(texttemplate="%{x:,.0f}", textposition="outside", cliponaxis=False, marker_line_width=0,
+                                hovertemplate="<b>%{y}</b><br>المبلغ: %{x:,.0f}<extra></extra>")
+            figs["state_amount"] = fig2
+
+    if sales_col and sales_col in work.columns:
+        agent_counts = (
+            work[sales_col].astype(str).str.strip().value_counts().head(15)
+            .sort_values(ascending=True).reset_index()
+        )
+        agent_counts.columns = ["المحصّل", "عدد الحسابات"]
+        fig3 = px.bar(agent_counts, x="عدد الحسابات", y="المحصّل", orientation="h", text="عدد الحسابات",
+                      color="عدد الحسابات", color_continuous_scale=OPS_SCALE, template=PLOTLY_TEMPLATE)
+        _apply_ops_chart_style(fig3, "توزيع حسابات المحفظة حسب المحصل", height=max(430, 36 * len(agent_counts) + 120),
+                                xaxis_title="عدد الحسابات", show_legend=False, margin=dict(t=70, b=55, l=170, r=60))
+        fig3.update_traces(texttemplate="%{x:,.0f}", textposition="outside", cliponaxis=False, marker_line_width=0,
+                            hovertemplate="<b>%{y}</b><br>عدد الحسابات: %{x:,.0f}<extra></extra>")
+        figs["by_agent_count"] = fig3
+
+        if net_col:
+            by_agent_amt = (
+                work.groupby(work[sales_col].astype(str).str.strip())[net_col].sum()
+                .sort_values(ascending=True).tail(15).reset_index()
+            )
+            by_agent_amt.columns = ["المحصّل", "إجمالي المديونية"]
+            fig4 = px.bar(by_agent_amt, x="إجمالي المديونية", y="المحصّل", orientation="h", text="إجمالي المديونية",
+                          color="إجمالي المديونية", color_continuous_scale=OPS_SCALE, template=PLOTLY_TEMPLATE)
+            _apply_ops_chart_style(fig4, "إجمالي المديونية حسب المحصل", height=max(430, 36 * len(by_agent_amt) + 120),
+                                    xaxis_title="المبلغ", show_legend=False, margin=dict(t=70, b=55, l=170, r=60))
+            fig4.update_traces(texttemplate="%{x:,.0f}", textposition="outside", cliponaxis=False, marker_line_width=0,
+                                hovertemplate="<b>%{y}</b><br>المبلغ: %{x:,.0f}<extra></extra>")
+            figs["by_agent_amount"] = fig4
+
+    return figs, work
+
+
+def render_wallet_page(df):
+    st.subheader("💼 تحليل المحفظة الكاملة")
+    figs, work = _build_wallet_analysis(df)
+    st.plotly_chart(figs["kpi"], use_container_width=True, config=PLOTLY_CONFIG, key="wallet_kpi")
+    col1, col2 = st.columns(2)
+    with col1:
+        if "states" in figs:
+            with st.container(border=True):
+                st.plotly_chart(figs["states"], use_container_width=True, config=PLOTLY_CONFIG, key="wallet_states")
+        if "by_agent_count" in figs:
+            with st.container(border=True):
+                st.plotly_chart(figs["by_agent_count"], use_container_width=True, config=PLOTLY_CONFIG, key="wallet_agent_count")
+    with col2:
+        if "state_amount" in figs:
+            with st.container(border=True):
+                st.plotly_chart(figs["state_amount"], use_container_width=True, config=PLOTLY_CONFIG, key="wallet_state_amount")
+        if "by_agent_amount" in figs:
+            with st.container(border=True):
+                st.plotly_chart(figs["by_agent_amount"], use_container_width=True, config=PLOTLY_CONFIG, key="wallet_agent_amount")
+    with st.expander("📋 عرض بيانات المحفظة"):
+        st.dataframe(work, use_container_width=True, hide_index=True)
+
+
+def _build_payments_analysis(df):
+    """تحليل كامل لملف السداد: KPIs + اتجاه زمني + أعلى المحصلين تحصيلاً + توزيع المبالغ."""
+    collector_col = find_column(df, COLLECTED_BY_CANDIDATES) or find_column(df, SALES_PERSON_CANDIDATES)
+    date_col = find_column(df, SCHEDULE_PAYMENT_DATE_CANDIDATES) or find_column(df, CREATED_ON_CANDIDATES)
+    amount_col = find_column(df, CASE_PAYMENT_CANDIDATES) or find_column(df, PROMISE_NET_AMOUNT_CANDIDATES)
+    work = df.copy()
+    if amount_col and amount_col in work.columns:
+        work[amount_col] = pd.to_numeric(work[amount_col], errors="coerce").fillna(0)
+
+    total_payments = len(work)
+    total_amount = float(work[amount_col].sum()) if amount_col else 0.0
+    agent_count = int(work[collector_col].astype(str).str.strip().nunique()) if collector_col and collector_col in work.columns else 0
+    avg_payment = (total_amount / total_payments) if total_payments and amount_col else 0.0
+
+    figs = {}
+    figs["kpi"] = _build_kpi_figure([
+        ("🧾<br>إجمالي عدد السدادات", total_payments, {"valueformat": ",d"}, THEME["text"]),
+        ("👥<br>عدد المحصلين", agent_count, {"valueformat": ",d"}, THEME["text"]),
+        ("💰<br>إجمالي المبلغ المحصل", total_amount, {"valueformat": ",.0f"}, OPS_DARK),
+        ("📊<br>متوسط السداد", avg_payment, {"valueformat": ",.0f"}, OPS_MID),
+    ])
+
+    if date_col and date_col in work.columns:
+        ts = pd.to_datetime(work[date_col], errors="coerce")
+        trend = work.assign(_date=ts.dt.date).dropna(subset=["_date"])
+        if not trend.empty:
+            if amount_col:
+                daily = trend.groupby("_date")[amount_col].sum().reset_index()
+                y_col, y_title = amount_col, "إجمالي المبلغ"
+            else:
+                daily = trend.groupby("_date").size().reset_index(name="عدد السدادات")
+                y_col, y_title = "عدد السدادات", "عدد السدادات"
+            fig = px.line(daily, x="_date", y=y_col, markers=True, template=PLOTLY_TEMPLATE,
+                          color_discrete_sequence=[OPS_DARK])
+            _apply_ops_chart_style(fig, "اتجاه السداد اليومي", height=420, xaxis_title="التاريخ",
+                                    yaxis_title=y_title, show_legend=False)
+            fig.update_traces(hovertemplate="<b>%{x}</b><br>" + y_title + ": %{y:,.0f}<extra></extra>")
+            figs["trend"] = fig
+
+    if collector_col and collector_col in work.columns:
+        counts = (
+            work[collector_col].astype(str).str.strip().value_counts().head(15)
+            .sort_values(ascending=True).reset_index()
+        )
+        counts.columns = ["المحصّل", "عدد السدادات"]
+        fig2 = px.bar(counts, x="عدد السدادات", y="المحصّل", orientation="h", text="عدد السدادات",
+                      color="عدد السدادات", color_continuous_scale=OPS_SCALE, template=PLOTLY_TEMPLATE)
+        _apply_ops_chart_style(fig2, "توزيع عدد السدادات حسب المحصل", height=max(430, 36 * len(counts) + 120),
+                                xaxis_title="عدد السدادات", show_legend=False, margin=dict(t=70, b=55, l=170, r=60))
+        fig2.update_traces(texttemplate="%{x:,.0f}", textposition="outside", cliponaxis=False, marker_line_width=0,
+                            hovertemplate="<b>%{y}</b><br>عدد السدادات: %{x:,.0f}<extra></extra>")
+        figs["by_agent_count"] = fig2
+
+        if amount_col:
+            amt = (
+                work.groupby(work[collector_col].astype(str).str.strip())[amount_col].sum()
+                .sort_values(ascending=True).tail(15).reset_index()
+            )
+            amt.columns = ["المحصّل", "إجمالي التحصيل"]
+            fig3 = px.bar(amt, x="إجمالي التحصيل", y="المحصّل", orientation="h", text="إجمالي التحصيل",
+                          color="إجمالي التحصيل", color_continuous_scale=OPS_SCALE, template=PLOTLY_TEMPLATE)
+            _apply_ops_chart_style(fig3, "أعلى المحصلين تحصيلاً", height=max(430, 36 * len(amt) + 120),
+                                    xaxis_title="المبلغ", show_legend=False, margin=dict(t=70, b=55, l=170, r=60))
+            fig3.update_traces(texttemplate="%{x:,.0f}", textposition="outside", cliponaxis=False, marker_line_width=0,
+                                hovertemplate="<b>%{y}</b><br>المبلغ: %{x:,.0f}<extra></extra>")
+            figs["by_agent_amount"] = fig3
+
+    if amount_col and amount_col in work.columns and (work[amount_col] > 0).any():
+        fig4 = px.histogram(work[work[amount_col] > 0], x=amount_col, nbins=30,
+                             color_discrete_sequence=[OPS_MID], template=PLOTLY_TEMPLATE)
+        _apply_ops_chart_style(fig4, "توزيع مبالغ السداد", height=380, xaxis_title="المبلغ",
+                                yaxis_title="عدد السدادات", show_legend=False)
+        figs["amount_hist"] = fig4
+
+    return figs, work, collector_col, amount_col
+
+
+def render_payments_page(df):
+    st.subheader("💰 تحليل السداد الكامل")
+    figs, work, _collector_col, _amount_col = _build_payments_analysis(df)
+    st.plotly_chart(figs["kpi"], use_container_width=True, config=PLOTLY_CONFIG, key="payments_kpi")
+    if "trend" in figs:
+        with st.container(border=True):
+            st.plotly_chart(figs["trend"], use_container_width=True, config=PLOTLY_CONFIG, key="payments_trend")
+    col1, col2 = st.columns(2)
+    with col1:
+        if "by_agent_count" in figs:
+            with st.container(border=True):
+                st.plotly_chart(figs["by_agent_count"], use_container_width=True, config=PLOTLY_CONFIG, key="payments_agent_count")
+    with col2:
+        if "by_agent_amount" in figs:
+            with st.container(border=True):
+                st.plotly_chart(figs["by_agent_amount"], use_container_width=True, config=PLOTLY_CONFIG, key="payments_agent_amount")
+    if "amount_hist" in figs:
+        with st.container(border=True):
+            st.plotly_chart(figs["amount_hist"], use_container_width=True, config=PLOTLY_CONFIG, key="payments_hist")
+    with st.expander("📋 عرض بيانات السداد"):
+        st.dataframe(work, use_container_width=True, hide_index=True)
+
+
+def _build_activity_payments_link(activity_df, sales_col, class_col, payments_df):
+    """يربط نشاط كل محصل (مكالمات/نسبة نجاح) بسداده الفعلي (عدد/مبلغ السدادات) — بدون المحفظة."""
+    _, payments_work, collector_col, amount_col = _build_payments_analysis(payments_df)
+    if not sales_col or sales_col not in activity_df.columns or not collector_col:
+        return None
+
+    act = activity_df.copy()
+    act["_agent"] = act[sales_col].astype(str).str.strip()
+    act["_success"] = _activity_success_mask(act, class_col)
+    agent_activity = act.groupby("_agent").agg(
+        عدد_المكالمات=("_agent", "count"),
+        عدد_الناجحة=("_success", "sum"),
+    ).reset_index()
+    agent_activity["نسبة_النجاح"] = (
+        agent_activity["عدد_الناجحة"] / agent_activity["عدد_المكالمات"] * 100
+    ).round(1)
+
+    pay = payments_work.copy()
+    pay["_agent"] = pay[collector_col].astype(str).str.strip()
+    if amount_col:
+        agent_payments = pay.groupby("_agent").agg(
+            عدد_السدادات=("_agent", "count"),
+            إجمالي_التحصيل=(amount_col, "sum"),
+        ).reset_index()
+    else:
+        agent_payments = pay.groupby("_agent").agg(عدد_السدادات=("_agent", "count")).reset_index()
+        agent_payments["إجمالي_التحصيل"] = 0.0
+
+    merged = pd.merge(agent_activity, agent_payments, on="_agent", how="inner")
+    if merged.empty:
+        return None
+    merged = merged.rename(columns={"_agent": "المحصّل"})
+    merged["الفعالية"] = merged.apply(
+        lambda r: (r["إجمالي_التحصيل"] / r["عدد_المكالمات"]) if r["عدد_المكالمات"] else 0.0, axis=1
+    )
+
+    total_agents = len(merged)
+    total_collected = float(merged["إجمالي_التحصيل"].sum())
+    total_calls = float(merged["عدد_المكالمات"].sum())
+    overall_success = (merged["عدد_الناجحة"].sum() / total_calls * 100) if total_calls else 0.0
+    avg_effectiveness = float(merged["الفعالية"].mean()) if total_agents else 0.0
+
+    figs = {}
+    figs["kpi"] = _build_kpi_figure([
+        ("👥<br>محصلون مشتركون", total_agents, {"valueformat": ",d"}, THEME["text"]),
+        ("📞<br>نسبة النجاح الإجمالية", overall_success, {"valueformat": ".1f", "suffix": "%"}, OPS_DARK),
+        ("💰<br>إجمالي التحصيل", total_collected, {"valueformat": ",.0f"}, OPS_MID),
+        ("⚡<br>متوسط التحصيل للمكالمة", avg_effectiveness, {"valueformat": ",.1f"}, OPS_LIGHT),
+    ])
+
+    top = merged.sort_values("إجمالي_التحصيل", ascending=True).tail(15)
+    fig_bar = go.Figure()
+    fig_bar.add_trace(go.Bar(x=top["عدد_الناجحة"], y=top["المحصّل"], name="مكالمات ناجحة",
+                              orientation="h", marker_color=OPS_DARK))
+    fig_bar.add_trace(go.Bar(x=top["عدد_السدادات"], y=top["المحصّل"], name="سدادات فعلية",
+                              orientation="h", marker_color=OPS_LIGHT))
+    _apply_ops_chart_style(fig_bar, "مكالمات ناجحة مقابل سدادات فعلية لكل محصل",
+                            height=max(430, 36 * len(top) + 140), xaxis_title="العدد",
+                            show_legend=True, margin=dict(t=70, b=90, l=170, r=60))
+    fig_bar.update_layout(barmode="group")
+    figs["compare_bar"] = fig_bar
+
+    fig_scatter = px.scatter(
+        merged, x="نسبة_النجاح", y="إجمالي_التحصيل", size="عدد_المكالمات",
+        color="عدد_المكالمات", color_continuous_scale=OPS_SCALE, template=PLOTLY_TEMPLATE,
+        hover_name="المحصّل",
+    )
+    _apply_ops_chart_style(fig_scatter, "نسبة نجاح المكالمات مقابل إجمالي التحصيل",
+                            height=460, xaxis_title="نسبة النجاح %", yaxis_title="إجمالي التحصيل",
+                            show_legend=False)
+    fig_scatter.update_traces(
+        hovertemplate="<b>%{hovertext}</b><br>نسبة النجاح: %{x:.1f}%<br>التحصيل: %{y:,.0f}<extra></extra>"
+    )
+    figs["scatter"] = fig_scatter
+
+    return figs, merged
+
+
+def render_activity_payments_link_page(activity_df, sales_col, class_col, payments_df):
+    st.subheader("🔗 ربط نشاط المحصلين بالسداد")
+    result = _build_activity_payments_link(activity_df, sales_col, class_col, payments_df)
+    if result is None:
+        st.info("تعذّر الربط — تأكد إن عمود المحصل موجود في ملفي النشاط والسداد.")
+        return
+    figs, merged = result
+    st.plotly_chart(figs["kpi"], use_container_width=True, config=PLOTLY_CONFIG, key="link_kpi")
+    with st.container(border=True):
+        st.plotly_chart(figs["compare_bar"], use_container_width=True, config=PLOTLY_CONFIG, key="link_compare")
+    with st.container(border=True):
+        st.plotly_chart(figs["scatter"], use_container_width=True, config=PLOTLY_CONFIG, key="link_scatter")
+    st.subheader("📋 جدول تفصيلي: النشاط مقابل السداد لكل محصل")
+    st.dataframe(merged, use_container_width=True, hide_index=True)
+
+
+def _fig_html_card(fig, key_prefix, index):
+    """يحوّل Plotly figure لبطاقة HTML بنفس أسلوب chart-card، بارتفاع صريح لتفادي مشاكل العرض."""
+    height = int(fig.layout.height or 420)
+    return (
+        "<article class='chart-card'>"
+        + pio.to_html(
+            fig, full_html=False, include_plotlyjs=False,
+            config={"displayModeBar": False, "responsive": True},
+            div_id=f"{key_prefix}_{index}", default_width="100%", default_height=f"{height}px",
+        )
+        + "</article>"
+    )
+
+
+def _build_wallet_page_html(wallet_df):
+    figs, _work = _build_wallet_analysis(wallet_df)
+    parts = ["<div id='page-wallet' class='dash-page'>",
+             "<h2 class='section-title'>💼 تحليل المحفظة الكاملة</h2>"]
+    parts.append(_fig_html_card(figs["kpi"], "wallet", 0))
+    parts.append("<div class='charts-grid'>")
+    for i, key in enumerate(("states", "state_amount", "by_agent_count", "by_agent_amount"), start=1):
+        if key in figs:
+            parts.append(_fig_html_card(figs[key], "wallet", i))
+    parts.append("</div></div>")
+    return "".join(parts)
+
+
+def _build_payments_page_html(payments_df):
+    figs, _work, _c, _a = _build_payments_analysis(payments_df)
+    parts = ["<div id='page-payments' class='dash-page'>",
+             "<h2 class='section-title'>💰 تحليل السداد الكامل</h2>"]
+    parts.append(_fig_html_card(figs["kpi"], "payments", 0))
+    if "trend" in figs:
+        parts.append("<div class='charts-grid'>" + _fig_html_card(figs["trend"], "payments", 1) + "</div>")
+    parts.append("<div class='charts-grid'>")
+    for i, key in enumerate(("by_agent_count", "by_agent_amount", "amount_hist"), start=2):
+        if key in figs:
+            parts.append(_fig_html_card(figs[key], "payments", i))
+    parts.append("</div></div>")
+    return "".join(parts)
+
+
+def _build_link_page_html(activity_df, sales_col, class_col, payments_df):
+    parts = ["<div id='page-link' class='dash-page'>",
+             "<h2 class='section-title'>🔗 ربط نشاط المحصلين بالسداد</h2>"]
+    result = _build_activity_payments_link(activity_df, sales_col, class_col, payments_df)
+    if result is None:
+        parts.append("<p style='text-align:center'>تعذّر الربط — تأكد إن عمود المحصل موجود في ملفي النشاط والسداد.</p></div>")
+        return "".join(parts)
+    figs, merged = result
+    parts.append(_fig_html_card(figs["kpi"], "link", 0))
+    parts.append("<div class='charts-grid'>")
+    parts.append(_fig_html_card(figs["compare_bar"], "link", 1))
+    parts.append(_fig_html_card(figs["scatter"], "link", 2))
+    parts.append("</div>")
+    columns = ["المحصّل", "عدد_المكالمات", "عدد_الناجحة", "نسبة_النجاح", "عدد_السدادات", "إجمالي_التحصيل", "الفعالية"]
+    columns = [c for c in columns if c in merged.columns]
+    parts.append("<section class='panel'><h2 class='section-title'>📋 جدول النشاط مقابل السداد</h2>"
+                  "<div class='table-wrap'><table class='data-table'><thead><tr>")
+    for column in columns:
+        parts.append(f"<th>{column}</th>")
+    parts.append("</tr></thead><tbody>")
+    for _, row in merged.sort_values("إجمالي_التحصيل", ascending=False).iterrows():
+        parts.append("<tr>")
+        for column in columns:
+            value = row[column]
+            if isinstance(value, float):
+                value = f"{value:,.1f}"
+            parts.append(f"<td>{value}</td>")
+        parts.append("</tr>")
+    parts.append("</tbody></table></div></section></div>")
+    return "".join(parts)
 
 
 # ==========================================================

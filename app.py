@@ -2798,6 +2798,7 @@ def build_dashboard_html(df, class_col, sales_col, time_col, source_name="", fil
             "document.getElementById(id).classList.add('active');"
             "document.querySelectorAll('#dash-page-nav button').forEach(function(b){b.classList.remove('active-page');});"
             "btn.classList.add('active-page');"
+            "setTimeout(function(){document.querySelectorAll('.js-plotly-plot').forEach(function(div){try{Plotly.Plots.resize(div);}catch(e){}});},80);"
             "}</script>"
         )
 
@@ -2814,7 +2815,10 @@ def build_dashboard_html(df, class_col, sales_col, time_col, source_name="", fil
         f".meta{{color:{text_dim};font-size:13px}}",
         f".panel{{background:{surface};border:1px solid {border};border-radius:16px;padding:16px 16px 12px;margin-bottom:16px}}",
         f"h2.section-title{{margin:4px 0 12px;text-align:center;font-size:17px;color:{text}}}",
-        "#interactive-filters{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px;align-items:end}",
+        "#interactive-filters,.filters-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px;align-items:end}",
+        ".kpi-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin:16px 0}",
+        ".charts-grid-2{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;margin:0 0 16px}",
+        "@media (max-width:900px){.charts-grid-2{grid-template-columns:1fr}}",
         f".filter-field{{display:flex;flex-direction:column;gap:6px;color:{text_dim};font-size:12px}}",
         f".filter-field input,.filter-field select,.filter-field button.multi-trigger{{background:{background};color:{text};border:1px solid {border};border-radius:10px;padding:9px 10px;font-size:13px;text-align:right}}",
         f".multi-menu{{display:none;position:absolute;z-index:30;top:70px;right:0;left:0;background:#fff;border:1px solid {border};border-radius:10px;padding:8px;box-shadow:0 10px 24px rgba(15,23,42,.14);max-height:220px;overflow:auto}}",
@@ -3163,6 +3167,7 @@ document.querySelectorAll('.multi-trigger').forEach(trigger => {
     if (menu) menu.style.display = menu.style.display === 'block' ? 'none' : 'block';
   });
 });
+document.querySelectorAll('.multi-menu').forEach(menu => menu.addEventListener('click', e => e.stopPropagation()));
 document.addEventListener('click', () => document.querySelectorAll('.multi-menu').forEach(menu => menu.style.display = 'none'));
 document.querySelectorAll('.agent-option,.state-option').forEach(option => option.addEventListener('change', () => { updateMultiLabels(); refreshDashboard(); }));
 document.querySelector('.select-all-agent')?.addEventListener('change', event => {
@@ -5962,9 +5967,10 @@ def _fig_html_card(fig, key_prefix, index):
 
 
 def _build_wallet_page_html(wallet_df):
-    """صفحة HTML للمحفظة بنفس أسلوب نشاط المحصلين: سلايسرز + كروت + شارتات واضحة + جدول."""
+    """صفحة HTML للمحفظة بنفس أسلوب نشاط المحصلين: سلايسرز + كروت + شارتات + جدول."""
     from html import escape
     import json as _json
+    import base64 as _b64
 
     figs, work, aging_table, meta = _build_wallet_analysis(wallet_df)
     sales_col = meta.get("sales_col")
@@ -6006,117 +6012,117 @@ def _build_wallet_page_html(wallet_df):
     debit_min = debit_dates[0] if debit_dates else ""
     debit_max = debit_dates[-1] if debit_dates else ""
 
-    records_json = _json.dumps(records, ensure_ascii=False)
-    ops_dark, ops_mid, ops_light = OPS_DARK, OPS_MID, OPS_LIGHT
-    ops_pos, ops_neg = OPS_POSITIVE, OPS_NEGATIVE
+    ops_dark, ops_mid = OPS_DARK, OPS_MID
 
-    parts = []
-    parts.append("<div id='page-wallet' class='dash-page'>")
-    parts.append("<h2 class='section-title'>💼 تحليل المحفظة الكاملة</h2>")
-    parts.append("<div class='meta' style='text-align:center;margin-bottom:12px'>المحفظة · سلايسرز تفاعلية · نفس تنسيق نشاط المحصلين</div>")
+    def _multi(label, menu_id, label_id, all_cls, opt_cls, values, empty_label):
+        html = [
+            f"<div class='filter-field' style='position:relative'><span>{label}</span>",
+            f"<button type='button' class='multi-trigger' data-target='{menu_id}'><span id='{label_id}'>{empty_label}</span> ⌄</button>",
+            f"<div id='{menu_id}' class='multi-menu'>",
+            f"<label style='display:block;padding:6px;font-weight:700'><input type='checkbox' class='{all_cls}'> {empty_label}</label>",
+        ]
+        for value in values:
+            html.append(
+                f"<label style='display:block;padding:6px'>"
+                f"<input type='checkbox' class='{opt_cls}' value='{escape(value, quote=True)}'> {escape(value)}</label>"
+            )
+        html.append("</div></div>")
+        return "".join(html)
 
-    parts.append("<section class='panel'><h2 class='section-title'>🎚️ فلاتر المحفظة</h2>")
-    parts.append("<div id='wallet-interactive-filters'>")
-
-    parts.append("<div class='filter-field' style='position:relative'><span>👤 المحصل</span>")
-    parts.append("<button type='button' class='multi-trigger' data-target='wallet-agent-menu'><span id='wallet-agent-label'>كل المحصلين</span> ⌄</button>")
-    parts.append("<div id='wallet-agent-menu' class='multi-menu'><label style='display:block;padding:6px;font-weight:700'><input type='checkbox' class='wallet-select-all-agent'> كل المحصلين</label>")
-    for value in agents:
-        parts.append(f"<label style='display:block;padding:6px'><input type='checkbox' class='wallet-agent-option' value='{escape(value, quote=True)}'> {escape(value)}</label>")
-    parts.append("</div></div>")
-
-    parts.append("<div class='filter-field' style='position:relative'><span>🌍 الجنسية</span>")
-    parts.append("<button type='button' class='multi-trigger' data-target='wallet-nation-menu'><span id='wallet-nation-label'>كل الجنسيات</span> ⌄</button>")
-    parts.append("<div id='wallet-nation-menu' class='multi-menu'><label style='display:block;padding:6px;font-weight:700'><input type='checkbox' class='wallet-select-all-nation'> كل الجنسيات</label>")
-    for value in nations:
-        parts.append(f"<label style='display:block;padding:6px'><input type='checkbox' class='wallet-nation-option' value='{escape(value, quote=True)}'> {escape(value)}</label>")
-    parts.append("</div></div>")
-
-    parts.append("<div class='filter-field' style='position:relative'><span>🏷️ حالة العميل</span>")
-    parts.append("<button type='button' class='multi-trigger' data-target='wallet-cstate-menu'><span id='wallet-cstate-label'>كل الحالات</span> ⌄</button>")
-    parts.append("<div id='wallet-cstate-menu' class='multi-menu'><label style='display:block;padding:6px;font-weight:700'><input type='checkbox' class='wallet-select-all-cstate'> كل الحالات</label>")
-    for value in cust_states:
-        parts.append(f"<label style='display:block;padding:6px'><input type='checkbox' class='wallet-cstate-option' value='{escape(value, quote=True)}'> {escape(value)}</label>")
-    parts.append("</div></div>")
-
-    parts.append("<div class='filter-field' style='position:relative'><span>⏳ عمر الإسناد</span>")
-    parts.append("<button type='button' class='multi-trigger' data-target='wallet-aging-menu'><span id='wallet-aging-label'>كل الأعمار</span> ⌄</button>")
-    parts.append("<div id='wallet-aging-menu' class='multi-menu'><label style='display:block;padding:6px;font-weight:700'><input type='checkbox' class='wallet-select-all-aging'> كل الأعمار</label>")
-    for value in aging_vals:
-        parts.append(f"<label style='display:block;padding:6px'><input type='checkbox' class='wallet-aging-option' value='{escape(value, quote=True)}'> {escape(value)}</label>")
-    parts.append("</div></div>")
-
-    if assign_min:
-        parts.append(
-            f"<div class='filter-field'><span>📅 تاريخ الإسناد من</span>"
-            f"<input id='wallet-assign-from' type='date' value='{assign_min}' min='{assign_min}' max='{assign_max}'></div>"
-        )
-        parts.append(
-            f"<div class='filter-field'><span>📅 تاريخ الإسناد إلى</span>"
-            f"<input id='wallet-assign-to' type='date' value='{assign_max}' min='{assign_min}' max='{assign_max}'></div>"
-        )
-    if debit_min:
-        parts.append(
-            f"<div class='filter-field'><span>📅 تاريخ الحادث من</span>"
-            f"<input id='wallet-debit-from' type='date' value='{debit_min}' min='{debit_min}' max='{debit_max}'></div>"
-        )
-        parts.append(
-            f"<div class='filter-field'><span>📅 تاريخ الحادث إلى</span>"
-            f"<input id='wallet-debit-to' type='date' value='{debit_max}' min='{debit_min}' max='{debit_max}'></div>"
-        )
-
-    parts.append("<div class='filter-field'><span>&nbsp;</span><button id='wallet-reset-filters' class='btn-reset' type='button'>↺ إعادة ضبط</button></div>")
-    parts.append("</div>")
-    parts.append("<div id='wallet-filter-status' class='meta' style='margin-top:10px;text-align:center'></div>")
-    parts.append("</section>")
-
-    parts.append("<section id='wallet-kpi-grid' style='display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin:16px 0'>")
-    kpi_items = [
-        ("wallet-kpi-amount", "💰 إجمالي المديونية", f"{meta.get('total_amount', 0):,.0f}", ops_dark),
-        ("wallet-kpi-agents", "👥 عدد المحصلين", f"{meta.get('agent_count', 0):,}", None),
-        ("wallet-kpi-customers", "🧑 عدد العملاء", f"{meta.get('customer_count', 0):,}", None),
-        ("wallet-kpi-accounts", "📋 عدد الحسابات", f"{meta.get('total_accounts', 0):,}", None),
-        ("wallet-kpi-avg", "📊 متوسط المديونية", f"{meta.get('avg_amount', 0):,.0f}", ops_mid),
-    ]
-    for kid, label, val, color in kpi_items:
-        style = f" style='color:{color}'" if color else ""
-        parts.append(f"<div class='kpi'><div class='label'>{label}</div><div class='value' id='{kid}'{style}>{val}</div></div>")
-    parts.append("</section>")
-
-    chart_specs = [
-        ("states", "📊 توزيع الحسابات حسب الحالة", "عدد الحسابات في كل Sub State"),
-        ("state_amount", "💰 المديونية حسب الحالة", "إجمالي Net Amount لكل حالة"),
-        ("by_agent_count", "👤 توزيع الحسابات حسب المحصل", "عدد الحسابات المسندة لكل محصل"),
-        ("aging", "⏳ عمر الإسناد — التحصيل والمتبقي", "تم التحصيل (Payment) مقابل باقي المديونية حسب عمود عمر الإسناد في الملف"),
-        ("customer_state_pie", "🏷️ توزيع حالة العميل", "نسب حالات العميل في المحفظة"),
-        ("nationality_donut", "🌍 توزيع جنسية العميل", "نسب جنسيات العملاء"),
-    ]
-    chart_idx = 1
-    plot_id_map = {}
-    for key, title, subtitle in chart_specs:
-        if key not in figs:
-            continue
-        plot_id = f"wallet_{chart_idx}"
-        plot_id_map[key] = plot_id
-        height = int(figs[key].layout.height or 420)
-        parts.append("<section class='panel'>")
-        parts.append(f"<h2 class='section-title'>{title}</h2>")
-        parts.append(f"<div class='meta' style='text-align:center;margin:-4px 0 10px'>{escape(subtitle)}</div>")
-        parts.append(
+    def _chart_card(fig, plot_id):
+        height = int(fig.layout.height or 420)
+        return (
             "<article class='chart-card'>"
             + pio.to_html(
-                figs[key], full_html=False, include_plotlyjs=False,
+                fig, full_html=False, include_plotlyjs=False,
                 config={"displayModeBar": False, "responsive": True},
                 div_id=plot_id, default_width="100%", default_height=f"{height}px",
             )
             + "</article>"
         )
-        parts.append("</section>")
-        chart_idx += 1
 
-    parts.append("<section class='panel'><h2 class='section-title'>📋 جدول عمر الإسناد</h2>")
-    parts.append("<div class='meta' style='text-align:center;margin-bottom:8px'>عمر الإسناد من عمود الملف · تم التحصيل من Payment · باقي المديونية من Net Amount</div>")
-    parts.append("<div class='table-wrap'><table class='data-table' id='wallet-aging-table'><thead><tr>")
+    parts = []
+    parts.append("<div id='page-wallet' class='dash-page'>")
+    parts.append("<header class='hero' style='margin-bottom:18px'>")
+    parts.append("<div class='eyebrow'>WALLET DASHBOARD</div>")
+    parts.append("<h1 style='margin:0 0 8px;font-size:24px'>💼 تحليل المحفظة الكاملة</h1>")
+    parts.append("<div class='meta'>سلايسرز تفاعلية · كروت وشارتات بنفس تنسيق نشاط المحصلين</div>")
+    parts.append("</header>")
+
+    # Filters
+    parts.append("<section class='panel'>")
+    parts.append("<h2 class='section-title'>🎚️ فلاتر المحفظة</h2>")
+    parts.append("<div class='filters-grid' id='wallet-interactive-filters'>")
+    parts.append(_multi("👤 المحصل", "wallet-agent-menu", "wallet-agent-label", "wallet-select-all-agent", "wallet-agent-option", agents, "كل المحصلين"))
+    parts.append(_multi("🌍 الجنسية", "wallet-nation-menu", "wallet-nation-label", "wallet-select-all-nation", "wallet-nation-option", nations, "كل الجنسيات"))
+    parts.append(_multi("🏷️ حالة العميل", "wallet-cstate-menu", "wallet-cstate-label", "wallet-select-all-cstate", "wallet-cstate-option", cust_states, "كل الحالات"))
+    parts.append(_multi("⏳ عمر الإسناد", "wallet-aging-menu", "wallet-aging-label", "wallet-select-all-aging", "wallet-aging-option", aging_vals, "كل الأعمار"))
+    if assign_min:
+        parts.append(f"<div class='filter-field'><span>📅 تاريخ الإسناد من</span><input id='wallet-assign-from' type='date' value='{assign_min}' min='{assign_min}' max='{assign_max}'></div>")
+        parts.append(f"<div class='filter-field'><span>📅 تاريخ الإسناد إلى</span><input id='wallet-assign-to' type='date' value='{assign_max}' min='{assign_min}' max='{assign_max}'></div>")
+    if debit_min:
+        parts.append(f"<div class='filter-field'><span>📅 تاريخ الحادث من</span><input id='wallet-debit-from' type='date' value='{debit_min}' min='{debit_min}' max='{debit_max}'></div>")
+        parts.append(f"<div class='filter-field'><span>📅 تاريخ الحادث إلى</span><input id='wallet-debit-to' type='date' value='{debit_max}' min='{debit_min}' max='{debit_max}'></div>")
+    parts.append("<div class='filter-field'><span>&nbsp;</span><button id='wallet-reset-filters' class='btn-reset' type='button'>↺ إعادة ضبط</button></div>")
+    parts.append("</div>")
+    parts.append("<div id='wallet-filter-status' class='meta' style='margin-top:12px;text-align:center'></div>")
+    parts.append("</section>")
+
+    # KPIs
+    parts.append("<section class='kpi-grid'>")
+    for kid, label, val, color in [
+        ("wallet-kpi-amount", "💰 إجمالي المديونية", f"{meta.get('total_amount', 0):,.0f}", ops_dark),
+        ("wallet-kpi-agents", "👥 عدد المحصلين", f"{meta.get('agent_count', 0):,}", None),
+        ("wallet-kpi-customers", "🧑 عدد العملاء", f"{meta.get('customer_count', 0):,}", None),
+        ("wallet-kpi-accounts", "📋 عدد الحسابات", f"{meta.get('total_accounts', 0):,}", None),
+        ("wallet-kpi-avg", "📊 متوسط المديونية", f"{meta.get('avg_amount', 0):,.0f}", ops_mid),
+    ]:
+        style = f" style='color:{color}'" if color else ""
+        parts.append(f"<div class='kpi'><div class='label'>{label}</div><div class='value' id='{kid}'{style}>{val}</div></div>")
+    parts.append("</section>")
+
+    plot_id_map = {}
+    chart_idx = 1
+
+    def take(key, title, subtitle):
+        nonlocal chart_idx
+        if key not in figs:
+            return ""
+        pid = f"wallet_{chart_idx}"
+        plot_id_map[key] = pid
+        chart_idx += 1
+        return (
+            f"<div><h2 class='section-title' style='margin-bottom:4px'>{title}</h2>"
+            f"<div class='meta' style='text-align:center;margin-bottom:8px'>{escape(subtitle)}</div>"
+            f"{_chart_card(figs[key], pid)}</div>"
+        )
+
+    # Row 1: states + state amount
+    row1 = [take("states", "📊 توزيع الحسابات حسب الحالة", "عدد الحسابات لكل Sub State"),
+            take("state_amount", "💰 المديونية حسب الحالة", "إجمالي Net Amount لكل حالة")]
+    row1 = [x for x in row1 if x]
+    if row1:
+        parts.append("<div class='charts-grid-2'>" + "".join(row1) + "</div>")
+
+    # Row 2: agent + aging
+    row2 = [take("by_agent_count", "👤 توزيع الحسابات حسب المحصل", "عدد الحسابات المسندة لكل محصل"),
+            take("aging", "⏳ عمر الإسناد — التحصيل والمتبقي", "Payment مقابل الباقي حسب عمود عمر الإسناد")]
+    row2 = [x for x in row2 if x]
+    if row2:
+        parts.append("<div class='charts-grid-2'>" + "".join(row2) + "</div>")
+
+    # Row 3: customer state pie + nationality donut
+    row3 = [take("customer_state_pie", "🏷️ توزيع حالة العميل", "نسب حالات العميل"),
+            take("nationality_donut", "🌍 توزيع جنسية العميل", "نسب جنسيات العملاء")]
+    row3 = [x for x in row3 if x]
+    if row3:
+        parts.append("<div class='charts-grid-2'>" + "".join(row3) + "</div>")
+
+    # Table
+    parts.append("<section class='panel'>")
+    parts.append("<h2 class='section-title'>📋 جدول عمر الإسناد</h2>")
+    parts.append("<div class='meta' style='text-align:center;margin-bottom:8px'>عمر الإسناد من الملف · التحصيل من Payment · الباقي من Net Amount</div>")
+    parts.append("<div class='table-wrap'><table class='data-table'><thead><tr>")
     table_cols = ["عمر الإسناد", "تم التحصيل", "باقي المديونية", "الحالة", "عدد الحسابات"]
     for column in table_cols:
         parts.append(f"<th>{column}</th>")
@@ -6135,24 +6141,24 @@ def _build_wallet_page_html(wallet_df):
                 parts.append(f"<td>{cell}</td>")
             parts.append("</tr>")
     parts.append("</tbody></table></div></section>")
-    parts.append("</div>")
+    parts.append("</div>")  # page-wallet
 
-    js = __import__("base64").b64decode("KGZ1bmN0aW9uKCl7CmNvbnN0IHdhbGxldERhdGEgPSBfX1dBTExFVF9EQVRBX187CmNvbnN0IHdhbGxldFBsb3RJZHMgPSBfX1dBTExFVF9QTE9UX0lEU19fOwpjb25zdCBXX0RBUksgPSAiX19PUFNfREFSS19fIjsKY29uc3QgV19NSUQgPSAiX19PUFNfTUlEX18iOwpjb25zdCBXX0xJR0hUID0gIl9fT1BTX0xJR0hUX18iOwpjb25zdCBXX1BPUyA9ICJfX09QU19QT1NfXyI7CmNvbnN0IFdfTkVHID0gIl9fT1BTX05FR19fIjsKY29uc3QgV19BU1NJR05fTUlOID0gIl9fQVNTSUdOX01JTl9fIjsKY29uc3QgV19BU1NJR05fTUFYID0gIl9fQVNTSUdOX01BWF9fIjsKY29uc3QgV19ERUJJVF9NSU4gPSAiX19ERUJJVF9NSU5fXyI7CmNvbnN0IFdfREVCSVRfTUFYID0gIl9fREVCSVRfTUFYX18iOwoKZnVuY3Rpb24gd0ZtdChuKXsgcmV0dXJuIE51bWJlcihufHwwKS50b0xvY2FsZVN0cmluZygiZW4tVVMiKTsgfQpmdW5jdGlvbiB3Rm10MChuKXsgcmV0dXJuIE51bWJlcihufHwwKS50b0xvY2FsZVN0cmluZygiZW4tVVMiLCB7bWF4aW11bUZyYWN0aW9uRGlnaXRzOjB9KTsgfQpmdW5jdGlvbiB3U2V0S3BpKGlkLCB2YWwpeyBjb25zdCBlbD1kb2N1bWVudC5nZXRFbGVtZW50QnlJZChpZCk7IGlmKGVsKSBlbC50ZXh0Q29udGVudCA9IHZhbDsgfQpmdW5jdGlvbiB3Q2hlY2tlZChjbHMpeyByZXR1cm4gWy4uLmRvY3VtZW50LnF1ZXJ5U2VsZWN0b3JBbGwoIi4iK2NscysiOmNoZWNrZWQiKV0ubWFwKG89Pm8udmFsdWUpOyB9CmZ1bmN0aW9uIHdTZWxlY3RlZFJvd3MoKXsKICBsZXQgcm93cyA9IHdhbGxldERhdGEuc2xpY2UoKTsKICBjb25zdCBhZ2VudHMgPSB3Q2hlY2tlZCgid2FsbGV0LWFnZW50LW9wdGlvbiIpOwogIGlmIChhZ2VudHMubGVuZ3RoKSByb3dzID0gcm93cy5maWx0ZXIociA9PiBhZ2VudHMuaW5jbHVkZXMoci5hZ2VudCkpOwogIGNvbnN0IG5hdGlvbnMgPSB3Q2hlY2tlZCgid2FsbGV0LW5hdGlvbi1vcHRpb24iKTsKICBpZiAobmF0aW9ucy5sZW5ndGgpIHJvd3MgPSByb3dzLmZpbHRlcihyID0+IG5hdGlvbnMuaW5jbHVkZXMoci5uYXRpb25hbGl0eSkpOwogIGNvbnN0IGNzdGF0ZXMgPSB3Q2hlY2tlZCgid2FsbGV0LWNzdGF0ZS1vcHRpb24iKTsKICBpZiAoY3N0YXRlcy5sZW5ndGgpIHJvd3MgPSByb3dzLmZpbHRlcihyID0+IGNzdGF0ZXMuaW5jbHVkZXMoci5jdXN0b21lcl9zdGF0ZSkpOwogIGNvbnN0IGFnaW5nID0gd0NoZWNrZWQoIndhbGxldC1hZ2luZy1vcHRpb24iKTsKICBpZiAoYWdpbmcubGVuZ3RoKSByb3dzID0gcm93cy5maWx0ZXIociA9PiBhZ2luZy5pbmNsdWRlcyhyLmFnaW5nKSk7CiAgY29uc3QgYWYgPSBkb2N1bWVudC5nZXRFbGVtZW50QnlJZCgid2FsbGV0LWFzc2lnbi1mcm9tIik/LnZhbHVlIHx8ICIiOwogIGNvbnN0IGF0ID0gZG9jdW1lbnQuZ2V0RWxlbWVudEJ5SWQoIndhbGxldC1hc3NpZ24tdG8iKT8udmFsdWUgfHwgIiI7CiAgaWYgKGFmKSByb3dzID0gcm93cy5maWx0ZXIociA9PiAhci5hc3NpZ25fZGF0ZSB8fCByLmFzc2lnbl9kYXRlID49IGFmKTsKICBpZiAoYXQpIHJvd3MgPSByb3dzLmZpbHRlcihyID0+ICFyLmFzc2lnbl9kYXRlIHx8IHIuYXNzaWduX2RhdGUgPD0gYXQpOwogIGNvbnN0IGRmID0gZG9jdW1lbnQuZ2V0RWxlbWVudEJ5SWQoIndhbGxldC1kZWJpdC1mcm9tIik/LnZhbHVlIHx8ICIiOwogIGNvbnN0IGR0ID0gZG9jdW1lbnQuZ2V0RWxlbWVudEJ5SWQoIndhbGxldC1kZWJpdC10byIpPy52YWx1ZSB8fCAiIjsKICBpZiAoZGYpIHJvd3MgPSByb3dzLmZpbHRlcihyID0+ICFyLmRlYml0X2RhdGUgfHwgci5kZWJpdF9kYXRlID49IGRmKTsKICBpZiAoZHQpIHJvd3MgPSByb3dzLmZpbHRlcihyID0+ICFyLmRlYml0X2RhdGUgfHwgci5kZWJpdF9kYXRlIDw9IGR0KTsKICByZXR1cm4gcm93czsKfQpmdW5jdGlvbiB3Q291bnRNYXAocm93cywga2V5KXsKICBjb25zdCBtID0ge307CiAgcm93cy5mb3JFYWNoKHIgPT4geyBjb25zdCBrID0gcltrZXldIHx8ICLYutmK2LEg2YXYrdiv2K8iOyBtW2tdID0gKG1ba118fDApICsgMTsgfSk7CiAgcmV0dXJuIG07Cn0KZnVuY3Rpb24gd1N1bU1hcChyb3dzLCBrZXksIHZhbEtleSl7CiAgY29uc3QgbSA9IHt9OwogIHJvd3MuZm9yRWFjaChyID0+IHsgY29uc3QgayA9IHJba2V5XSB8fCAi2LrZitixINmF2K3Yr9ivIjsgbVtrXSA9IChtW2tdfHwwKSArIChyW3ZhbEtleV18fDApOyB9KTsKICByZXR1cm4gbTsKfQpmdW5jdGlvbiB3VG9wRW50cmllcyhtYXAsIG4pewogIHJldHVybiBPYmplY3QuZW50cmllcyhtYXApLnNvcnQoKGEsYik9PmFbMV0tYlsxXSkuc2xpY2UoLW4pOwp9CmZ1bmN0aW9uIHdVcGRhdGVMYWJlbHMoKXsKICBjb25zdCBhID0gd0NoZWNrZWQoIndhbGxldC1hZ2VudC1vcHRpb24iKTsKICBjb25zdCBhbCA9IGRvY3VtZW50LmdldEVsZW1lbnRCeUlkKCJ3YWxsZXQtYWdlbnQtbGFiZWwiKTsKICBpZiAoYWwpIGFsLnRleHRDb250ZW50ID0gYS5sZW5ndGggPyAoYS5sZW5ndGggKyAiINmF2K3YtdmEINmF2K3Yr9ivIikgOiAi2YPZhCDYp9mE2YXYrdi12YTZitmGIjsKICBjb25zdCBuID0gd0NoZWNrZWQoIndhbGxldC1uYXRpb24tb3B0aW9uIik7CiAgY29uc3QgbmwgPSBkb2N1bWVudC5nZXRFbGVtZW50QnlJZCgid2FsbGV0LW5hdGlvbi1sYWJlbCIpOwogIGlmIChubCkgbmwudGV4dENvbnRlbnQgPSBuLmxlbmd0aCA/IChuLmxlbmd0aCArICIg2KzZhtiz2YrYqSIpIDogItmD2YQg2KfZhNis2YbYs9mK2KfYqiI7CiAgY29uc3QgYyA9IHdDaGVja2VkKCJ3YWxsZXQtY3N0YXRlLW9wdGlvbiIpOwogIGNvbnN0IGNsID0gZG9jdW1lbnQuZ2V0RWxlbWVudEJ5SWQoIndhbGxldC1jc3RhdGUtbGFiZWwiKTsKICBpZiAoY2wpIGNsLnRleHRDb250ZW50ID0gYy5sZW5ndGggPyAoYy5sZW5ndGggKyAiINit2KfZhNipIikgOiAi2YPZhCDYp9mE2K3Yp9mE2KfYqiI7CiAgY29uc3QgZyA9IHdDaGVja2VkKCJ3YWxsZXQtYWdpbmctb3B0aW9uIik7CiAgY29uc3QgZ2wgPSBkb2N1bWVudC5nZXRFbGVtZW50QnlJZCgid2FsbGV0LWFnaW5nLWxhYmVsIik7CiAgaWYgKGdsKSBnbC50ZXh0Q29udGVudCA9IGcubGVuZ3RoID8gKGcubGVuZ3RoICsgIiDYudmF2LEiKSA6ICLZg9mEINin2YTYo9i52YXYp9ixIjsKfQoKZnVuY3Rpb24gd1JlZnJlc2goKXsKICBjb25zdCByb3dzID0gd1NlbGVjdGVkUm93cygpOwogIGNvbnN0IGFnZW50cyA9IFsuLi5uZXcgU2V0KHJvd3MubWFwKHI9PnIuYWdlbnQpLmZpbHRlcihCb29sZWFuKSldOwogIGNvbnN0IGN1c3RvbWVycyA9IFsuLi5uZXcgU2V0KHJvd3MubWFwKHI9PnIuY3VzdG9tZXIpLmZpbHRlcihCb29sZWFuKSldOwogIGNvbnN0IHJlbWFpbmluZyA9IHJvd3MucmVkdWNlKChzLHIpPT5zKyhyLnJlbWFpbmluZ3x8MCksMCk7CiAgY29uc3QgYXZnID0gcm93cy5sZW5ndGggPyByZW1haW5pbmcgLyByb3dzLmxlbmd0aCA6IDA7CiAgd1NldEtwaSgid2FsbGV0LWtwaS1hbW91bnQiLCB3Rm10MChyZW1haW5pbmcpKTsKICB3U2V0S3BpKCJ3YWxsZXQta3BpLWFnZW50cyIsIHdGbXQoYWdlbnRzLmxlbmd0aCkpOwogIHdTZXRLcGkoIndhbGxldC1rcGktY3VzdG9tZXJzIiwgd0ZtdChjdXN0b21lcnMubGVuZ3RoIHx8IHJvd3MubGVuZ3RoKSk7CiAgd1NldEtwaSgid2FsbGV0LWtwaS1hY2NvdW50cyIsIHdGbXQocm93cy5sZW5ndGgpKTsKICB3U2V0S3BpKCJ3YWxsZXQta3BpLWF2ZyIsIHdGbXQwKGF2ZykpOwogIGNvbnN0IHN0ID0gZG9jdW1lbnQuZ2V0RWxlbWVudEJ5SWQoIndhbGxldC1maWx0ZXItc3RhdHVzIik7CiAgaWYgKHN0KSBzdC50ZXh0Q29udGVudCA9ICLYudix2LYgIiArIHdGbXQocm93cy5sZW5ndGgpICsgIiDYrdiz2KfYqCDZhdmGINij2LXZhCAiICsgd0ZtdCh3YWxsZXREYXRhLmxlbmd0aCkgKyAiIHwgIiArIHdGbXQoYWdlbnRzLmxlbmd0aCkgKyAiINmF2K3YtdmEIjsKCiAgY29uc3Qgc3RhdGVzUGxvdCA9IHdhbGxldFBsb3RJZHMuc3RhdGVzICYmIGRvY3VtZW50LmdldEVsZW1lbnRCeUlkKHdhbGxldFBsb3RJZHMuc3RhdGVzKTsKICBpZiAoc3RhdGVzUGxvdCkgewogICAgY29uc3QgZW50cmllcyA9IHdUb3BFbnRyaWVzKHdDb3VudE1hcChyb3dzLCJzdGF0ZSIpLCAxNSk7CiAgICBQbG90bHkucmVhY3Qoc3RhdGVzUGxvdCwgW3sKICAgICAgdHlwZToiYmFyIiwgb3JpZW50YXRpb246ImgiLAogICAgICB5OiBlbnRyaWVzLm1hcChlPT5lWzBdKSwgeDogZW50cmllcy5tYXAoZT0+ZVsxXSksCiAgICAgIHRleHQ6IGVudHJpZXMubWFwKGU9PmVbMV0pLCB0ZXh0dGVtcGxhdGU6IiV7eDosLjBmfSIsIHRleHRwb3NpdGlvbjoib3V0c2lkZSIsIGNsaXBvbmF4aXM6ZmFsc2UsCiAgICAgIG1hcmtlcjp7Y29sb3I6IGVudHJpZXMubWFwKChfLGkpPT4gW1dfREFSSyxXX01JRCxXX0xJR0hUXVtpJTNdKX0sCiAgICAgIGhvdmVydGVtcGxhdGU6IjxiPiV7eX08L2I+PGJyPti52K/YryDYp9mE2K3Ys9in2KjYp9iqOiAle3g6LC4wZn08ZXh0cmE+PC9leHRyYT4iCiAgICB9XSwgT2JqZWN0LmFzc2lnbih7fSwgc3RhdGVzUGxvdC5sYXlvdXR8fHt9LCB7c2hvd2xlZ2VuZDpmYWxzZX0pKTsKICB9CgogIGNvbnN0IHN0YXRlQW10UGxvdCA9IHdhbGxldFBsb3RJZHMuc3RhdGVfYW1vdW50ICYmIGRvY3VtZW50LmdldEVsZW1lbnRCeUlkKHdhbGxldFBsb3RJZHMuc3RhdGVfYW1vdW50KTsKICBpZiAoc3RhdGVBbXRQbG90KSB7CiAgICBjb25zdCBlbnRyaWVzID0gd1RvcEVudHJpZXMod1N1bU1hcChyb3dzLCJzdGF0ZSIsInJlbWFpbmluZyIpLCAxNSk7CiAgICBQbG90bHkucmVhY3Qoc3RhdGVBbXRQbG90LCBbewogICAgICB0eXBlOiJiYXIiLCBvcmllbnRhdGlvbjoiaCIsCiAgICAgIHk6IGVudHJpZXMubWFwKGU9PmVbMF0pLCB4OiBlbnRyaWVzLm1hcChlPT5lWzFdKSwKICAgICAgdGV4dDogZW50cmllcy5tYXAoZT0+ZVsxXSksIHRleHR0ZW1wbGF0ZToiJXt4OiwuMGZ9IiwgdGV4dHBvc2l0aW9uOiJvdXRzaWRlIiwgY2xpcG9uYXhpczpmYWxzZSwKICAgICAgbWFya2VyOntjb2xvcjogZW50cmllcy5tYXAoKF8saSk9PiBbV19EQVJLLFdfTUlELFdfTElHSFRdW2klM10pfSwKICAgICAgaG92ZXJ0ZW1wbGF0ZToiPGI+JXt5fTwvYj48YnI+2KfZhNmF2KjZhNi6OiAle3g6LC4wZn08ZXh0cmE+PC9leHRyYT4iCiAgICB9XSwgT2JqZWN0LmFzc2lnbih7fSwgc3RhdGVBbXRQbG90LmxheW91dHx8e30sIHtzaG93bGVnZW5kOmZhbHNlfSkpOwogIH0KCiAgY29uc3QgYWdlbnRQbG90ID0gd2FsbGV0UGxvdElkcy5ieV9hZ2VudF9jb3VudCAmJiBkb2N1bWVudC5nZXRFbGVtZW50QnlJZCh3YWxsZXRQbG90SWRzLmJ5X2FnZW50X2NvdW50KTsKICBpZiAoYWdlbnRQbG90KSB7CiAgICBjb25zdCBlbnRyaWVzID0gd1RvcEVudHJpZXMod0NvdW50TWFwKHJvd3MsImFnZW50IiksIDE1KTsKICAgIFBsb3RseS5yZWFjdChhZ2VudFBsb3QsIFt7CiAgICAgIHR5cGU6ImJhciIsIG9yaWVudGF0aW9uOiJoIiwKICAgICAgeTogZW50cmllcy5tYXAoZT0+ZVswXSksIHg6IGVudHJpZXMubWFwKGU9PmVbMV0pLAogICAgICB0ZXh0OiBlbnRyaWVzLm1hcChlPT5lWzFdKSwgdGV4dHRlbXBsYXRlOiIle3g6LC4wZn0iLCB0ZXh0cG9zaXRpb246Im91dHNpZGUiLCBjbGlwb25heGlzOmZhbHNlLAogICAgICBtYXJrZXI6e2NvbG9yOiBlbnRyaWVzLm1hcCgoXyxpKT0+IFtXX0RBUkssV19NSUQsV19MSUdIVF1baSUzXSl9LAogICAgICBob3ZlcnRlbXBsYXRlOiI8Yj4le3l9PC9iPjxicj7Yudiv2K8g2KfZhNit2LPYp9io2KfYqjogJXt4OiwuMGZ9PGV4dHJhPjwvZXh0cmE+IgogICAgfV0sIE9iamVjdC5hc3NpZ24oe30sIGFnZW50UGxvdC5sYXlvdXR8fHt9LCB7c2hvd2xlZ2VuZDpmYWxzZX0pKTsKICB9CgogIGNvbnN0IGFnaW5nUGxvdCA9IHdhbGxldFBsb3RJZHMuYWdpbmcgJiYgZG9jdW1lbnQuZ2V0RWxlbWVudEJ5SWQod2FsbGV0UGxvdElkcy5hZ2luZyk7CiAgaWYgKGFnaW5nUGxvdCkgewogICAgY29uc3QgY29sbCA9IHdTdW1NYXAocm93cywiYWdpbmciLCJjb2xsZWN0ZWQiKTsKICAgIGNvbnN0IHJlbSA9IHdTdW1NYXAocm93cywiYWdpbmciLCJyZW1haW5pbmciKTsKICAgIGNvbnN0IGxhYmVscyA9IFsuLi5uZXcgU2V0KFsuLi5PYmplY3Qua2V5cyhjb2xsKSwgLi4uT2JqZWN0LmtleXMocmVtKV0pXS5zb3J0KCk7CiAgICBQbG90bHkucmVhY3QoYWdpbmdQbG90LCBbCiAgICAgIHt0eXBlOiJiYXIiLCBuYW1lOiLYqtmFINin2YTYqtit2LXZitmEIiwgeDpsYWJlbHMsIHk6bGFiZWxzLm1hcChrPT5jb2xsW2tdfHwwKSwgbWFya2VyOntjb2xvcjpXX1BPU30sCiAgICAgICB0ZXh0OmxhYmVscy5tYXAoaz0+Y29sbFtrXXx8MCksIHRleHR0ZW1wbGF0ZToiJXt5OiwuMGZ9IiwgdGV4dHBvc2l0aW9uOiJvdXRzaWRlIiwgY2xpcG9uYXhpczpmYWxzZSwKICAgICAgIGhvdmVydGVtcGxhdGU6IjxiPiV7eH08L2I+PGJyPtiq2YUg2KfZhNiq2K3YtdmK2YQ6ICV7eTosLjBmfTxleHRyYT48L2V4dHJhPiJ9LAogICAgICB7dHlwZToiYmFyIiwgbmFtZToi2KjYp9mC2Yog2KfZhNmF2K/ZitmI2YbZitipIiwgeDpsYWJlbHMsIHk6bGFiZWxzLm1hcChrPT5yZW1ba118fDApLCBtYXJrZXI6e2NvbG9yOldfTkVHfSwKICAgICAgIHRleHQ6bGFiZWxzLm1hcChrPT5yZW1ba118fDApLCB0ZXh0dGVtcGxhdGU6IiV7eTosLjBmfSIsIHRleHRwb3NpdGlvbjoib3V0c2lkZSIsIGNsaXBvbmF4aXM6ZmFsc2UsCiAgICAgICBob3ZlcnRlbXBsYXRlOiI8Yj4le3h9PC9iPjxicj7YqNin2YLZiiDYp9mE2YXYr9mK2YjZhtmK2Kk6ICV7eTosLjBmfTxleHRyYT48L2V4dHJhPiJ9CiAgICBdLCBPYmplY3QuYXNzaWduKHt9LCBhZ2luZ1Bsb3QubGF5b3V0fHx7fSwge2Jhcm1vZGU6Imdyb3VwIn0pKTsKICB9CgogIGNvbnN0IHBpZVBsb3QgPSB3YWxsZXRQbG90SWRzLmN1c3RvbWVyX3N0YXRlX3BpZSAmJiBkb2N1bWVudC5nZXRFbGVtZW50QnlJZCh3YWxsZXRQbG90SWRzLmN1c3RvbWVyX3N0YXRlX3BpZSk7CiAgaWYgKHBpZVBsb3QpIHsKICAgIGNvbnN0IGVudHJpZXMgPSBPYmplY3QuZW50cmllcyh3Q291bnRNYXAocm93cywiY3VzdG9tZXJfc3RhdGUiKSkuc29ydCgoYSxiKT0+YlsxXS1hWzFdKS5zbGljZSgwLDEyKTsKICAgIFBsb3RseS5yZWFjdChwaWVQbG90LCBbewogICAgICB0eXBlOiJwaWUiLCBsYWJlbHM6ZW50cmllcy5tYXAoZT0+ZVswXSksIHZhbHVlczplbnRyaWVzLm1hcChlPT5lWzFdKSwKICAgICAgbWFya2VyOntjb2xvcnM6W1dfREFSSyxXX01JRCxXX0xJR0hULCIjQjhDNUM4IiwiIzNEN0U4MiIsIiM3RUFCQUUiXX0sCiAgICAgIHRleHRpbmZvOiJsYWJlbCtwZXJjZW50IiwKICAgICAgaG92ZXJ0ZW1wbGF0ZToiPGI+JXtsYWJlbH08L2I+PGJyPtin2YTYudiv2K86ICV7dmFsdWU6LC4wZn08YnI+2KfZhNmG2LPYqNipOiAle3BlcmNlbnQ6LjElfTxleHRyYT48L2V4dHJhPiIKICAgIH1dLCBwaWVQbG90LmxheW91dHx8e30pOwogIH0KCiAgY29uc3QgZG9udXRQbG90ID0gd2FsbGV0UGxvdElkcy5uYXRpb25hbGl0eV9kb251dCAmJiBkb2N1bWVudC5nZXRFbGVtZW50QnlJZCh3YWxsZXRQbG90SWRzLm5hdGlvbmFsaXR5X2RvbnV0KTsKICBpZiAoZG9udXRQbG90KSB7CiAgICBjb25zdCBlbnRyaWVzID0gT2JqZWN0LmVudHJpZXMod0NvdW50TWFwKHJvd3MsIm5hdGlvbmFsaXR5IikpLnNvcnQoKGEsYik9PmJbMV0tYVsxXSkuc2xpY2UoMCwxMik7CiAgICBQbG90bHkucmVhY3QoZG9udXRQbG90LCBbewogICAgICB0eXBlOiJwaWUiLCBsYWJlbHM6ZW50cmllcy5tYXAoZT0+ZVswXSksIHZhbHVlczplbnRyaWVzLm1hcChlPT5lWzFdKSwgaG9sZTowLjU1LAogICAgICBtYXJrZXI6e2NvbG9yczpbV19EQVJLLFdfTUlELFdfTElHSFQsIiNCOEM1QzgiLCIjM0Q3RTgyIiwiIzdFQUJBRSJdfSwKICAgICAgdGV4dGluZm86ImxhYmVsK3BlcmNlbnQiLAogICAgICBob3ZlcnRlbXBsYXRlOiI8Yj4le2xhYmVsfTwvYj48YnI+2KfZhNi52K/YrzogJXt2YWx1ZTosLjBmfTxicj7Yp9mE2YbYs9io2Kk6ICV7cGVyY2VudDouMSV9PGV4dHJhPjwvZXh0cmE+IgogICAgfV0sIGRvbnV0UGxvdC5sYXlvdXR8fHt9KTsKICB9CgogIGNvbnN0IHRib2R5ID0gZG9jdW1lbnQuZ2V0RWxlbWVudEJ5SWQoIndhbGxldC1hZ2luZy10Ym9keSIpOwogIGlmICh0Ym9keSkgewogICAgY29uc3QgZ3JvdXBzID0ge307CiAgICByb3dzLmZvckVhY2gociA9PiB7CiAgICAgIGNvbnN0IGsgPSAoci5hZ2luZ3x8Iti62YrYsSDZhdit2K/YryIpICsgInx8IiArIChyLnN0YXRlfHwiLSIpOwogICAgICBpZiAoIWdyb3Vwc1trXSkgZ3JvdXBzW2tdID0ge2FnaW5nOnIuYWdpbmd8fCLYutmK2LEg2YXYrdiv2K8iLCBzdGF0ZTpyLnN0YXRlfHwiLSIsIGNvbGxlY3RlZDowLCByZW1haW5pbmc6MCwgY291bnQ6MH07CiAgICAgIGdyb3Vwc1trXS5jb2xsZWN0ZWQgKz0gci5jb2xsZWN0ZWR8fDA7CiAgICAgIGdyb3Vwc1trXS5yZW1haW5pbmcgKz0gci5yZW1haW5pbmd8fDA7CiAgICAgIGdyb3Vwc1trXS5jb3VudCArPSAxOwogICAgfSk7CiAgICBjb25zdCBsaXN0ID0gT2JqZWN0LnZhbHVlcyhncm91cHMpLnNvcnQoKGEsYik9PiBiLmNvdW50IC0gYS5jb3VudCk7CiAgICB0Ym9keS5pbm5lckhUTUwgPSBsaXN0Lm1hcChnID0+CiAgICAgICI8dHI+PHRkPiIrZy5hZ2luZysiPC90ZD48dGQ+Iit3Rm10MChnLmNvbGxlY3RlZCkrIjwvdGQ+PHRkPiIrd0ZtdDAoZy5yZW1haW5pbmcpKyI8L3RkPjx0ZD4iK2cuc3RhdGUrIjwvdGQ+PHRkPiIrd0ZtdChnLmNvdW50KSsiPC90ZD48L3RyPiIKICAgICkuam9pbigiIik7CiAgfQp9Cgpkb2N1bWVudC5xdWVyeVNlbGVjdG9yQWxsKCIud2FsbGV0LWFnZW50LW9wdGlvbiwud2FsbGV0LW5hdGlvbi1vcHRpb24sLndhbGxldC1jc3RhdGUtb3B0aW9uLC53YWxsZXQtYWdpbmctb3B0aW9uIikuZm9yRWFjaChvID0+IHsKICBvLmFkZEV2ZW50TGlzdGVuZXIoImNoYW5nZSIsICgpID0+IHsgd1VwZGF0ZUxhYmVscygpOyB3UmVmcmVzaCgpOyB9KTsKfSk7CmRvY3VtZW50LnF1ZXJ5U2VsZWN0b3IoIi53YWxsZXQtc2VsZWN0LWFsbC1hZ2VudCIpPy5hZGRFdmVudExpc3RlbmVyKCJjaGFuZ2UiLCBlID0+IHsKICBkb2N1bWVudC5xdWVyeVNlbGVjdG9yQWxsKCIud2FsbGV0LWFnZW50LW9wdGlvbiIpLmZvckVhY2gobyA9PiBvLmNoZWNrZWQgPSBlLnRhcmdldC5jaGVja2VkKTsKICB3VXBkYXRlTGFiZWxzKCk7IHdSZWZyZXNoKCk7Cn0pOwpkb2N1bWVudC5xdWVyeVNlbGVjdG9yKCIud2FsbGV0LXNlbGVjdC1hbGwtbmF0aW9uIik/LmFkZEV2ZW50TGlzdGVuZXIoImNoYW5nZSIsIGUgPT4gewogIGRvY3VtZW50LnF1ZXJ5U2VsZWN0b3JBbGwoIi53YWxsZXQtbmF0aW9uLW9wdGlvbiIpLmZvckVhY2gobyA9PiBvLmNoZWNrZWQgPSBlLnRhcmdldC5jaGVja2VkKTsKICB3VXBkYXRlTGFiZWxzKCk7IHdSZWZyZXNoKCk7Cn0pOwpkb2N1bWVudC5xdWVyeVNlbGVjdG9yKCIud2FsbGV0LXNlbGVjdC1hbGwtY3N0YXRlIik/LmFkZEV2ZW50TGlzdGVuZXIoImNoYW5nZSIsIGUgPT4gewogIGRvY3VtZW50LnF1ZXJ5U2VsZWN0b3JBbGwoIi53YWxsZXQtY3N0YXRlLW9wdGlvbiIpLmZvckVhY2gobyA9PiBvLmNoZWNrZWQgPSBlLnRhcmdldC5jaGVja2VkKTsKICB3VXBkYXRlTGFiZWxzKCk7IHdSZWZyZXNoKCk7Cn0pOwpkb2N1bWVudC5xdWVyeVNlbGVjdG9yKCIud2FsbGV0LXNlbGVjdC1hbGwtYWdpbmciKT8uYWRkRXZlbnRMaXN0ZW5lcigiY2hhbmdlIiwgZSA9PiB7CiAgZG9jdW1lbnQucXVlcnlTZWxlY3RvckFsbCgiLndhbGxldC1hZ2luZy1vcHRpb24iKS5mb3JFYWNoKG8gPT4gby5jaGVja2VkID0gZS50YXJnZXQuY2hlY2tlZCk7CiAgd1VwZGF0ZUxhYmVscygpOyB3UmVmcmVzaCgpOwp9KTsKWyJ3YWxsZXQtYXNzaWduLWZyb20iLCJ3YWxsZXQtYXNzaWduLXRvIiwid2FsbGV0LWRlYml0LWZyb20iLCJ3YWxsZXQtZGViaXQtdG8iXS5mb3JFYWNoKGlkID0+IHsKICBkb2N1bWVudC5nZXRFbGVtZW50QnlJZChpZCk/LmFkZEV2ZW50TGlzdGVuZXIoImNoYW5nZSIsIHdSZWZyZXNoKTsKfSk7CmRvY3VtZW50LmdldEVsZW1lbnRCeUlkKCJ3YWxsZXQtcmVzZXQtZmlsdGVycyIpPy5hZGRFdmVudExpc3RlbmVyKCJjbGljayIsICgpID0+IHsKICBkb2N1bWVudC5xdWVyeVNlbGVjdG9yQWxsKCIud2FsbGV0LWFnZW50LW9wdGlvbiwud2FsbGV0LW5hdGlvbi1vcHRpb24sLndhbGxldC1jc3RhdGUtb3B0aW9uLC53YWxsZXQtYWdpbmctb3B0aW9uLC53YWxsZXQtc2VsZWN0LWFsbC1hZ2VudCwud2FsbGV0LXNlbGVjdC1hbGwtbmF0aW9uLC53YWxsZXQtc2VsZWN0LWFsbC1jc3RhdGUsLndhbGxldC1zZWxlY3QtYWxsLWFnaW5nIikuZm9yRWFjaChvID0+IG8uY2hlY2tlZCA9IGZhbHNlKTsKICBjb25zdCBhZiA9IGRvY3VtZW50LmdldEVsZW1lbnRCeUlkKCJ3YWxsZXQtYXNzaWduLWZyb20iKTsgaWYgKGFmKSBhZi52YWx1ZSA9IFdfQVNTSUdOX01JTjsKICBjb25zdCBhdCA9IGRvY3VtZW50LmdldEVsZW1lbnRCeUlkKCJ3YWxsZXQtYXNzaWduLXRvIik7IGlmIChhdCkgYXQudmFsdWUgPSBXX0FTU0lHTl9NQVg7CiAgY29uc3QgZGYgPSBkb2N1bWVudC5nZXRFbGVtZW50QnlJZCgid2FsbGV0LWRlYml0LWZyb20iKTsgaWYgKGRmKSBkZi52YWx1ZSA9IFdfREVCSVRfTUlOOwogIGNvbnN0IGR0ID0gZG9jdW1lbnQuZ2V0RWxlbWVudEJ5SWQoIndhbGxldC1kZWJpdC10byIpOyBpZiAoZHQpIGR0LnZhbHVlID0gV19ERUJJVF9NQVg7CiAgd1VwZGF0ZUxhYmVscygpOyB3UmVmcmVzaCgpOwp9KTsKd1VwZGF0ZUxhYmVscygpOwp3UmVmcmVzaCgpOwp9KSgpOwo=").decode("utf-8")
-    js = (
-        js
-        .replace("__WALLET_DATA__", records_json)
+    js_tpl = _b64.b64decode("CihmdW5jdGlvbigpewpjb25zdCB3YWxsZXREYXRhID0gX19XQUxMRVRfREFUQV9fOwpjb25zdCB3YWxsZXRQbG90SWRzID0gX19XQUxMRVRfUExPVF9JRFNfXzsKY29uc3QgV19EQVJLID0gIl9fT1BTX0RBUktfXyI7CmNvbnN0IFdfTUlEID0gIl9fT1BTX01JRF9fIjsKY29uc3QgV19MSUdIVCA9ICJfX09QU19MSUdIVF9fIjsKY29uc3QgV19QT1MgPSAiX19PUFNfUE9TX18iOwpjb25zdCBXX05FRyA9ICJfX09QU19ORUdfXyI7CmNvbnN0IFdfQVNTSUdOX01JTiA9ICJfX0FTU0lHTl9NSU5fXyI7CmNvbnN0IFdfQVNTSUdOX01BWCA9ICJfX0FTU0lHTl9NQVhfXyI7CmNvbnN0IFdfREVCSVRfTUlOID0gIl9fREVCSVRfTUlOX18iOwpjb25zdCBXX0RFQklUX01BWCA9ICJfX0RFQklUX01BWF9fIjsKCmZ1bmN0aW9uIHdGbXQobil7IHJldHVybiBOdW1iZXIobnx8MCkudG9Mb2NhbGVTdHJpbmcoImVuLVVTIik7IH0KZnVuY3Rpb24gd0ZtdDAobil7IHJldHVybiBOdW1iZXIobnx8MCkudG9Mb2NhbGVTdHJpbmcoImVuLVVTIiwge21heGltdW1GcmFjdGlvbkRpZ2l0czowfSk7IH0KZnVuY3Rpb24gd1NldEtwaShpZCwgdmFsKXsgY29uc3QgZWw9ZG9jdW1lbnQuZ2V0RWxlbWVudEJ5SWQoaWQpOyBpZihlbCkgZWwudGV4dENvbnRlbnQgPSB2YWw7IH0KZnVuY3Rpb24gd0NoZWNrZWQoY2xzKXsgcmV0dXJuIEFycmF5LnByb3RvdHlwZS5zbGljZS5jYWxsKGRvY3VtZW50LnF1ZXJ5U2VsZWN0b3JBbGwoIi4iK2NscysiOmNoZWNrZWQiKSkubWFwKGZ1bmN0aW9uKG8pe3JldHVybiBvLnZhbHVlO30pOyB9CgpmdW5jdGlvbiB3U2VsZWN0ZWRSb3dzKCl7CiAgdmFyIHJvd3MgPSB3YWxsZXREYXRhLnNsaWNlKCk7CiAgdmFyIGFnZW50cyA9IHdDaGVja2VkKCJ3YWxsZXQtYWdlbnQtb3B0aW9uIik7CiAgaWYgKGFnZW50cy5sZW5ndGgpIHJvd3MgPSByb3dzLmZpbHRlcihmdW5jdGlvbihyKXsgcmV0dXJuIGFnZW50cy5pbmRleE9mKHIuYWdlbnQpID49IDA7IH0pOwogIHZhciBuYXRpb25zID0gd0NoZWNrZWQoIndhbGxldC1uYXRpb24tb3B0aW9uIik7CiAgaWYgKG5hdGlvbnMubGVuZ3RoKSByb3dzID0gcm93cy5maWx0ZXIoZnVuY3Rpb24ocil7IHJldHVybiBuYXRpb25zLmluZGV4T2Yoci5uYXRpb25hbGl0eSkgPj0gMDsgfSk7CiAgdmFyIGNzdGF0ZXMgPSB3Q2hlY2tlZCgid2FsbGV0LWNzdGF0ZS1vcHRpb24iKTsKICBpZiAoY3N0YXRlcy5sZW5ndGgpIHJvd3MgPSByb3dzLmZpbHRlcihmdW5jdGlvbihyKXsgcmV0dXJuIGNzdGF0ZXMuaW5kZXhPZihyLmN1c3RvbWVyX3N0YXRlKSA+PSAwOyB9KTsKICB2YXIgYWdpbmcgPSB3Q2hlY2tlZCgid2FsbGV0LWFnaW5nLW9wdGlvbiIpOwogIGlmIChhZ2luZy5sZW5ndGgpIHJvd3MgPSByb3dzLmZpbHRlcihmdW5jdGlvbihyKXsgcmV0dXJuIGFnaW5nLmluZGV4T2Yoci5hZ2luZykgPj0gMDsgfSk7CiAgdmFyIGFmID0gKGRvY3VtZW50LmdldEVsZW1lbnRCeUlkKCJ3YWxsZXQtYXNzaWduLWZyb20iKSB8fCB7fSkudmFsdWUgfHwgIiI7CiAgdmFyIGF0ID0gKGRvY3VtZW50LmdldEVsZW1lbnRCeUlkKCJ3YWxsZXQtYXNzaWduLXRvIikgfHwge30pLnZhbHVlIHx8ICIiOwogIGlmIChhZikgcm93cyA9IHJvd3MuZmlsdGVyKGZ1bmN0aW9uKHIpeyByZXR1cm4gIXIuYXNzaWduX2RhdGUgfHwgci5hc3NpZ25fZGF0ZSA+PSBhZjsgfSk7CiAgaWYgKGF0KSByb3dzID0gcm93cy5maWx0ZXIoZnVuY3Rpb24ocil7IHJldHVybiAhci5hc3NpZ25fZGF0ZSB8fCByLmFzc2lnbl9kYXRlIDw9IGF0OyB9KTsKICB2YXIgZGYgPSAoZG9jdW1lbnQuZ2V0RWxlbWVudEJ5SWQoIndhbGxldC1kZWJpdC1mcm9tIikgfHwge30pLnZhbHVlIHx8ICIiOwogIHZhciBkdCA9IChkb2N1bWVudC5nZXRFbGVtZW50QnlJZCgid2FsbGV0LWRlYml0LXRvIikgfHwge30pLnZhbHVlIHx8ICIiOwogIGlmIChkZikgcm93cyA9IHJvd3MuZmlsdGVyKGZ1bmN0aW9uKHIpeyByZXR1cm4gIXIuZGViaXRfZGF0ZSB8fCByLmRlYml0X2RhdGUgPj0gZGY7IH0pOwogIGlmIChkdCkgcm93cyA9IHJvd3MuZmlsdGVyKGZ1bmN0aW9uKHIpeyByZXR1cm4gIXIuZGViaXRfZGF0ZSB8fCByLmRlYml0X2RhdGUgPD0gZHQ7IH0pOwogIHJldHVybiByb3dzOwp9CgpmdW5jdGlvbiB3Q291bnRNYXAocm93cywga2V5KXsKICB2YXIgbSA9IHt9OwogIHJvd3MuZm9yRWFjaChmdW5jdGlvbihyKXsgdmFyIGsgPSByW2tleV0gfHwgIti62YrYsSDZhdit2K/YryI7IG1ba10gPSAobVtrXXx8MCkgKyAxOyB9KTsKICByZXR1cm4gbTsKfQpmdW5jdGlvbiB3U3VtTWFwKHJvd3MsIGtleSwgdmFsS2V5KXsKICB2YXIgbSA9IHt9OwogIHJvd3MuZm9yRWFjaChmdW5jdGlvbihyKXsgdmFyIGsgPSByW2tleV0gfHwgIti62YrYsSDZhdit2K/YryI7IG1ba10gPSAobVtrXXx8MCkgKyAoclt2YWxLZXldfHwwKTsgfSk7CiAgcmV0dXJuIG07Cn0KZnVuY3Rpb24gd1RvcEVudHJpZXMobWFwLCBuKXsKICByZXR1cm4gT2JqZWN0LmtleXMobWFwKS5tYXAoZnVuY3Rpb24oayl7IHJldHVybiBbaywgbWFwW2tdXTsgfSkuc29ydChmdW5jdGlvbihhLGIpeyByZXR1cm4gYVsxXS1iWzFdOyB9KS5zbGljZSgtbik7Cn0KCmZ1bmN0aW9uIHdVcGRhdGVMYWJlbHMoKXsKICB2YXIgYSA9IHdDaGVja2VkKCJ3YWxsZXQtYWdlbnQtb3B0aW9uIik7CiAgdmFyIGFsID0gZG9jdW1lbnQuZ2V0RWxlbWVudEJ5SWQoIndhbGxldC1hZ2VudC1sYWJlbCIpOwogIGlmIChhbCkgYWwudGV4dENvbnRlbnQgPSBhLmxlbmd0aCA/IChhLmxlbmd0aCArICIg2YXYrdi12YQg2YXYrdiv2K8iKSA6ICLZg9mEINin2YTZhdit2LXZhNmK2YYiOwogIHZhciBuID0gd0NoZWNrZWQoIndhbGxldC1uYXRpb24tb3B0aW9uIik7CiAgdmFyIG5sID0gZG9jdW1lbnQuZ2V0RWxlbWVudEJ5SWQoIndhbGxldC1uYXRpb24tbGFiZWwiKTsKICBpZiAobmwpIG5sLnRleHRDb250ZW50ID0gbi5sZW5ndGggPyAobi5sZW5ndGggKyAiINis2YbYs9mK2KkiKSA6ICLZg9mEINin2YTYrNmG2LPZitin2KoiOwogIHZhciBjID0gd0NoZWNrZWQoIndhbGxldC1jc3RhdGUtb3B0aW9uIik7CiAgdmFyIGNsID0gZG9jdW1lbnQuZ2V0RWxlbWVudEJ5SWQoIndhbGxldC1jc3RhdGUtbGFiZWwiKTsKICBpZiAoY2wpIGNsLnRleHRDb250ZW50ID0gYy5sZW5ndGggPyAoYy5sZW5ndGggKyAiINit2KfZhNipIikgOiAi2YPZhCDYp9mE2K3Yp9mE2KfYqiI7CiAgdmFyIGcgPSB3Q2hlY2tlZCgid2FsbGV0LWFnaW5nLW9wdGlvbiIpOwogIHZhciBnbCA9IGRvY3VtZW50LmdldEVsZW1lbnRCeUlkKCJ3YWxsZXQtYWdpbmctbGFiZWwiKTsKICBpZiAoZ2wpIGdsLnRleHRDb250ZW50ID0gZy5sZW5ndGggPyAoZy5sZW5ndGggKyAiINi52YXYsSIpIDogItmD2YQg2KfZhNij2LnZhdin2LEiOwp9CgpmdW5jdGlvbiB3QmFySChwbG90LCBlbnRyaWVzLCBob3ZlclN1ZmZpeCl7CiAgaWYgKCFwbG90KSByZXR1cm47CiAgUGxvdGx5LnJlYWN0KHBsb3QsIFt7CiAgICB0eXBlOiAiYmFyIiwgb3JpZW50YXRpb246ICJoIiwKICAgIHk6IGVudHJpZXMubWFwKGZ1bmN0aW9uKGUpeyByZXR1cm4gZVswXTsgfSksCiAgICB4OiBlbnRyaWVzLm1hcChmdW5jdGlvbihlKXsgcmV0dXJuIGVbMV07IH0pLAogICAgdGV4dDogZW50cmllcy5tYXAoZnVuY3Rpb24oZSl7IHJldHVybiBlWzFdOyB9KSwKICAgIHRleHR0ZW1wbGF0ZTogIiV7eDosLjBmfSIsIHRleHRwb3NpdGlvbjogIm91dHNpZGUiLCBjbGlwb25heGlzOiBmYWxzZSwKICAgIG1hcmtlcjoge2NvbG9yOiBlbnRyaWVzLm1hcChmdW5jdGlvbihfLGkpeyByZXR1cm4gW1dfREFSSyxXX01JRCxXX0xJR0hUXVtpJTNdOyB9KX0sCiAgICBob3ZlcnRlbXBsYXRlOiAiPGI+JXt5fTwvYj48YnI+IiArIGhvdmVyU3VmZml4ICsgIjogJXt4OiwuMGZ9PGV4dHJhPjwvZXh0cmE+IgogIH1dLCBPYmplY3QuYXNzaWduKHt9LCBwbG90LmxheW91dCB8fCB7fSwge3Nob3dsZWdlbmQ6IGZhbHNlfSkpOwp9CgpmdW5jdGlvbiB3UmVmcmVzaCgpewogIHZhciByb3dzID0gd1NlbGVjdGVkUm93cygpOwogIHZhciBhZ2VudHMgPSBbXTsKICB2YXIgc2VlbkEgPSB7fTsKICByb3dzLmZvckVhY2goZnVuY3Rpb24ocil7IGlmIChyLmFnZW50ICYmICFzZWVuQVtyLmFnZW50XSkgeyBzZWVuQVtyLmFnZW50XT0xOyBhZ2VudHMucHVzaChyLmFnZW50KTsgfSB9KTsKICB2YXIgY3VzdG9tZXJzID0gW107CiAgdmFyIHNlZW5DID0ge307CiAgcm93cy5mb3JFYWNoKGZ1bmN0aW9uKHIpeyBpZiAoci5jdXN0b21lciAmJiAhc2VlbkNbci5jdXN0b21lcl0pIHsgc2VlbkNbci5jdXN0b21lcl09MTsgY3VzdG9tZXJzLnB1c2goci5jdXN0b21lcik7IH0gfSk7CiAgdmFyIHJlbWFpbmluZyA9IHJvd3MucmVkdWNlKGZ1bmN0aW9uKHMscil7IHJldHVybiBzICsgKHIucmVtYWluaW5nfHwwKTsgfSwgMCk7CiAgdmFyIGF2ZyA9IHJvd3MubGVuZ3RoID8gcmVtYWluaW5nIC8gcm93cy5sZW5ndGggOiAwOwogIHdTZXRLcGkoIndhbGxldC1rcGktYW1vdW50Iiwgd0ZtdDAocmVtYWluaW5nKSk7CiAgd1NldEtwaSgid2FsbGV0LWtwaS1hZ2VudHMiLCB3Rm10KGFnZW50cy5sZW5ndGgpKTsKICB3U2V0S3BpKCJ3YWxsZXQta3BpLWN1c3RvbWVycyIsIHdGbXQoY3VzdG9tZXJzLmxlbmd0aCB8fCByb3dzLmxlbmd0aCkpOwogIHdTZXRLcGkoIndhbGxldC1rcGktYWNjb3VudHMiLCB3Rm10KHJvd3MubGVuZ3RoKSk7CiAgd1NldEtwaSgid2FsbGV0LWtwaS1hdmciLCB3Rm10MChhdmcpKTsKICB2YXIgc3QgPSBkb2N1bWVudC5nZXRFbGVtZW50QnlJZCgid2FsbGV0LWZpbHRlci1zdGF0dXMiKTsKICBpZiAoc3QpIHN0LnRleHRDb250ZW50ID0gIti52LHYtiAiICsgd0ZtdChyb3dzLmxlbmd0aCkgKyAiINit2LPYp9ioINmF2YYg2KPYtdmEICIgKyB3Rm10KHdhbGxldERhdGEubGVuZ3RoKSArICIgIHwgICIgKyB3Rm10KGFnZW50cy5sZW5ndGgpICsgIiDZhdit2LXZhCI7CgogIHdCYXJIKHdhbGxldFBsb3RJZHMuc3RhdGVzICYmIGRvY3VtZW50LmdldEVsZW1lbnRCeUlkKHdhbGxldFBsb3RJZHMuc3RhdGVzKSwgd1RvcEVudHJpZXMod0NvdW50TWFwKHJvd3MsInN0YXRlIiksIDE1KSwgIti52K/YryDYp9mE2K3Ys9in2KjYp9iqIik7CiAgd0Jhckgod2FsbGV0UGxvdElkcy5zdGF0ZV9hbW91bnQgJiYgZG9jdW1lbnQuZ2V0RWxlbWVudEJ5SWQod2FsbGV0UGxvdElkcy5zdGF0ZV9hbW91bnQpLCB3VG9wRW50cmllcyh3U3VtTWFwKHJvd3MsInN0YXRlIiwicmVtYWluaW5nIiksIDE1KSwgItin2YTZhdio2YTYuiIpOwogIHdCYXJIKHdhbGxldFBsb3RJZHMuYnlfYWdlbnRfY291bnQgJiYgZG9jdW1lbnQuZ2V0RWxlbWVudEJ5SWQod2FsbGV0UGxvdElkcy5ieV9hZ2VudF9jb3VudCksIHdUb3BFbnRyaWVzKHdDb3VudE1hcChyb3dzLCJhZ2VudCIpLCAxNSksICLYudiv2K8g2KfZhNit2LPYp9io2KfYqiIpOwoKICB2YXIgYWdpbmdQbG90ID0gd2FsbGV0UGxvdElkcy5hZ2luZyAmJiBkb2N1bWVudC5nZXRFbGVtZW50QnlJZCh3YWxsZXRQbG90SWRzLmFnaW5nKTsKICBpZiAoYWdpbmdQbG90KSB7CiAgICB2YXIgY29sbCA9IHdTdW1NYXAocm93cywiYWdpbmciLCJjb2xsZWN0ZWQiKTsKICAgIHZhciByZW0gPSB3U3VtTWFwKHJvd3MsImFnaW5nIiwicmVtYWluaW5nIik7CiAgICB2YXIgbGFiZWxzID0gW107CiAgICB2YXIgc2VlbkwgPSB7fTsKICAgIE9iamVjdC5rZXlzKGNvbGwpLmNvbmNhdChPYmplY3Qua2V5cyhyZW0pKS5mb3JFYWNoKGZ1bmN0aW9uKGspeyBpZiAoIXNlZW5MW2tdKSB7IHNlZW5MW2tdPTE7IGxhYmVscy5wdXNoKGspOyB9IH0pOwogICAgbGFiZWxzLnNvcnQoKTsKICAgIFBsb3RseS5yZWFjdChhZ2luZ1Bsb3QsIFsKICAgICAge3R5cGU6ImJhciIsIG5hbWU6Itiq2YUg2KfZhNiq2K3YtdmK2YQiLCB4OmxhYmVscywgeTpsYWJlbHMubWFwKGZ1bmN0aW9uKGspe3JldHVybiBjb2xsW2tdfHwwO30pLCBtYXJrZXI6e2NvbG9yOldfUE9TfSwKICAgICAgIHRleHQ6bGFiZWxzLm1hcChmdW5jdGlvbihrKXtyZXR1cm4gY29sbFtrXXx8MDt9KSwgdGV4dHRlbXBsYXRlOiIle3k6LC4wZn0iLCB0ZXh0cG9zaXRpb246Im91dHNpZGUiLCBjbGlwb25heGlzOmZhbHNlLAogICAgICAgaG92ZXJ0ZW1wbGF0ZToiPGI+JXt4fTwvYj48YnI+2KrZhSDYp9mE2KrYrdi12YrZhDogJXt5OiwuMGZ9PGV4dHJhPjwvZXh0cmE+In0sCiAgICAgIHt0eXBlOiJiYXIiLCBuYW1lOiLYqNin2YLZiiDYp9mE2YXYr9mK2YjZhtmK2KkiLCB4OmxhYmVscywgeTpsYWJlbHMubWFwKGZ1bmN0aW9uKGspe3JldHVybiByZW1ba118fDA7fSksIG1hcmtlcjp7Y29sb3I6V19ORUd9LAogICAgICAgdGV4dDpsYWJlbHMubWFwKGZ1bmN0aW9uKGspe3JldHVybiByZW1ba118fDA7fSksIHRleHR0ZW1wbGF0ZToiJXt5OiwuMGZ9IiwgdGV4dHBvc2l0aW9uOiJvdXRzaWRlIiwgY2xpcG9uYXhpczpmYWxzZSwKICAgICAgIGhvdmVydGVtcGxhdGU6IjxiPiV7eH08L2I+PGJyPtio2KfZgtmKINin2YTZhdiv2YrZiNmG2YrYqTogJXt5OiwuMGZ9PGV4dHJhPjwvZXh0cmE+In0KICAgIF0sIE9iamVjdC5hc3NpZ24oe30sIGFnaW5nUGxvdC5sYXlvdXR8fHt9LCB7YmFybW9kZToiZ3JvdXAifSkpOwogIH0KCiAgdmFyIHBpZVBsb3QgPSB3YWxsZXRQbG90SWRzLmN1c3RvbWVyX3N0YXRlX3BpZSAmJiBkb2N1bWVudC5nZXRFbGVtZW50QnlJZCh3YWxsZXRQbG90SWRzLmN1c3RvbWVyX3N0YXRlX3BpZSk7CiAgaWYgKHBpZVBsb3QpIHsKICAgIHZhciBlbnRyaWVzID0gT2JqZWN0LmtleXMod0NvdW50TWFwKHJvd3MsImN1c3RvbWVyX3N0YXRlIikpLm1hcChmdW5jdGlvbihrKXsgcmV0dXJuIFtrLCB3Q291bnRNYXAocm93cywiY3VzdG9tZXJfc3RhdGUiKVtrXV07IH0pOwogICAgZW50cmllcyA9IHdUb3BFbnRyaWVzKHdDb3VudE1hcChyb3dzLCJjdXN0b21lcl9zdGF0ZSIpLCAxMikucmV2ZXJzZSgpOwogICAgUGxvdGx5LnJlYWN0KHBpZVBsb3QsIFt7CiAgICAgIHR5cGU6InBpZSIsIGxhYmVsczplbnRyaWVzLm1hcChmdW5jdGlvbihlKXtyZXR1cm4gZVswXTt9KSwgdmFsdWVzOmVudHJpZXMubWFwKGZ1bmN0aW9uKGUpe3JldHVybiBlWzFdO30pLAogICAgICBtYXJrZXI6e2NvbG9yczpbV19EQVJLLFdfTUlELFdfTElHSFQsIiNCOEM1QzgiLCIjM0Q3RTgyIiwiIzdFQUJBRSJdfSwKICAgICAgdGV4dGluZm86ImxhYmVsK3BlcmNlbnQiLAogICAgICBob3ZlcnRlbXBsYXRlOiI8Yj4le2xhYmVsfTwvYj48YnI+2KfZhNi52K/YrzogJXt2YWx1ZTosLjBmfTxicj7Yp9mE2YbYs9io2Kk6ICV7cGVyY2VudDouMSV9PGV4dHJhPjwvZXh0cmE+IgogICAgfV0sIHBpZVBsb3QubGF5b3V0fHx7fSk7CiAgfQoKICB2YXIgZG9udXRQbG90ID0gd2FsbGV0UGxvdElkcy5uYXRpb25hbGl0eV9kb251dCAmJiBkb2N1bWVudC5nZXRFbGVtZW50QnlJZCh3YWxsZXRQbG90SWRzLm5hdGlvbmFsaXR5X2RvbnV0KTsKICBpZiAoZG9udXRQbG90KSB7CiAgICB2YXIgbkVudHJpZXMgPSB3VG9wRW50cmllcyh3Q291bnRNYXAocm93cywibmF0aW9uYWxpdHkiKSwgMTIpLnJldmVyc2UoKTsKICAgIFBsb3RseS5yZWFjdChkb251dFBsb3QsIFt7CiAgICAgIHR5cGU6InBpZSIsIGxhYmVsczpuRW50cmllcy5tYXAoZnVuY3Rpb24oZSl7cmV0dXJuIGVbMF07fSksIHZhbHVlczpuRW50cmllcy5tYXAoZnVuY3Rpb24oZSl7cmV0dXJuIGVbMV07fSksIGhvbGU6MC41NSwKICAgICAgbWFya2VyOntjb2xvcnM6W1dfREFSSyxXX01JRCxXX0xJR0hULCIjQjhDNUM4IiwiIzNEN0U4MiIsIiM3RUFCQUUiXX0sCiAgICAgIHRleHRpbmZvOiJsYWJlbCtwZXJjZW50IiwKICAgICAgaG92ZXJ0ZW1wbGF0ZToiPGI+JXtsYWJlbH08L2I+PGJyPtin2YTYudiv2K86ICV7dmFsdWU6LC4wZn08YnI+2KfZhNmG2LPYqNipOiAle3BlcmNlbnQ6LjElfTxleHRyYT48L2V4dHJhPiIKICAgIH1dLCBkb251dFBsb3QubGF5b3V0fHx7fSk7CiAgfQoKICB2YXIgdGJvZHkgPSBkb2N1bWVudC5nZXRFbGVtZW50QnlJZCgid2FsbGV0LWFnaW5nLXRib2R5Iik7CiAgaWYgKHRib2R5KSB7CiAgICB2YXIgZ3JvdXBzID0ge307CiAgICByb3dzLmZvckVhY2goZnVuY3Rpb24ocil7CiAgICAgIHZhciBrID0gKHIuYWdpbmd8fCLYutmK2LEg2YXYrdiv2K8iKSArICJ8fCIgKyAoci5zdGF0ZXx8Ii0iKTsKICAgICAgaWYgKCFncm91cHNba10pIGdyb3Vwc1trXSA9IHthZ2luZzpyLmFnaW5nfHwi2LrZitixINmF2K3Yr9ivIiwgc3RhdGU6ci5zdGF0ZXx8Ii0iLCBjb2xsZWN0ZWQ6MCwgcmVtYWluaW5nOjAsIGNvdW50OjB9OwogICAgICBncm91cHNba10uY29sbGVjdGVkICs9IHIuY29sbGVjdGVkfHwwOwogICAgICBncm91cHNba10ucmVtYWluaW5nICs9IHIucmVtYWluaW5nfHwwOwogICAgICBncm91cHNba10uY291bnQgKz0gMTsKICAgIH0pOwogICAgdmFyIGxpc3QgPSBPYmplY3Qua2V5cyhncm91cHMpLm1hcChmdW5jdGlvbihrKXsgcmV0dXJuIGdyb3Vwc1trXTsgfSkuc29ydChmdW5jdGlvbihhLGIpeyByZXR1cm4gYi5jb3VudCAtIGEuY291bnQ7IH0pOwogICAgdGJvZHkuaW5uZXJIVE1MID0gbGlzdC5tYXAoZnVuY3Rpb24oZyl7CiAgICAgIHJldHVybiAiPHRyPjx0ZD4iK2cuYWdpbmcrIjwvdGQ+PHRkPiIrd0ZtdDAoZy5jb2xsZWN0ZWQpKyI8L3RkPjx0ZD4iK3dGbXQwKGcucmVtYWluaW5nKSsiPC90ZD48dGQ+IitnLnN0YXRlKyI8L3RkPjx0ZD4iK3dGbXQoZy5jb3VudCkrIjwvdGQ+PC90cj4iOwogICAgfSkuam9pbigiIik7CiAgfQp9CgpmdW5jdGlvbiB3QmluZCgpewogIFsid2FsbGV0LWFnZW50LW9wdGlvbiIsIndhbGxldC1uYXRpb24tb3B0aW9uIiwid2FsbGV0LWNzdGF0ZS1vcHRpb24iLCJ3YWxsZXQtYWdpbmctb3B0aW9uIl0uZm9yRWFjaChmdW5jdGlvbihjbHMpewogICAgQXJyYXkucHJvdG90eXBlLnNsaWNlLmNhbGwoZG9jdW1lbnQucXVlcnlTZWxlY3RvckFsbCgiLiIrY2xzKSkuZm9yRWFjaChmdW5jdGlvbihvKXsKICAgICAgby5hZGRFdmVudExpc3RlbmVyKCJjaGFuZ2UiLCBmdW5jdGlvbigpeyB3VXBkYXRlTGFiZWxzKCk7IHdSZWZyZXNoKCk7IH0pOwogICAgfSk7CiAgfSk7CiAgZnVuY3Rpb24gYmluZFNlbGVjdEFsbChhbGxDbHMsIG9wdENscyl7CiAgICB2YXIgZWwgPSBkb2N1bWVudC5xdWVyeVNlbGVjdG9yKCIuIithbGxDbHMpOwogICAgaWYgKCFlbCkgcmV0dXJuOwogICAgZWwuYWRkRXZlbnRMaXN0ZW5lcigiY2hhbmdlIiwgZnVuY3Rpb24oZSl7CiAgICAgIEFycmF5LnByb3RvdHlwZS5zbGljZS5jYWxsKGRvY3VtZW50LnF1ZXJ5U2VsZWN0b3JBbGwoIi4iK29wdENscykpLmZvckVhY2goZnVuY3Rpb24obyl7IG8uY2hlY2tlZCA9IGUudGFyZ2V0LmNoZWNrZWQ7IH0pOwogICAgICB3VXBkYXRlTGFiZWxzKCk7IHdSZWZyZXNoKCk7CiAgICB9KTsKICB9CiAgYmluZFNlbGVjdEFsbCgid2FsbGV0LXNlbGVjdC1hbGwtYWdlbnQiLCAid2FsbGV0LWFnZW50LW9wdGlvbiIpOwogIGJpbmRTZWxlY3RBbGwoIndhbGxldC1zZWxlY3QtYWxsLW5hdGlvbiIsICJ3YWxsZXQtbmF0aW9uLW9wdGlvbiIpOwogIGJpbmRTZWxlY3RBbGwoIndhbGxldC1zZWxlY3QtYWxsLWNzdGF0ZSIsICJ3YWxsZXQtY3N0YXRlLW9wdGlvbiIpOwogIGJpbmRTZWxlY3RBbGwoIndhbGxldC1zZWxlY3QtYWxsLWFnaW5nIiwgIndhbGxldC1hZ2luZy1vcHRpb24iKTsKICBbIndhbGxldC1hc3NpZ24tZnJvbSIsIndhbGxldC1hc3NpZ24tdG8iLCJ3YWxsZXQtZGViaXQtZnJvbSIsIndhbGxldC1kZWJpdC10byJdLmZvckVhY2goZnVuY3Rpb24oaWQpewogICAgdmFyIGVsID0gZG9jdW1lbnQuZ2V0RWxlbWVudEJ5SWQoaWQpOwogICAgaWYgKGVsKSBlbC5hZGRFdmVudExpc3RlbmVyKCJjaGFuZ2UiLCB3UmVmcmVzaCk7CiAgfSk7CiAgdmFyIHJlc2V0ID0gZG9jdW1lbnQuZ2V0RWxlbWVudEJ5SWQoIndhbGxldC1yZXNldC1maWx0ZXJzIik7CiAgaWYgKHJlc2V0KSByZXNldC5hZGRFdmVudExpc3RlbmVyKCJjbGljayIsIGZ1bmN0aW9uKCl7CiAgICBBcnJheS5wcm90b3R5cGUuc2xpY2UuY2FsbChkb2N1bWVudC5xdWVyeVNlbGVjdG9yQWxsKCIud2FsbGV0LWFnZW50LW9wdGlvbiwud2FsbGV0LW5hdGlvbi1vcHRpb24sLndhbGxldC1jc3RhdGUtb3B0aW9uLC53YWxsZXQtYWdpbmctb3B0aW9uLC53YWxsZXQtc2VsZWN0LWFsbC1hZ2VudCwud2FsbGV0LXNlbGVjdC1hbGwtbmF0aW9uLC53YWxsZXQtc2VsZWN0LWFsbC1jc3RhdGUsLndhbGxldC1zZWxlY3QtYWxsLWFnaW5nIikpLmZvckVhY2goZnVuY3Rpb24obyl7IG8uY2hlY2tlZCA9IGZhbHNlOyB9KTsKICAgIHZhciBhZiA9IGRvY3VtZW50LmdldEVsZW1lbnRCeUlkKCJ3YWxsZXQtYXNzaWduLWZyb20iKTsgaWYgKGFmKSBhZi52YWx1ZSA9IFdfQVNTSUdOX01JTjsKICAgIHZhciBhdCA9IGRvY3VtZW50LmdldEVsZW1lbnRCeUlkKCJ3YWxsZXQtYXNzaWduLXRvIik7IGlmIChhdCkgYXQudmFsdWUgPSBXX0FTU0lHTl9NQVg7CiAgICB2YXIgZGYgPSBkb2N1bWVudC5nZXRFbGVtZW50QnlJZCgid2FsbGV0LWRlYml0LWZyb20iKTsgaWYgKGRmKSBkZi52YWx1ZSA9IFdfREVCSVRfTUlOOwogICAgdmFyIGR0ID0gZG9jdW1lbnQuZ2V0RWxlbWVudEJ5SWQoIndhbGxldC1kZWJpdC10byIpOyBpZiAoZHQpIGR0LnZhbHVlID0gV19ERUJJVF9NQVg7CiAgICB3VXBkYXRlTGFiZWxzKCk7IHdSZWZyZXNoKCk7CiAgfSk7CiAgd1VwZGF0ZUxhYmVscygpOwogIHdSZWZyZXNoKCk7Cn0KaWYgKGRvY3VtZW50LnJlYWR5U3RhdGUgPT09ICJsb2FkaW5nIikgZG9jdW1lbnQuYWRkRXZlbnRMaXN0ZW5lcigiRE9NQ29udGVudExvYWRlZCIsIHdCaW5kKTsKZWxzZSB3QmluZCgpOwp9KSgpOwo=").decode("utf-8")
+    js_out = (
+        js_tpl
+        .replace("__WALLET_DATA__", _json.dumps(records, ensure_ascii=False))
         .replace("__WALLET_PLOT_IDS__", _json.dumps(plot_id_map, ensure_ascii=False))
-        .replace("__OPS_DARK__", ops_dark)
-        .replace("__OPS_MID__", ops_mid)
-        .replace("__OPS_LIGHT__", ops_light)
-        .replace("__OPS_POS__", ops_pos)
-        .replace("__OPS_NEG__", ops_neg)
+        .replace("__OPS_DARK__", OPS_DARK)
+        .replace("__OPS_MID__", OPS_MID)
+        .replace("__OPS_LIGHT__", OPS_LIGHT)
+        .replace("__OPS_POS__", OPS_POSITIVE)
+        .replace("__OPS_NEG__", OPS_NEGATIVE)
         .replace("__ASSIGN_MIN__", assign_min)
         .replace("__ASSIGN_MAX__", assign_max)
         .replace("__DEBIT_MIN__", debit_min)
         .replace("__DEBIT_MAX__", debit_max)
     )
-    parts.append("<script>\n" + js + "\n</script>")
+    parts.append("<script>\n" + js_out + "\n</script>")
     return "".join(parts)
 
 

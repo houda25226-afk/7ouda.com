@@ -6135,10 +6135,17 @@ def _build_wallet_page_html(wallet_df):
             paper_bgcolor="rgba(0,0,0,0)",
             plot_bgcolor="rgba(0,0,0,0)",
         )
-        fig.update_traces(
-            textfont=dict(size=12, color="#111827", family="Tahoma, Segoe UI, Arial, sans-serif"),
-            cliponaxis=False,
-        )
+        # cliponaxis مدعوم في bar فقط — pie/donut بيرفضوه
+        text_style = dict(size=12, color="#111827", family="Tahoma, Segoe UI, Arial, sans-serif")
+        for trace in fig.data:
+            ttype = getattr(trace, "type", None)
+            if ttype in ("bar", "scatter", "histogram"):
+                trace.update(textfont=text_style, cliponaxis=False)
+            else:
+                try:
+                    trace.update(textfont=text_style)
+                except Exception:
+                    pass
         return pio.to_html(
             fig, full_html=False, include_plotlyjs=False,
             config={"displayModeBar": False, "responsive": True},

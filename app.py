@@ -8026,49 +8026,68 @@ def _show_distribution_results(result):
 
 
 
-def _render_drop_multiselect(title, options, state_key, *, icon="•", help_text=None, default_all=True):
-    """قائمة منسدلة متعددة الاختيار — منسقة مع عدّاد وأزرار تحديد/إلغاء الكل."""
-    options = [str(o) for o in (options or []) if str(o).strip()]
-    if state_key not in st.session_state:
-        st.session_state[state_key] = list(options) if default_all else []
-    # صفّي قيم اتشالت من الخيارات
-    st.session_state[state_key] = [x for x in st.session_state.get(state_key, []) if x in options]
 
-    n_sel = len(st.session_state[state_key])
-    n_all = len(options)
+def _render_drop_multiselect(title, options, state_key, *, icon="•", help_text=None, default_all=True):
+    """قائمة منسدلة متعددة الاختيار بشكل نظيف.
+
+    - الوضع الافتراضي: «الكل» بدون تاجات ملونة مزدحمة.
+    - وضع «تخصيص»: drop list متعددة الاختيار لاختيار عناصر محددة.
+    """
+    options = [str(o) for o in (options or []) if str(o).strip()]
+    mode_key = f"{state_key}_mode"
+    custom_key = f"{state_key}_custom"
+
+    if mode_key not in st.session_state:
+        st.session_state[mode_key] = "الكل" if default_all else "تخصيص"
+    if custom_key not in st.session_state:
+        st.session_state[custom_key] = list(options) if default_all else []
+
+    # تنظيف قيم اتشالت من الخيارات
+    st.session_state[custom_key] = [x for x in st.session_state.get(custom_key, []) if x in options]
 
     st.markdown(f"**{icon} {title}**")
     if help_text:
         st.caption(help_text)
 
-    btn_l, btn_r, meta = st.columns([1, 1, 2])
-    with btn_l:
-        if st.button("تحديد الكل", key=f"{state_key}_all", use_container_width=True, type="secondary"):
-            st.session_state[state_key] = list(options)
-            st.rerun()
-    with btn_r:
-        if st.button("إلغاء الكل", key=f"{state_key}_none", use_container_width=True, type="secondary"):
-            st.session_state[state_key] = []
-            st.rerun()
-    with meta:
-        st.markdown(
-            f"<div style='text-align:left;padding-top:0.45rem;opacity:0.85'>"
-            f"المحدد: <b>{n_sel}</b> من <b>{n_all}</b></div>",
-            unsafe_allow_html=True,
-        )
-
     if not options:
         st.warning("لا توجد عناصر للاختيار.")
         return []
 
-    selected = st.multiselect(
-        label=title,
-        options=options,
-        key=state_key,
-        placeholder="اضغط للاختيار من القائمة…",
+    mode = st.radio(
+        "طريقة الاختيار",
+        options=["الكل", "تخصيص"],
+        index=0 if st.session_state[mode_key] == "الكل" else 1,
+        horizontal=True,
+        key=mode_key,
         label_visibility="collapsed",
     )
+
+    if mode == "الكل":
+        st.session_state[custom_key] = list(options)
+        st.success(f"تم تحديد الكل · {len(options)} عنصر", icon="✅")
+        return list(options)
+
+    # وضع التخصيص: قائمة منسدلة متعددة نظيفة
+    top_l, top_r = st.columns([1, 1])
+    with top_l:
+        if st.button("تحديد الكل", key=f"{state_key}_pick_all", use_container_width=True):
+            st.session_state[custom_key] = list(options)
+            st.rerun()
+    with top_r:
+        if st.button("مسح الاختيار", key=f"{state_key}_pick_none", use_container_width=True):
+            st.session_state[custom_key] = []
+            st.rerun()
+
+    selected = st.multiselect(
+        "اختر من القائمة",
+        options=options,
+        key=custom_key,
+        placeholder="افتح القائمة واختر عنصر أو أكثر…",
+        label_visibility="collapsed",
+    )
+    st.caption(f"المحدد: **{len(selected)}** من **{len(options)}**")
     return list(selected)
+
 
 
 def page_distribution():
@@ -8155,51 +8174,53 @@ def page_distribution():
         st.markdown("#### 2️⃣ اختيارات التوزيع")
 
         departing_options = claims_sales
-        left, right = st.columns(2)
-        with left:
-            with st.container(border=True):
-                st.markdown("**👤 المحصل القديم**")
-                st.caption("المحصل اللي مشى وهيتوزع نصيبه")
-                departing = st.selectbox(
-                    "المحصل القديم (اللي مشى)",
-                    options=departing_options,
-                    key="distribution_departing",
-                    label_visibility="collapsed",
-                )
+
+        with st.container(border=True):
+            st.markdown("**👤 المحصل القديم**")
+            st.caption("المحصل اللي مشى وهيتوزع نصيبه")
+            departing = st.selectbox(
+                "المحصل القديم (اللي مشى)",
+                options=departing_options,
+                key="distribution_departing",
+                label_visibility="collapsed",
+            )
 
         receiver_options = [s for s in wallet_sales if s != departing]
         if not receiver_options:
             st.error("المحفظة مفيهاش محصلين غير المغادر — مش هقدر أوزّع.")
             return
 
-        # لو اتغير المغادر، صفّي المستقبِلين من القائمة القديمة
         prev_dep = st.session_state.get("_distribution_prev_departing")
         if prev_dep != departing:
             st.session_state["_distribution_prev_departing"] = departing
-            st.session_state["distribution_targets_drop"] = list(receiver_options)
+            st.session_state["distribution_targets_drop_custom"] = list(receiver_options)
+            st.session_state["distribution_targets_drop_mode"] = "الكل"
 
-        with right:
+        c1, c2 = st.columns(2)
+        with c1:
             with st.container(border=True):
                 targets = _render_drop_multiselect(
                     "المحصلين المستقبِلين",
                     receiver_options,
                     "distribution_targets_drop",
                     icon="🎯",
-                    help_text="من المحفظة — ما عدا المغادر. شيل أي محصل مش عايز ياخد نصيب.",
+                    help_text="من المحفظة — ما عدا المغادر.",
+                    default_all=True,
                 )
-
-        with st.container(border=True):
-            if claims_substates:
-                selected_substates = _render_drop_multiselect(
-                    "الحالات اللي هتتوزع (Sub State)",
-                    claims_substates,
-                    "distribution_substates_drop",
-                    icon="🏷️",
-                    help_text="الافتراضي: كل الحالات. شيل الحالات اللي مش عايز توزعها.",
-                )
-            else:
-                st.warning("⚠️ مفيش عمود Sub State في ملف المطالبات.")
-                selected_substates = []
+        with c2:
+            with st.container(border=True):
+                if claims_substates:
+                    selected_substates = _render_drop_multiselect(
+                        "الحالات اللي هتتوزع (Sub State)",
+                        claims_substates,
+                        "distribution_substates_drop",
+                        icon="🏷️",
+                        help_text="الافتراضي: كل الحالات.",
+                        default_all=True,
+                    )
+                else:
+                    st.warning("⚠️ مفيش عمود Sub State في ملف المطالبات.")
+                    selected_substates = []
 
         st.info(
             "التوزيع بالتساوي على: **عدد الحسابات** + **عدد العملاء (رقم الهوية)** + "

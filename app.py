@@ -6826,22 +6826,58 @@ def page_schedule_stalled():
 # ==========================================================
 
 def _to_amount(val):
-    """تحويل قيمة Payment / Net Amount لرقم."""
-    if pd.isna(val):
-        return 0.0
-    if isinstance(val, (int, float)):
-        try:
-            return float(val)
-        except (TypeError, ValueError):
-            return 0.0
-    txt = str(val).strip().replace(",", "").replace(" ", "").replace("جنيه", "").replace("EGP", "")
-    if not txt or txt.lower() in {"nan", "none", "-", "—"}:
+    """تحويل قيمة Payment / Net Amount لرقم — يدعم فواصل عربية/أوروبية وأرقام هندية."""
+    if val is None:
         return 0.0
     try:
-        return float(txt)
+        if pd.isna(val):
+            return 0.0
+    except (TypeError, ValueError):
+        pass
+    if isinstance(val, (int, float)):
+        try:
+            f = float(val)
+            return 0.0 if pd.isna(f) else f
+        except (TypeError, ValueError):
+            return 0.0
+    txt = str(val).strip()
+    if not txt or txt.lower() in {"nan", "none", "null", "-", "—", "#n/a", "n/a"}:
+        return 0.0
+    # أرقام عربية-هندية → لاتينية
+    trans = str.maketrans("٠١٢٣٤٥٦٧٨٩۰۱۲۳۴۵۶۷۸۹", "01234567890123456789")
+    txt = txt.translate(trans)
+    for token in ("جنيه", "ج.م", "EGP", "egp", "LE", "L.E", "ل.ا", "ل.س"):
+        txt = txt.replace(token, "")
+    txt = txt.replace(" ", "").replace(" ", "").strip()
+    # أقواس سالبة: (1234) 
+    neg = False
+    if txt.startswith("(") and txt.endswith(")"):
+        neg = True
+        txt = txt[1:-1]
+    # فاصل آلاف vs عشري
+    if "," in txt and "." in txt:
+        if txt.rfind(",") > txt.rfind("."):
+            # 1.234,56
+            txt = txt.replace(".", "").replace(",", ".")
+        else:
+            # 1,234.56
+            txt = txt.replace(",", "")
+    elif "," in txt:
+        parts = txt.split(",")
+        if len(parts) == 2 and len(parts[1]) <= 2:
+            txt = parts[0].replace(".", "") + "." + parts[1]
+        else:
+            txt = txt.replace(",", "")
+    txt = re.sub(r"[^0-9.\-]", "", txt)
+    if not txt or txt in {".", "-", "-."}:
+        return 0.0
+    try:
+        f = float(txt)
+        return -f if neg else f
     except (TypeError, ValueError):
         try:
-            return float(pd.to_numeric(txt, errors="coerce") or 0)
+            f = float(pd.to_numeric(txt, errors="coerce"))
+            return 0.0 if pd.isna(f) else f
         except Exception:
             return 0.0
 
@@ -7334,11 +7370,34 @@ def _is_distribution_locked_state(value):
     return any(key == _state_key(s) for s in DISTRIBUTION_LOCKED_SUB_STATES)
 
 
-def _read_df_skip_header_row(uploaded):
-    """قراءة ملف Excel/CSV مع حذف أول صف بعد العناوين (اتفاقية باقي التويبات)."""
+def _read_df_skip_header_row(uploaded, *, force_skip=False):
+    """قراءة ملف Excel/CSV.
+
+    في ملفات المحفظة غالبًا أول صف بعد العناوين فاضي/تكرار — بيتشال.
+    لو الصف الأول باين عليه بيانات حقيقية (أرقام/نصوص مفيدة) بنسيبه عشان مطالبة متضيعش.
+    """
     raw = read_uploaded_dataframe(uploaded)
-    if len(raw) > 0:
+    if raw is None or len(raw) == 0:
+        return raw.reset_index(drop=True) if hasattr(raw, "reset_index") else raw
+    if force_skip:
         return raw.iloc[1:].reset_index(drop=True)
+
+    first = raw.iloc[0]
+    non_null = first.dropna()
+    if non_null.empty:
+        return raw.iloc[1:].reset_index(drop=True)
+
+    # لو أغلب القيم تكرار لأسماء الأعمدة → صف عناوين مكرر
+    col_names = {str(c).strip().lower() for c in raw.columns}
+    first_vals = {str(v).strip().lower() for v in non_null.tolist()}
+    if first_vals and first_vals.issubset(col_names):
+        return raw.iloc[1:].reset_index(drop=True)
+
+    # لو كل القيم فاضي/nan/none
+    as_str = non_null.astype(str).str.strip().str.lower()
+    if as_str.isin({"", "nan", "none", "null", "-", "—"}).all():
+        return raw.iloc[1:].reset_index(drop=True)
+
     return raw.reset_index(drop=True)
 
 
@@ -7493,12 +7552,41 @@ def _run_leaver_distribution(wallet_uploaded, claims_uploaded, departing, target
     else:
         work["_account"] = work.index.astype(str)
 
-    # صفوف المغادر + الحالات المختارة فقط
-    mask = (work["_sales"] == departing) & (work["_substate"].isin(selected))
-    # استبعاد صفوف بدون رقم هوية صالح
-    mask = mask & work["_customer"].ne("") & ~work["_customer"].str.lower().isin({"nan", "none", "null"})
+    # سبب الاستبعاد — عشان نعرف أي مطالبة متوزعتش وليه
+    def _exclusion_reason(row):
+        if row["_sales"] != departing:
+            return "محصل مختلف عن المغادر"
+        if row["_substate"] not in selected:
+            return "حالة غير مختارة"
+        cust = str(row["_customer"]).strip().lower()
+        if not cust or cust in {"nan", "none", "null", ""}:
+            return "رقم هوية فاضي"
+        return ""
+
+    work["_exclude_reason"] = work.apply(_exclusion_reason, axis=1)
+    mask = work["_exclude_reason"].eq("")
     pool = work.loc[mask].copy()
     excluded = work.loc[~mask].copy()
+
+    # تشخيص المبالغ: إجمالي الملف vs اللي هيتوزع
+    total_file_amount = float(work["_amount"].sum())
+    total_pool_amount = float(pool["_amount"].sum()) if not pool.empty else 0.0
+    total_excluded_amount = float(excluded["_amount"].sum()) if not excluded.empty else 0.0
+    st.caption(
+        f"📊 صفوف الملف: {len(work):,} · هتتوزع: {len(pool):,} · مستبعدة: {len(excluded):,} · "
+        f"مبلغ الملف: {total_file_amount:,.2f} · مبلغ التوزيع: {total_pool_amount:,.2f}"
+    )
+    if not excluded.empty:
+        with st.expander(f"🔎 مطالبات لم تُوزَّع ({len(excluded)}) — السبب", expanded=False):
+            reason_summary = (
+                excluded.groupby("_exclude_reason")
+                .agg(العدد=("_amount", "size"), المبلغ=("_amount", "sum"))
+                .reset_index()
+                .rename(columns={"_exclude_reason": "السبب"})
+            )
+            st.dataframe(reason_summary, use_container_width=True, hide_index=True)
+            show_cols = [c for c in [claim_col, account_col, customer_col, sales_col, substate_col, net_col, "_exclude_reason", "_amount"] if c and c in excluded.columns]
+            st.dataframe(excluded[show_cols].head(200), use_container_width=True, hide_index=True)
 
     if pool.empty:
         st.error(
@@ -7555,7 +7643,20 @@ def _run_leaver_distribution(wallet_uploaded, claims_uploaded, departing, target
     assignment, _loads = _balance_customer_groups(groups_for_balance, target_list)
 
     pool[DISTRIBUTION_NEW_COLLECTOR_COL] = pool["_customer"].map(assignment)
+    # أي صف بدون تعيين (لا يجب أن يحدث) → أول مستقبِل
+    missing_new = pool[DISTRIBUTION_NEW_COLLECTOR_COL].isna() | (pool[DISTRIBUTION_NEW_COLLECTOR_COL].astype(str).str.strip() == "")
+    if missing_new.any() and target_list:
+        pool.loc[missing_new, DISTRIBUTION_NEW_COLLECTOR_COL] = target_list[0]
     pool[DISTRIBUTION_STATUS_COL] = DISTRIBUTION_STATUS_MOVED
+
+    # تحقق من تطابق المبلغ بعد التوزيع
+    after_amount = float(pd.to_numeric(pool["_amount"], errors="coerce").fillna(0).sum())
+    if abs(after_amount - total_pool_amount) > 0.05:
+        st.warning(
+            f"⚠️ فرق في مجموع المبالغ بعد التوزيع: قبل={total_pool_amount:,.2f} · بعد={after_amount:,.2f}"
+        )
+    else:
+        st.caption(f"✅ مجموع مبالغ المطالبات الموزَّعة متطابق: {after_amount:,.2f}")
 
     if not excluded.empty:
         excluded[DISTRIBUTION_NEW_COLLECTOR_COL] = excluded["_sales"]
@@ -7924,50 +8025,50 @@ def _show_distribution_results(result):
 
 
 
-def _render_check_grid(title, options, state_key, *, columns=3, icon="•"):
-    """شبكة اختيار أنظف من الـ multiselect الافتراضي: تحديد الكل / إلغاء + مربعات اختيار."""
-    options = [str(o) for o in (options or [])]
-    if state_key not in st.session_state:
-        st.session_state[state_key] = list(options)
-    # تنظيف قيم قديمة اتشالت من الخيارات
-    st.session_state[state_key] = [x for x in st.session_state[state_key] if x in options]
 
-    selected = set(st.session_state[state_key])
-    n_sel = len(selected)
+def _render_drop_multiselect(title, options, state_key, *, icon="•", help_text=None, default_all=True):
+    """قائمة منسدلة متعددة الاختيار — منسقة مع عدّاد وأزرار تحديد/إلغاء الكل."""
+    options = [str(o) for o in (options or []) if str(o).strip()]
+    if state_key not in st.session_state:
+        st.session_state[state_key] = list(options) if default_all else []
+    # صفّي قيم اتشالت من الخيارات
+    st.session_state[state_key] = [x for x in st.session_state.get(state_key, []) if x in options]
+
+    n_sel = len(st.session_state[state_key])
     n_all = len(options)
 
-    head_l, head_r = st.columns([3, 2])
-    with head_l:
-        st.markdown(f"**{title}**")
-        st.caption(f"المحدد: {n_sel} من {n_all}")
-    with head_r:
-        b1, b2 = st.columns(2)
-        with b1:
-            if st.button("تحديد الكل", key=f"{state_key}_all", use_container_width=True):
-                st.session_state[state_key] = list(options)
-                st.rerun()
-        with b2:
-            if st.button("إلغاء الكل", key=f"{state_key}_none", use_container_width=True):
-                st.session_state[state_key] = []
-                st.rerun()
+    st.markdown(f"**{icon} {title}**")
+    if help_text:
+        st.caption(help_text)
+
+    btn_l, btn_r, meta = st.columns([1, 1, 2])
+    with btn_l:
+        if st.button("تحديد الكل", key=f"{state_key}_all", use_container_width=True, type="secondary"):
+            st.session_state[state_key] = list(options)
+            st.rerun()
+    with btn_r:
+        if st.button("إلغاء الكل", key=f"{state_key}_none", use_container_width=True, type="secondary"):
+            st.session_state[state_key] = []
+            st.rerun()
+    with meta:
+        st.markdown(
+            f"<div style='text-align:left;padding-top:0.45rem;opacity:0.85'>"
+            f"المحدد: <b>{n_sel}</b> من <b>{n_all}</b></div>",
+            unsafe_allow_html=True,
+        )
 
     if not options:
         st.warning("لا توجد عناصر للاختيار.")
         return []
 
-    cols = st.columns(max(int(columns), 1))
-    new_selected = []
-    for i, opt in enumerate(options):
-        with cols[i % len(cols)]:
-            checked = st.checkbox(
-                f"{icon} {opt}",
-                value=(opt in selected),
-                key=f"{state_key}_cb_{i}",
-            )
-            if checked:
-                new_selected.append(opt)
-    st.session_state[state_key] = new_selected
-    return list(new_selected)
+    selected = st.multiselect(
+        label=title,
+        options=options,
+        key=state_key,
+        placeholder="اضغط للاختيار من القائمة…",
+        label_visibility="collapsed",
+    )
+    return list(selected)
 
 
 def page_distribution():
@@ -8054,12 +8155,17 @@ def page_distribution():
         st.markdown("#### 2️⃣ اختيارات التوزيع")
 
         departing_options = claims_sales
-        with st.container(border=True):
-            departing = st.selectbox(
-                "👤 المحصل القديم (اللي مشى)",
-                options=departing_options,
-                key="distribution_departing",
-            )
+        left, right = st.columns(2)
+        with left:
+            with st.container(border=True):
+                st.markdown("**👤 المحصل القديم**")
+                st.caption("المحصل اللي مشى وهيتوزع نصيبه")
+                departing = st.selectbox(
+                    "المحصل القديم (اللي مشى)",
+                    options=departing_options,
+                    key="distribution_departing",
+                    label_visibility="collapsed",
+                )
 
         receiver_options = [s for s in wallet_sales if s != departing]
         if not receiver_options:
@@ -8070,25 +8176,26 @@ def page_distribution():
         prev_dep = st.session_state.get("_distribution_prev_departing")
         if prev_dep != departing:
             st.session_state["_distribution_prev_departing"] = departing
-            st.session_state["distribution_targets_grid"] = list(receiver_options)
+            st.session_state["distribution_targets_drop"] = list(receiver_options)
 
-        with st.container(border=True):
-            targets = _render_check_grid(
-                "🎯 المحصلين المستقبِلين (من المحفظة — ما عدا المغادر)",
-                receiver_options,
-                "distribution_targets_grid",
-                columns=2,
-                icon="👤",
-            )
+        with right:
+            with st.container(border=True):
+                targets = _render_drop_multiselect(
+                    "المحصلين المستقبِلين",
+                    receiver_options,
+                    "distribution_targets_drop",
+                    icon="🎯",
+                    help_text="من المحفظة — ما عدا المغادر. شيل أي محصل مش عايز ياخد نصيب.",
+                )
 
         with st.container(border=True):
             if claims_substates:
-                selected_substates = _render_check_grid(
-                    "🏷️ الحالات اللي هتتوزع (Sub State)",
+                selected_substates = _render_drop_multiselect(
+                    "الحالات اللي هتتوزع (Sub State)",
                     claims_substates,
-                    "distribution_substates_grid",
-                    columns=2,
-                    icon="📌",
+                    "distribution_substates_drop",
+                    icon="🏷️",
+                    help_text="الافتراضي: كل الحالات. شيل الحالات اللي مش عايز توزعها.",
                 )
             else:
                 st.warning("⚠️ مفيش عمود Sub State في ملف المطالبات.")

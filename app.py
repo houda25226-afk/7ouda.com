@@ -7410,159 +7410,168 @@ def _extract_distribution_substates_from_df(df):
 
 
 def _balance_customer_groups(groups, targets):
-    """توزيع مجموعات العملاء على المحصلين بأقصى تساوي ممكن.
+    """توزيع العملاء على المحصلين مع أولوية قصوى لتساوي المبالغ.
 
-    الأولوية الأولى: تساوي **المبالغ**.
-    بعدين: الحسابات + العملاء + الحالات.
-    كل عميل (رقم هوية) يروح لمحصل واحد كامل.
-    بعد التوزيع الأولي: تمريرة تحسين بتبادل عملاء بين المحصلين لتقليل فرق المبالغ.
+    1) توزيع أوّلي: كل عميل يروح للمحصل الأقل مبلغًا حاليًا (مع كسر تعادل خفيف للحسابات/الحالات).
+    2) تحسين متكرر: نقل وتبادل عملاء لتقليل (الأعلى − الأدنى) في المبلغ لأقصى حد ممكن.
+    العميل الواحد (كل مطالباته) لا يُقسَّم.
     """
     targets = list(dict.fromkeys([str(t).strip() for t in (targets or []) if str(t).strip()]))
+    if not targets or not groups:
+        empty_load = {
+            t: {"amount": 0.0, "cases": 0, "accounts": 0, "customers": 0, "substates": {}}
+            for t in targets
+        }
+        return {}, empty_load
+
+    by_customer = {}
+    for g in groups:
+        cust = g["customer"]
+        by_customer[cust] = {
+            "customer": cust,
+            "amount": float(g.get("amount") or 0),
+            "cases": int(g.get("cases") or 0),
+            "accounts": max(int(g.get("accounts") or 1), 1),
+            "substates": dict(g["substates"]) if isinstance(g.get("substates"), dict) else {},
+        }
+
     load = {
         t: {"amount": 0.0, "cases": 0, "accounts": 0, "customers": 0, "substates": {}}
         for t in targets
     }
-    if not targets or not groups:
-        return {}, load
-
-    # فهرس سريع للمجموعات
-    by_customer = {g["customer"]: g for g in groups}
-
-    total_amount = sum(float(g.get("amount") or 0) for g in groups) or 1.0
-    total_accounts = sum(max(int(g.get("accounts") or 1), 1) for g in groups) or 1
-    total_customers = len(groups) or 1
-    total_cases = sum(int(g.get("cases") or 0) for g in groups) or 1
-    substate_totals = {}
-    for g in groups:
-        for state, cnt in (g.get("substates") or {}).items() if isinstance(g.get("substates"), dict) else []:
-            substate_totals[state] = substate_totals.get(state, 0) + int(cnt or 0)
-    substate_totals = {s: (c or 1) for s, c in substate_totals.items()}
-
-    # وزن المبلغ أعلى بوضوح عشان الفرق يقل
-    W_AMOUNT = 6.0
-    W_ACCOUNTS = 1.5
-    W_CUSTOMERS = 1.0
-    W_CASES = 1.0
-    W_SUBSTATE = 0.8
-
     assignment = {}
-    groups_sorted = sorted(
-        groups,
-        key=lambda g: (-float(g.get("amount") or 0), -int(g.get("accounts") or 0), -int(g.get("cases") or 0)),
-    )
 
     def _apply(cust, collector, sign=+1):
         g = by_customer[cust]
-        g_accounts = max(int(g.get("accounts") or 1), 1)
-        g_cases = int(g.get("cases") or 0)
-        g_amount = float(g.get("amount") or 0)
-        g_subs = g.get("substates") if isinstance(g.get("substates"), dict) else {}
-        load[collector]["amount"] += sign * g_amount
-        load[collector]["cases"] += sign * g_cases
-        load[collector]["accounts"] += sign * g_accounts
-        load[collector]["customers"] += sign * 1
-        for state, cnt in g_subs.items():
+        load[collector]["amount"] += sign * g["amount"]
+        load[collector]["cases"] += sign * g["cases"]
+        load[collector]["accounts"] += sign * g["accounts"]
+        load[collector]["customers"] += sign
+        for state, cnt in g["substates"].items():
             load[collector]["substates"][state] = load[collector]["substates"].get(state, 0) + sign * int(cnt or 0)
 
-    for g in groups_sorted:
-        g_subs = g.get("substates") if isinstance(g.get("substates"), dict) else {}
+    def _spread():
+        vals = [load[t]["amount"] for t in targets]
+        return (max(vals) - min(vals)) if vals else 0.0
 
-        def _score(t, _subs=g_subs):
+    # ---- 1) توزيع أوّلي: الأقل مبلغًا أولًا (Karmarkar-Karp / greedy multiprocessor) ----
+    ordered = sorted(
+        by_customer.values(),
+        key=lambda g: (-g["amount"], -g["accounts"], -g["cases"]),
+    )
+    for g in ordered:
+        # المبلغ أولًا بفارق واضح؛ الحسابات/الحالات لكسر التعادل فقط
+        def _pick(t, _g=g):
             L = load[t]
-            s = (
-                W_AMOUNT * (L["amount"] / total_amount)
-                + W_ACCOUNTS * (L["accounts"] / total_accounts)
-                + W_CUSTOMERS * (L["customers"] / total_customers)
-                + W_CASES * (L["cases"] / total_cases)
+            return (
+                L["amount"],
+                L["accounts"],
+                L["cases"],
+                L["customers"],
             )
-            for state, cnt in _subs.items():
-                s += W_SUBSTATE * (L["substates"].get(state, 0) / substate_totals.get(state, 1))
-            return s
-
-        best = min(targets, key=_score)
+        best = min(targets, key=_pick)
         assignment[g["customer"]] = best
         _apply(g["customer"], best, +1)
 
-    # ---- تمريرة تحسين: نقل عميل من الأثقل للأقل لو الفرق يقل ----
-    def _amount_spread():
-        vals = [load[t]["amount"] for t in targets]
-        return max(vals) - min(vals) if vals else 0.0
-
-    improved = True
-    rounds = 0
-    while improved and rounds < 40:
-        improved = False
-        rounds += 1
-        richest = max(targets, key=lambda t: load[t]["amount"])
-        poorest = min(targets, key=lambda t: load[t]["amount"])
+    # ---- 2) تحسين بالنقل: من الأثقل للأخف طالما الفرق يقل ----
+    for _ in range(200):
+        richest = max(targets, key=lambda t: (load[t]["amount"], load[t]["accounts"]))
+        poorest = min(targets, key=lambda t: (load[t]["amount"], load[t]["accounts"]))
         if richest == poorest:
             break
         gap = load[richest]["amount"] - load[poorest]["amount"]
-        if gap <= 0:
+        if gap <= 1.0:
             break
-        # مرشحين للنقل: عملاء عند الأثقل مبلغهم <= نصف الفجوة (عشان منعدّيش للناحية التانية بقوة)
-        candidates = [
-            c for c, t in assignment.items()
-            if t == richest and float(by_customer[c].get("amount") or 0) > 0
-            and float(by_customer[c].get("amount") or 0) < gap
-        ]
-        candidates.sort(key=lambda c: float(by_customer[c].get("amount") or 0), reverse=True)
-        best_move = None
-        best_new_gap = gap
-        for cust in candidates:
-            amt = float(by_customer[cust].get("amount") or 0)
-            # فجوة جديدة تقريبية بعد النقل
+
+        rich_custs = [c for c, t in assignment.items() if t == richest]
+        best_cust = None
+        best_new_spread = _spread()
+        for cust in rich_custs:
+            amt = by_customer[cust]["amount"]
+            if amt <= 0 or amt >= gap:
+                # لو نقلناه هيعكس الترتيب بقوة أو مفيش فايدة
+                # نسمح لو لسه الـ spread الكلي هيقل
+                pass
+            # جرب النقل
             new_rich = load[richest]["amount"] - amt
             new_poor = load[poorest]["amount"] + amt
-            # احسب الانتشار الكلي التقريبي
-            trial = {t: load[t]["amount"] for t in targets}
-            trial[richest] = new_rich
-            trial[poorest] = new_poor
-            new_gap = max(trial.values()) - min(trial.values())
-            if new_gap < best_new_gap - 1e-6:
-                best_new_gap = new_gap
-                best_move = cust
-        if best_move is not None:
-            _apply(best_move, richest, -1)
-            _apply(best_move, poorest, +1)
-            assignment[best_move] = poorest
-            improved = True
+            trial_vals = [load[t]["amount"] for t in targets]
+            # استبدل قيم richest/poorest
+            ri = targets.index(richest)
+            pi = targets.index(poorest)
+            trial_vals[ri] = new_rich
+            trial_vals[pi] = new_poor
+            new_spread = max(trial_vals) - min(trial_vals)
+            if new_spread < best_new_spread - 0.01:
+                best_new_spread = new_spread
+                best_cust = cust
 
-    # ---- تبادل ثنائي محدود لو لسه في فرق كبير ----
-    for _ in range(25):
-        richest = max(targets, key=lambda t: load[t]["amount"])
-        poorest = min(targets, key=lambda t: load[t]["amount"])
-        gap = load[richest]["amount"] - load[poorest]["amount"]
-        if gap < total_amount * 0.01:  # فرق أقل من 1% من الإجمالي → كويس
+        if best_cust is None:
             break
-        rich_custs = [c for c, t in assignment.items() if t == richest]
-        poor_custs = [c for c, t in assignment.items() if t == poorest]
+        _apply(best_cust, richest, -1)
+        _apply(best_cust, poorest, +1)
+        assignment[best_cust] = poorest
+
+    # ---- 3) تبادل ثنائي بين أي زوج محصلين لتقليل الانتشار ----
+    for _ in range(150):
+        current_spread = _spread()
+        if current_spread <= 1.0:
+            break
         best_swap = None
-        best_gap = gap
-        for rc in rich_custs:
-            ra = float(by_customer[rc].get("amount") or 0)
-            for pc in poor_custs:
-                pa = float(by_customer[pc].get("amount") or 0)
-                if ra <= pa:
-                    continue
+        best_spread = current_spread
+        # ركّز على الأثقل والأخف أولًا، وبعدين باقي الأزواج لو لزم
+        pairs = []
+        ranked = sorted(targets, key=lambda t: load[t]["amount"], reverse=True)
+        for i, a in enumerate(ranked):
+            for b in ranked[i + 1:]:
+                pairs.append((a, b))
+        # جرّب أول 30 زوج (الأكثر فرقًا)
+        for a, b in pairs[: max(30, len(targets))]:
+            if load[a]["amount"] < load[b]["amount"]:
+                a, b = b, a
+            custs_a = [c for c, t in assignment.items() if t == a]
+            custs_b = [c for c, t in assignment.items() if t == b]
+            for ca in custs_a:
+                aa = by_customer[ca]["amount"]
+                for cb in custs_b:
+                    ba = by_customer[cb]["amount"]
+                    if abs(aa - ba) < 1.0:
+                        continue
+                    trial = {t: load[t]["amount"] for t in targets}
+                    trial[a] = trial[a] - aa + ba
+                    trial[b] = trial[b] - ba + aa
+                    ns = max(trial.values()) - min(trial.values())
+                    if ns < best_spread - 0.01:
+                        best_spread = ns
+                        best_swap = (a, b, ca, cb)
+            # نقل بدون تبادل كمان
+            for ca in custs_a:
+                aa = by_customer[ca]["amount"]
                 trial = {t: load[t]["amount"] for t in targets}
-                trial[richest] = trial[richest] - ra + pa
-                trial[poorest] = trial[poorest] - pa + ra
-                ng = max(trial.values()) - min(trial.values())
-                if ng < best_gap - 1e-6:
-                    best_gap = ng
-                    best_swap = (rc, pc)
+                trial[a] = trial[a] - aa
+                trial[b] = trial[b] + aa
+                ns = max(trial.values()) - min(trial.values())
+                if ns < best_spread - 0.01:
+                    best_spread = ns
+                    best_swap = (a, b, ca, None)
+
         if best_swap is None:
             break
-        rc, pc = best_swap
-        _apply(rc, richest, -1)
-        _apply(pc, poorest, -1)
-        _apply(rc, poorest, +1)
-        _apply(pc, richest, +1)
-        assignment[rc] = poorest
-        assignment[pc] = richest
+        a, b, ca, cb = best_swap
+        if cb is None:
+            _apply(ca, a, -1)
+            _apply(ca, b, +1)
+            assignment[ca] = b
+        else:
+            _apply(ca, a, -1)
+            _apply(cb, b, -1)
+            _apply(ca, b, +1)
+            _apply(cb, a, +1)
+            assignment[ca] = b
+            assignment[cb] = a
 
     return assignment, load
+
 
 
 def _render_clean_picker(title, options, state_key, *, help_text=""):

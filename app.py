@@ -7365,39 +7365,28 @@ def page_case_errors():
 
 
 def _is_distribution_locked_state(value):
-    """يتحقق هل الحالة الفرعية «واعد بالسداد» أو «جدولة»."""
     key = _state_key(value)
     return any(key == _state_key(s) for s in DISTRIBUTION_LOCKED_SUB_STATES)
 
 
 def _read_df_skip_header_row(uploaded, *, force_skip=False):
-    """قراءة ملف Excel/CSV.
-
-    في ملفات المحفظة غالبًا أول صف بعد العناوين فاضي/تكرار — بيتشال.
-    لو الصف الأول باين عليه بيانات حقيقية (أرقام/نصوص مفيدة) بنسيبه عشان مطالبة متضيعش.
-    """
+    """قراءة ملف — يشيل الصف الأول فقط لو فاضي أو عناوين مكررة."""
     raw = read_uploaded_dataframe(uploaded)
     if raw is None or len(raw) == 0:
         return raw.reset_index(drop=True) if hasattr(raw, "reset_index") else raw
     if force_skip:
         return raw.iloc[1:].reset_index(drop=True)
-
     first = raw.iloc[0]
     non_null = first.dropna()
     if non_null.empty:
         return raw.iloc[1:].reset_index(drop=True)
-
-    # لو أغلب القيم تكرار لأسماء الأعمدة → صف عناوين مكرر
     col_names = {str(c).strip().lower() for c in raw.columns}
     first_vals = {str(v).strip().lower() for v in non_null.tolist()}
     if first_vals and first_vals.issubset(col_names):
         return raw.iloc[1:].reset_index(drop=True)
-
-    # لو كل القيم فاضي/nan/none
     as_str = non_null.astype(str).str.strip().str.lower()
     if as_str.isin({"", "nan", "none", "null", "-", "—"}).all():
         return raw.iloc[1:].reset_index(drop=True)
-
     return raw.reset_index(drop=True)
 
 
@@ -7421,13 +7410,9 @@ def _extract_distribution_substates_from_df(df):
 
 
 def _balance_customer_groups(groups, targets):
-    """يوزّع مجموعات العملاء على المحصلين المستهدفين بأقصى تساوي ممكن في:
-    - إجمالي المبلغ (Net Amount)
-    - عدد الحسابات (Account) — مش بس عدد العملاء
-    - عدد العملاء (رقم الهوية)
-    - عدد الحالات من كل نوع Sub State على حدة
-    كل عميل (رقم هوية) يتحط كامل عند محصل واحد.
-    كل عنصر في groups: customer, amount, cases, accounts, substates
+    """توزيع مجموعات العملاء على المحصلين بالتساوي في:
+    المبلغ + عدد الحسابات + عدد العملاء + عدد الحالات (لكل Sub State).
+    كل عميل (رقم هوية) يروح لمحصل واحد كامل.
     """
     targets = list(dict.fromkeys([str(t).strip() for t in (targets or []) if str(t).strip()]))
     load = {
@@ -7444,30 +7429,29 @@ def _balance_customer_groups(groups, targets):
     substate_totals = {}
     for g in groups:
         for state, cnt in (g.get("substates") or {}).items():
-            substate_totals[state] = substate_totals.get(state, 0) + cnt
-    substate_totals = {state: (cnt or 1) for state, cnt in substate_totals.items()}
+            substate_totals[state] = substate_totals.get(state, 0) + int(cnt or 0)
+    substate_totals = {s: (c or 1) for s, c in substate_totals.items()}
 
     assignment = {}
-    # الأكبر أولاً عشان التوازن يبقى أدق (LPT-style)
     groups_sorted = sorted(
         groups,
         key=lambda g: (-float(g.get("amount") or 0), -int(g.get("accounts") or 0), -int(g.get("cases") or 0)),
     )
     for g in groups_sorted:
-        g_accounts = int(g.get("accounts") or 1)
+        g_accounts = max(int(g.get("accounts") or 1), 1)
         g_cases = int(g.get("cases") or 0)
         g_amount = float(g.get("amount") or 0)
+        g_subs = g.get("substates") if isinstance(g.get("substates"), dict) else {}
 
-        def _score(t, _g=g, _acc=g_accounts, _cases=g_cases, _amt=g_amount):
+        def _score(t, _subs=g_subs):
             L = load[t]
-            # أوزان متساوية تقريباً: مبلغ + حسابات + عملاء + حالات إجمالية + كل نوع حالة
             s = (
-                (L["amount"] / total_amount)
-                + (L["accounts"] / total_accounts)
-                + (L["customers"] / total_customers)
-                + (L["cases"] / total_cases)
+                L["amount"] / total_amount
+                + L["accounts"] / total_accounts
+                + L["customers"] / total_customers
+                + L["cases"] / total_cases
             )
-            for state, cnt in (_g.get("substates") or {}).items():
+            for state, cnt in _subs.items():
                 s += L["substates"].get(state, 0) / substate_totals.get(state, 1)
             return s
 
@@ -7477,20 +7461,50 @@ def _balance_customer_groups(groups, targets):
         load[best]["cases"] += g_cases
         load[best]["accounts"] += g_accounts
         load[best]["customers"] += 1
-        for state, cnt in (g.get("substates") or {}).items():
-            load[best]["substates"][state] = load[best]["substates"].get(state, 0) + cnt
+        for state, cnt in g_subs.items():
+            load[best]["substates"][state] = load[best]["substates"].get(state, 0) + int(cnt or 0)
     return assignment, load
 
 
-def _run_leaver_distribution(wallet_uploaded, claims_uploaded, departing, targets, selected_substates):
-    """توزيع مطالبات المحصل المغادر على المحصلين المختارين.
+def _render_clean_picker(title, options, state_key, *, help_text=""):
+    """سلايسر نظيف: تحديد الكل / إلغاء + checkboxes في شبكة مرتبة."""
+    options = [str(o) for o in (options or []) if str(o).strip()]
+    if state_key not in st.session_state:
+        st.session_state[state_key] = list(options)
+    st.session_state[state_key] = [x for x in st.session_state[state_key] if x in options]
 
-    - المحفظة: لاستخراج قائمة المحصلين (كلهم ما عدا المغادر).
-    - ملف المطالبات: مطالبة + حساب + رقم هوية + مبلغ + حالة + محصل قديم.
-    - التوزيع بالتساوي: مبالغ + عدد حسابات + عدد حالات كل Sub State.
-    - العميل (رقم الهوية) لا يُقسَّم على أكثر من محصل.
-    - يُضاف عمود «المحصل بعد التوزيع».
-    """
+    st.markdown(f"**{title}**")
+    if help_text:
+        st.caption(help_text)
+
+    b1, b2, b3 = st.columns([1, 1, 2])
+    with b1:
+        if st.button("تحديد الكل", key=f"{state_key}_all", use_container_width=True):
+            st.session_state[state_key] = list(options)
+            st.rerun()
+    with b2:
+        if st.button("إلغاء الكل", key=f"{state_key}_none", use_container_width=True):
+            st.session_state[state_key] = []
+            st.rerun()
+    with b3:
+        st.caption(f"المحدد: **{len(st.session_state[state_key])}** / **{len(options)}**")
+
+    if not options:
+        return []
+
+    selected = set(st.session_state[state_key])
+    cols = st.columns(2)
+    new_sel = []
+    for i, opt in enumerate(options):
+        with cols[i % 2]:
+            if st.checkbox(opt, value=(opt in selected), key=f"{state_key}_item_{i}"):
+                new_sel.append(opt)
+    st.session_state[state_key] = new_sel
+    return list(new_sel)
+
+
+def _run_leaver_distribution(wallet_uploaded, claims_uploaded, departing, targets, selected_substates):
+    """توزيع مطالبات المحصل المغادر على المحصلين المختارين."""
     try:
         claims_df = _read_df_skip_header_row(claims_uploaded)
     except Exception as e:
@@ -7506,7 +7520,7 @@ def _run_leaver_distribution(wallet_uploaded, claims_uploaded, departing, target
 
     missing = []
     if not sales_col:
-        missing.append("المحصل القديم (Sales Person)")
+        missing.append("المحصل (Sales Person)")
     if not substate_col:
         missing.append("الحالة (Sub State)")
     if not customer_col:
@@ -7514,29 +7528,19 @@ def _run_leaver_distribution(wallet_uploaded, claims_uploaded, departing, target
     if not net_col:
         missing.append("المبلغ (Net Amount)")
     if missing:
-        st.error(
-            "أعمدة ناقصة في ملف المطالبات: "
-            + "، ".join(missing)
-            + f"\n\nالأعمدة الموجودة: {', '.join(map(str, claims_df.columns))}"
-        )
+        st.error("أعمدة ناقصة في ملف المطالبات: " + "، ".join(missing))
         return False
 
     if not departing:
-        st.error("اختر المحصل القديم (اللي مشى).")
+        st.error("اختر المحصل القديم.")
         return False
-    target_list = list(dict.fromkeys([str(t).strip() for t in (targets or []) if str(t).strip()]))
+    target_list = list(dict.fromkeys([str(t).strip() for t in (targets or []) if str(t).strip() and t != departing]))
     if not target_list:
         st.error("اختر محصل واحد على الأقل يستقبل التوزيع.")
         return False
-    if departing in target_list:
-        target_list = [t for t in target_list if t != departing]
-    if not target_list:
-        st.error("المحصلين المستقبِلين لازم يكونوا غير المحصل المغادر.")
-        return False
-
     selected = [str(s).strip() for s in (selected_substates or []) if str(s).strip()]
     if not selected:
-        st.error("اختر حالة واحدة على الأقل من Sub State.")
+        st.error("اختر حالة واحدة على الأقل.")
         return False
 
     work = claims_df.copy()
@@ -7547,87 +7551,52 @@ def _run_leaver_distribution(wallet_uploaded, claims_uploaded, departing, target
     if account_col and account_col in work.columns:
         work["_account"] = work[account_col].astype(str).str.strip()
     elif claim_col and claim_col in work.columns:
-        # لو مفيش عمود حساب منفصل نعتبر كل مطالبة حساب مستقل للتوازن
         work["_account"] = work[claim_col].astype(str).str.strip()
     else:
         work["_account"] = work.index.astype(str)
 
-    # سبب الاستبعاد — عشان نعرف أي مطالبة متوزعتش وليه
-    def _exclusion_reason(row):
+    def _reason(row):
         if row["_sales"] != departing:
-            return "محصل مختلف عن المغادر"
+            return "محصل مختلف"
         if row["_substate"] not in selected:
             return "حالة غير مختارة"
-        cust = str(row["_customer"]).strip().lower()
-        if not cust or cust in {"nan", "none", "null", ""}:
+        c = str(row["_customer"]).strip().lower()
+        if not c or c in {"nan", "none", "null"}:
             return "رقم هوية فاضي"
         return ""
 
-    work["_exclude_reason"] = work.apply(_exclusion_reason, axis=1)
-    mask = work["_exclude_reason"].eq("")
-    pool = work.loc[mask].copy()
-    excluded = work.loc[~mask].copy()
+    work["_exclude_reason"] = work.apply(_reason, axis=1)
+    pool = work.loc[work["_exclude_reason"].eq("")].copy()
+    excluded = work.loc[work["_exclude_reason"].ne("")].copy()
 
-    # تشخيص المبالغ: إجمالي الملف vs اللي هيتوزع
-    total_file_amount = float(work["_amount"].sum())
-    total_pool_amount = float(pool["_amount"].sum()) if not pool.empty else 0.0
-    total_excluded_amount = float(excluded["_amount"].sum()) if not excluded.empty else 0.0
     st.caption(
-        f"📊 صفوف الملف: {len(work):,} · هتتوزع: {len(pool):,} · مستبعدة: {len(excluded):,} · "
-        f"مبلغ الملف: {total_file_amount:,.2f} · مبلغ التوزيع: {total_pool_amount:,.2f}"
+        f"صفوف الملف: {len(work):,} · هتتوزع: {len(pool):,} · مستبعدة: {len(excluded):,} · "
+        f"مبلغ التوزيع: {float(pool['_amount'].sum()) if len(pool) else 0:,.2f}"
     )
-    if not excluded.empty:
-        with st.expander(f"🔎 مطالبات لم تُوزَّع ({len(excluded)}) — السبب", expanded=False):
-            reason_summary = (
-                excluded.groupby("_exclude_reason")
-                .agg(العدد=("_amount", "size"), المبلغ=("_amount", "sum"))
-                .reset_index()
-                .rename(columns={"_exclude_reason": "السبب"})
-            )
-            st.dataframe(reason_summary, use_container_width=True, hide_index=True)
-            show_cols = [c for c in [claim_col, account_col, customer_col, sales_col, substate_col, net_col, "_exclude_reason", "_amount"] if c and c in excluded.columns]
-            st.dataframe(excluded[show_cols].head(200), use_container_width=True, hide_index=True)
-
     if pool.empty:
-        st.error(
-            f"مفيش مطالبات للمحصل «{departing}» ضمن الحالات المختارة.\n"
-            f"الحالات: {', '.join(selected)}"
-        )
+        st.error(f"مفيش مطالبات للمحصل «{departing}» ضمن الحالات المختارة.")
         return False
 
-    # تجميع حسب رقم الهوية — العميل كامل عند محصل واحد
-    # accounts = عدد الحسابات المميزة داخل العميل (مش عدد الصفوف)
     def _nunique_accounts(s):
         vals = [v for v in s.astype(str) if v and v.lower() not in {"nan", "none", "null", ""}]
         return max(len(set(vals)), 1)
 
     grouped = (
         pool.groupby("_customer")
-        .agg(
-            amount=("_amount", "sum"),
-            cases=("_amount", "size"),
-            accounts=("_account", _nunique_accounts),
-        )
+        .agg(amount=("_amount", "sum"), cases=("_amount", "size"), accounts=("_account", _nunique_accounts))
         .reset_index()
     )
     substate_map = pool.groupby("_customer")["_substate"].apply(lambda s: s.value_counts().to_dict()).to_dict()
     grouped["substates"] = grouped["_customer"].map(substate_map)
 
-    def _as_substate_dict(val):
+    def _as_dict(val):
         if isinstance(val, dict):
             return dict(val)
-        if val is None or (isinstance(val, float) and pd.isna(val)):
-            return {}
         try:
-            if pd.isna(val):
+            if val is None or (isinstance(val, float) and pd.isna(val)):
                 return {}
-        except (TypeError, ValueError):
+        except Exception:
             pass
-        if hasattr(val, "items"):
-            try:
-                return dict(val)
-            except Exception:
-                return {}
         return {}
 
     groups_for_balance = [
@@ -7636,55 +7605,28 @@ def _run_leaver_distribution(wallet_uploaded, claims_uploaded, departing, target
             "amount": float(r["amount"] or 0),
             "cases": int(r["cases"] or 0),
             "accounts": int(r["accounts"] or 1),
-            "substates": _as_substate_dict(r["substates"]),
+            "substates": _as_dict(r["substates"]),
         }
         for _, r in grouped.iterrows()
     ]
     assignment, _loads = _balance_customer_groups(groups_for_balance, target_list)
 
     pool[DISTRIBUTION_NEW_COLLECTOR_COL] = pool["_customer"].map(assignment)
-    # أي صف بدون تعيين (لا يجب أن يحدث) → أول مستقبِل
-    missing_new = pool[DISTRIBUTION_NEW_COLLECTOR_COL].isna() | (pool[DISTRIBUTION_NEW_COLLECTOR_COL].astype(str).str.strip() == "")
-    if missing_new.any() and target_list:
-        pool.loc[missing_new, DISTRIBUTION_NEW_COLLECTOR_COL] = target_list[0]
+    missing = pool[DISTRIBUTION_NEW_COLLECTOR_COL].isna()
+    if missing.any():
+        pool.loc[missing, DISTRIBUTION_NEW_COLLECTOR_COL] = target_list[0]
     pool[DISTRIBUTION_STATUS_COL] = DISTRIBUTION_STATUS_MOVED
-
-    # تحقق من تطابق المبلغ بعد التوزيع
-    after_amount = float(pd.to_numeric(pool["_amount"], errors="coerce").fillna(0).sum())
-    if abs(after_amount - total_pool_amount) > 0.05:
-        st.warning(
-            f"⚠️ فرق في مجموع المبالغ بعد التوزيع: قبل={total_pool_amount:,.2f} · بعد={after_amount:,.2f}"
-        )
-    else:
-        st.caption(f"✅ مجموع مبالغ المطالبات الموزَّعة متطابق: {after_amount:,.2f}")
 
     if not excluded.empty:
         excluded[DISTRIBUTION_NEW_COLLECTOR_COL] = excluded["_sales"]
         excluded[DISTRIBUTION_STATUS_COL] = DISTRIBUTION_STATUS_EXCLUDED
 
     final_df = pd.concat([pool, excluded], ignore_index=True) if not excluded.empty else pool.copy()
-    # احتفظ بأعمدة الملف الأصلية + عمودين جديدين
-    base_cols = list(claims_df.columns)
-    for c in (DISTRIBUTION_NEW_COLLECTOR_COL, DISTRIBUTION_STATUS_COL):
-        if c not in base_cols:
-            base_cols.append(c)
+    base_cols = list(claims_df.columns) + [DISTRIBUTION_NEW_COLLECTOR_COL, DISTRIBUTION_STATUS_COL]
     final_df = final_df[[c for c in base_cols if c in final_df.columns]]
 
-    moved = pool
-    before_summary = (
-        moved.groupby("_sales")
-        .agg(
-            العملاء=("_customer", "nunique"),
-            الحسابات=("_account", "nunique"),
-            الحالات=("_amount", "size"),
-            الإجمالي=("_amount", "sum"),
-        )
-        .reset_index()
-        .rename(columns={"_sales": "المحصل"})
-        .sort_values("الإجمالي", ascending=False)
-    )
     after_summary = (
-        moved.groupby(DISTRIBUTION_NEW_COLLECTOR_COL)
+        pool.groupby(DISTRIBUTION_NEW_COLLECTOR_COL)
         .agg(
             العملاء=("_customer", "nunique"),
             الحسابات=("_account", "nunique"),
@@ -7695,27 +7637,27 @@ def _run_leaver_distribution(wallet_uploaded, claims_uploaded, departing, target
         .rename(columns={DISTRIBUTION_NEW_COLLECTOR_COL: "المحصل"})
         .sort_values("الإجمالي", ascending=False)
     )
+    before_summary = (
+        pool.groupby("_sales")
+        .agg(
+            العملاء=("_customer", "nunique"),
+            الحسابات=("_account", "nunique"),
+            الحالات=("_amount", "size"),
+            الإجمالي=("_amount", "sum"),
+        )
+        .reset_index()
+        .rename(columns={"_sales": "المحصل"})
+    )
     substate_breakdown = (
-        moved.groupby([DISTRIBUTION_NEW_COLLECTOR_COL, "_substate"])
+        pool.groupby([DISTRIBUTION_NEW_COLLECTOR_COL, "_substate"])
         .size()
         .reset_index(name="العدد")
         .rename(columns={DISTRIBUTION_NEW_COLLECTOR_COL: "المحصل", "_substate": "Sub State"})
     )
 
-    file_hash = f"{uploaded_file_hash(wallet_uploaded)}:{uploaded_file_hash(claims_uploaded)}"
-    selection_token = hashlib.sha256(
-        "|".join([
-            departing or "",
-            ",".join(sorted(target_list)),
-            ",".join(sorted(selected)),
-        ]).encode("utf-8")
-    ).hexdigest()[:16]
-
     st.session_state[DISTRIBUTION_RESULT_KEY] = {
         "df": final_df,
         "filename": claims_uploaded.name,
-        "wallet_filename": wallet_uploaded.name if wallet_uploaded else "—",
-        "run_token": f"{file_hash}:{selection_token}",
         "mode": DISTRIBUTION_MODE_LEAVER,
         "departing": departing,
         "targets": target_list,
@@ -7723,299 +7665,60 @@ def _run_leaver_distribution(wallet_uploaded, claims_uploaded, departing, target
         "before_summary": before_summary,
         "after_summary": after_summary,
         "substate_breakdown": substate_breakdown,
-        "moved_cases": int(len(moved)),
+        "moved_cases": int(len(pool)),
+        "moved_accounts": int(pool["_customer"].nunique()),
+        "total_amount": float(pool["_amount"].sum()),
+        "excluded_rows": int(len(excluded)),
         "moved_locked_cases": 0,
-        "moved_accounts": int(moved["_customer"].nunique()),
         "locked_accounts": 0,
         "mixed_accounts": 0,
-        "total_accounts": int(moved["_customer"].nunique()),
-        "total_cases": int(len(moved)),
-        "total_amount": float(moved["_amount"].sum()),
-        "excluded_rows": int(len(excluded)),
-        "customer_col": customer_col,
-        "claim_col": claim_col,
-        "account_col": account_col,
-    }
-    return True
-
-
-def _run_distribution_pipeline(uploaded, mode, departing=None, targets=None, new_collectors=None, keep_existing=None, selected_substates=None):
-    """مسار قديم لوضع موظف جديد — يعتمد على محفظة واحدة."""
-    file_hash = uploaded_file_hash(uploaded)
-    selection_token = hashlib.sha256(
-        "|".join([
-            mode or "",
-            departing or "",
-            ",".join(sorted(targets or [])),
-            ",".join(sorted(new_collectors or [])),
-            ",".join(sorted(keep_existing or [])),
-            ",".join(sorted(selected_substates or [])),
-        ]).encode("utf-8")
-    ).hexdigest()[:16]
-    run_token = f"{file_hash}:{selection_token}"
-    cached = st.session_state.get(DISTRIBUTION_RESULT_KEY)
-    if cached and cached.get("run_token") == run_token:
-        return True
-
-    try:
-        df = _read_df_skip_header_row(uploaded)
-    except Exception as e:
-        st.error(f"تعذر قراءة الملف: {e}")
-        return False
-
-    sales_col = find_column(df, SALES_PERSON_CANDIDATES)
-    substate_col = find_column(df, PROMISE_SUB_STATE_CANDIDATES)
-    customer_col = find_column(df, DISTRIBUTION_CUSTOMER_ID_CANDIDATES)
-    net_col = find_column(df, PROMISE_NET_AMOUNT_CANDIDATES)
-    missing = []
-    if not sales_col:
-        missing.append("المحصّل (Sales Person)")
-    if not substate_col:
-        missing.append("الحالة الفرعية (Sub State)")
-    if not customer_col:
-        missing.append("رقم الهوية / Debitor")
-    if not net_col:
-        missing.append("Net Amount")
-    if missing:
-        st.error("أعمدة ناقصة: " + "، ".join(missing))
-        return False
-
-    work = df.copy()
-    work["_sales"] = work[sales_col].astype(str).str.strip()
-    work["_substate"] = work[substate_col].astype(str).str.strip()
-    work["_customer"] = work[customer_col].astype(str).str.strip()
-    work["_amount"] = work[net_col].apply(_to_amount)
-    work["_locked"] = work["_substate"].apply(_is_distribution_locked_state)
-
-    excluded_mask = work["_sales"].isin(PROMISE_EXCLUDED_SALES)
-    pool_df = work[~excluded_mask].copy()
-    excluded_df = work[excluded_mask].copy()
-    if pool_df.empty:
-        st.error("لا توجد بيانات صالحة للتوزيع.")
-        return False
-
-    grouped = (
-        pool_df.groupby("_customer")
-        .agg(amount=("_amount", "sum"), cases=("_amount", "size"), locked=("_locked", "any"))
-        .reset_index()
-    )
-    collectors_map = pool_df.groupby("_customer")["_sales"].apply(lambda s: sorted(set(s))).to_dict()
-    grouped["collectors"] = grouped["_customer"].map(collectors_map)
-    grouped["mixed"] = grouped["collectors"].apply(lambda c: len(c) > 1)
-    grouped["single_collector"] = grouped["collectors"].apply(lambda c: c[0] if len(c) == 1 else None)
-    substate_map = pool_df.groupby("_customer")["_substate"].apply(lambda s: s.value_counts().to_dict()).to_dict()
-    grouped["substates"] = grouped["_customer"].map(substate_map)
-
-    status_map = {}
-    target_list = list(dict.fromkeys(list(keep_existing or []) + list(new_collectors or [])))
-    if not target_list:
-        st.error("حدد المحصلين الحاليين واسم المحصل الجديد.")
-        return False
-    movable_mask = (~grouped["mixed"]) & (~grouped["locked"])
-    movable = grouped[movable_mask]
-    for _, row in grouped[~movable_mask].iterrows():
-        status_map[row["_customer"]] = DISTRIBUTION_STATUS_MIXED if row["mixed"] else DISTRIBUTION_STATUS_LOCKED
-
-    groups_for_balance = [
-        {
-            "customer": r["_customer"],
-            "amount": float(r["amount"]),
-            "cases": int(r["cases"]),
-            "accounts": int(r.get("accounts", r["cases"]) if "accounts" in r else r["cases"]),
-            "substates": (dict(r["substates"]) if isinstance(r.get("substates"), dict) else {}),
-        }
-        for _, r in movable.iterrows()
-    ]
-    # في وضع الموظف الجديد: عدد الحسابات ≈ عدد الصفوف لكل عميل لو مفيش عمود حساب منفصل
-    for g in groups_for_balance:
-        g["accounts"] = max(int(g.get("accounts") or 0), 1)
-
-    assignment, _loads = _balance_customer_groups(groups_for_balance, target_list)
-
-    def _resolve_row(row):
-        cust = row["_customer"]
-        if cust in assignment:
-            return pd.Series([assignment[cust], DISTRIBUTION_STATUS_MOVED])
-        return pd.Series([row["_sales"], status_map.get(cust, DISTRIBUTION_STATUS_UNRELATED)])
-
-    resolved = pool_df.apply(_resolve_row, axis=1)
-    resolved.columns = [DISTRIBUTION_NEW_COLLECTOR_COL, DISTRIBUTION_STATUS_COL]
-    pool_df[DISTRIBUTION_NEW_COLLECTOR_COL] = resolved[DISTRIBUTION_NEW_COLLECTOR_COL]
-    pool_df[DISTRIBUTION_STATUS_COL] = resolved[DISTRIBUTION_STATUS_COL]
-
-    if not excluded_df.empty:
-        excluded_df[DISTRIBUTION_NEW_COLLECTOR_COL] = excluded_df["_sales"]
-        excluded_df[DISTRIBUTION_STATUS_COL] = DISTRIBUTION_STATUS_EXCLUDED
-
-    final_df = pd.concat([pool_df, excluded_df], ignore_index=True) if not excluded_df.empty else pool_df.copy()
-    display_cols = list(df.columns) + [DISTRIBUTION_NEW_COLLECTOR_COL, DISTRIBUTION_STATUS_COL]
-    final_df = final_df[[c for c in display_cols if c in final_df.columns]]
-
-    before_summary = (
-        pool_df.groupby("_sales")
-        .agg(الحسابات=("_customer", "nunique"), الحالات=("_amount", "size"), الإجمالي=("_amount", "sum"))
-        .reset_index().rename(columns={"_sales": "المحصل"})
-        .sort_values("الإجمالي", ascending=False)
-    )
-    after_summary = (
-        pool_df.groupby(DISTRIBUTION_NEW_COLLECTOR_COL)
-        .agg(الحسابات=("_customer", "nunique"), الحالات=("_amount", "size"), الإجمالي=("_amount", "sum"))
-        .reset_index().rename(columns={DISTRIBUTION_NEW_COLLECTOR_COL: "المحصل"})
-        .sort_values("الإجمالي", ascending=False)
-    )
-    substate_breakdown = (
-        pool_df.groupby([DISTRIBUTION_NEW_COLLECTOR_COL, "_substate"])
-        .size().reset_index(name="العدد")
-        .rename(columns={DISTRIBUTION_NEW_COLLECTOR_COL: "المحصل", "_substate": "Sub State"})
-    )
-
-    st.session_state[DISTRIBUTION_RESULT_KEY] = {
-        "df": final_df,
-        "filename": uploaded.name,
-        "run_token": run_token,
-        "mode": mode,
-        "departing": departing,
-        "targets": target_list,
-        "selected_substates": list(selected_substates or []),
-        "before_summary": before_summary,
-        "after_summary": after_summary,
-        "substate_breakdown": substate_breakdown,
-        "moved_cases": int((pool_df[DISTRIBUTION_STATUS_COL] == DISTRIBUTION_STATUS_MOVED).sum()),
-        "moved_locked_cases": 0,
-        "moved_accounts": len(assignment),
-        "locked_accounts": int(grouped["locked"].sum()),
-        "mixed_accounts": int(grouped["mixed"].sum()),
-        "total_accounts": int(len(grouped)),
-        "total_cases": int(pool_df.shape[0]),
-        "total_amount": float(pool_df["_amount"].sum()),
-        "excluded_rows": int(len(excluded_df)),
+        "total_accounts": int(pool["_customer"].nunique()),
+        "total_cases": int(len(pool)),
     }
     return True
 
 
 def _show_distribution_results(result):
-    label = (
-        f"المحصل المغادر: {result.get('departing')}"
-        if result.get("mode") == DISTRIBUTION_MODE_LEAVER
-        else "وضع موظف جديد"
+    st.success(
+        f"✅ تم التوزيع — المغادر: {result.get('departing', '—')} · "
+        f"مطالبات: {result.get('moved_cases', 0):,} · عملاء: {result.get('moved_accounts', 0):,}"
     )
-    st.success(f"✅ التوزيع جاهز — الملف: {result.get('filename', '—')} · {label}")
-    if result.get("selected_substates"):
-        st.caption("الحالات الموزَّعة: " + " · ".join(result["selected_substates"]))
-    if result.get("targets"):
-        st.caption("المستقبِلون: " + " · ".join(result["targets"]))
-
-    cards = [
-        ("🔀<br>مطالبات تم توزيعها", result.get("moved_cases", 0), {"valueformat": ",d"}, OPS_SCALE[2]),
-        ("👤<br>عملاء تم توزيعهم", result.get("moved_accounts", 0), {"valueformat": ",d"}, OPS_SCALE[1]),
-        ("💰<br>إجمالي المبلغ", result.get("total_amount", 0), {"valueformat": ",.0f"}, OPS_SCALE[0]),
-        ("📦<br>صفوف مستبعدة", result.get("excluded_rows", 0), {"valueformat": ",d"}, THEME["text_dim"]),
-    ]
-    figure = go.Figure()
-    count = len(cards)
-    gap = 0.02
-    width = (1 - gap * (count + 1)) / count
-    for index, (title, value, number_format, number_color) in enumerate(cards):
-        x0 = gap + index * (width + gap)
-        x1 = x0 + width
-        figure.add_shape(
-            type="path",
-            xref="paper",
-            yref="paper",
-            path=_rounded_rect_path(x0, x1, 0.06, 0.94, radius=0.022),
-            line={"color": THEME["border"], "width": 1},
-            fillcolor=THEME["surface"],
-            layer="below",
-        )
-        figure.add_trace(
-            go.Indicator(
-                mode="number",
-                value=float(value or 0),
-                domain={"x": [x0 + 0.012, x1 - 0.012], "y": [0.12, 0.88]},
-                title={"text": title, "font": {"size": 16, "color": THEME["text_dim"]}, "align": "center"},
-                number={"font": {"size": 28, "color": number_color}, **number_format},
-            )
-        )
-    figure.update_layout(
-        height=180,
-        template=PLOTLY_TEMPLATE,
-        paper_bgcolor="rgba(0,0,0,0)",
-        plot_bgcolor="rgba(0,0,0,0)",
-        font={"family": "Tajawal, sans-serif", "color": THEME["text"]},
-        margin={"t": 8, "b": 8, "l": 8, "r": 8},
-    )
-    st.plotly_chart(figure, use_container_width=True, config=PLOTLY_CONFIG, key="distribution_kpi")
-
-    after_summary = result.get("after_summary")
-    if after_summary is not None and not after_summary.empty:
-        st.markdown("#### ⚖️ توازن الأحمال بين المحصلين بعد التوزيع")
+    after = result.get("after_summary")
+    if after is not None and not after.empty:
+        st.markdown("#### ملخص بعد التوزيع")
+        st.dataframe(after, use_container_width=True, hide_index=True)
         left, right = st.columns(2)
         with left:
             fig = px.bar(
-                after_summary.sort_values("الإجمالي"),
-                x="الإجمالي",
-                y="المحصل",
-                orientation="h",
-                text="الإجمالي",
-                color="الإجمالي",
-                color_continuous_scale=OPS_SCALE,
-                template=PLOTLY_TEMPLATE,
+                after.sort_values("الإجمالي"),
+                x="الإجمالي", y="المحصل", orientation="h", text="الإجمالي",
+                color="الإجمالي", color_continuous_scale=OPS_SCALE, template=PLOTLY_TEMPLATE,
             )
-            _apply_ops_chart_style(fig, "إجمالي المبلغ لكل محصل بعد التوزيع", height=420, xaxis_title="المبلغ", show_legend=False)
+            _apply_ops_chart_style(fig, "المبلغ لكل محصل", height=400, xaxis_title="المبلغ", show_legend=False)
             fig.update_traces(texttemplate="%{x:,.0f}", textposition="outside", cliponaxis=False)
-            st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG, key="distribution_amount_chart")
+            st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG, key="dist_amt")
         with right:
-            account_col_name = "الحسابات" if "الحسابات" in after_summary.columns else "العملاء"
+            col_name = "الحسابات" if "الحسابات" in after.columns else "العملاء"
             fig2 = px.bar(
-                after_summary.sort_values(account_col_name),
-                x=account_col_name,
-                y="المحصل",
-                orientation="h",
-                text=account_col_name,
-                color=account_col_name,
-                color_continuous_scale=OPS_SCALE,
-                template=PLOTLY_TEMPLATE,
+                after.sort_values(col_name),
+                x=col_name, y="المحصل", orientation="h", text=col_name,
+                color=col_name, color_continuous_scale=OPS_SCALE, template=PLOTLY_TEMPLATE,
             )
-            _apply_ops_chart_style(fig2, "عدد الحسابات لكل محصل بعد التوزيع", height=420, xaxis_title="عدد الحسابات", show_legend=False)
+            _apply_ops_chart_style(fig2, "الحسابات لكل محصل", height=400, xaxis_title="حسابات", show_legend=False)
             fig2.update_traces(texttemplate="%{x:,.0f}", textposition="outside", cliponaxis=False)
-            st.plotly_chart(fig2, use_container_width=True, config=PLOTLY_CONFIG, key="distribution_accounts_chart")
+            st.plotly_chart(fig2, use_container_width=True, config=PLOTLY_CONFIG, key="dist_acc")
 
-        substate_breakdown = result.get("substate_breakdown")
-        if substate_breakdown is not None and not substate_breakdown.empty:
-            fig3 = px.bar(
-                substate_breakdown,
-                x="العدد",
-                y="المحصل",
-                color="Sub State",
-                orientation="h",
-                barmode="stack",
-                template=PLOTLY_TEMPLATE,
-            )
-            _apply_ops_chart_style(fig3, "توزيع الحالات (Sub State) بعد التوزيع", height=420, xaxis_title="العدد")
-            st.plotly_chart(fig3, use_container_width=True, config=PLOTLY_CONFIG, key="distribution_substate_chart")
-
-    with st.expander("📊 المقارنة التفصيلية قبل/بعد التوزيع", expanded=False):
-        c1, c2 = st.columns(2)
-        with c1:
-            st.write("قبل التوزيع")
-            st.dataframe(result.get("before_summary"), use_container_width=True, hide_index=True)
-        with c2:
-            st.write("بعد التوزيع")
-            st.dataframe(result.get("after_summary"), use_container_width=True, hide_index=True)
-
-    st.subheader("📋 نتيجة التوزيع")
+    st.markdown("#### نتيجة التوزيع")
     st.dataframe(result["df"], use_container_width=True, hide_index=True)
 
-    out_excel = io.BytesIO()
-    with pd.ExcelWriter(out_excel, engine="openpyxl") as writer:
+    out = io.BytesIO()
+    with pd.ExcelWriter(out, engine="openpyxl") as writer:
         result["df"].to_excel(writer, index=False, sheet_name="نتيجة التوزيع")
-        if result.get("after_summary") is not None:
-            result["after_summary"].to_excel(writer, index=False, sheet_name="ملخص بعد")
-        if result.get("substate_breakdown") is not None and not result["substate_breakdown"].empty:
-            result["substate_breakdown"].to_excel(writer, index=False, sheet_name="تفصيل Sub State")
+        if after is not None:
+            after.to_excel(writer, index=False, sheet_name="ملخص")
     st.download_button(
-        "⬇️ تحميل نتيجة التوزيع (Excel)",
-        data=out_excel.getvalue(),
+        "⬇️ تحميل نتيجة التوزيع",
+        data=out.getvalue(),
         file_name="نتيجة_التوزيع.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         use_container_width=True,
@@ -8024,296 +7727,128 @@ def _show_distribution_results(result):
     )
 
 
-
-
-
-def _render_drop_multiselect(title, options, state_key, *, icon="•", help_text=None, default_all=True):
-    """قائمة منسدلة متعددة الاختيار بشكل نظيف.
-
-    - الوضع الافتراضي: «الكل» بدون تاجات ملونة مزدحمة.
-    - وضع «تخصيص»: drop list متعددة الاختيار لاختيار عناصر محددة.
-    """
-    options = [str(o) for o in (options or []) if str(o).strip()]
-    mode_key = f"{state_key}_mode"
-    custom_key = f"{state_key}_custom"
-
-    if mode_key not in st.session_state:
-        st.session_state[mode_key] = "الكل" if default_all else "تخصيص"
-    if custom_key not in st.session_state:
-        st.session_state[custom_key] = list(options) if default_all else []
-
-    # تنظيف قيم اتشالت من الخيارات
-    st.session_state[custom_key] = [x for x in st.session_state.get(custom_key, []) if x in options]
-
-    st.markdown(f"**{icon} {title}**")
-    if help_text:
-        st.caption(help_text)
-
-    if not options:
-        st.warning("لا توجد عناصر للاختيار.")
-        return []
-
-    mode = st.radio(
-        "طريقة الاختيار",
-        options=["الكل", "تخصيص"],
-        index=0 if st.session_state[mode_key] == "الكل" else 1,
-        horizontal=True,
-        key=mode_key,
-        label_visibility="collapsed",
-    )
-
-    if mode == "الكل":
-        st.session_state[custom_key] = list(options)
-        st.success(f"تم تحديد الكل · {len(options)} عنصر", icon="✅")
-        return list(options)
-
-    # وضع التخصيص: قائمة منسدلة متعددة نظيفة
-    top_l, top_r = st.columns([1, 1])
-    with top_l:
-        if st.button("تحديد الكل", key=f"{state_key}_pick_all", use_container_width=True):
-            st.session_state[custom_key] = list(options)
-            st.rerun()
-    with top_r:
-        if st.button("مسح الاختيار", key=f"{state_key}_pick_none", use_container_width=True):
-            st.session_state[custom_key] = []
-            st.rerun()
-
-    selected = st.multiselect(
-        "اختر من القائمة",
-        options=options,
-        key=custom_key,
-        placeholder="افتح القائمة واختر عنصر أو أكثر…",
-        label_visibility="collapsed",
-    )
-    st.caption(f"المحدد: **{len(selected)}** من **{len(options)}**")
-    return list(selected)
-
-
-
 def page_distribution():
-    """تويب التوزيع — الحالة الأولى: محصل مشى.
+    """تويب التوزيع من الصفر — حالة محصل مشى.
 
-    ترفع:
-      1) المحفظة كاملة → لاستخراج كل المحصلين ما عدا اللي هيمشي
-      2) ملف المطالبات → مطالبة + حساب + رقم هوية + مبلغ + حالة + محصل قديم
+    ملفين:
+      1) المحفظة → قائمة المحصلين
+      2) المطالبات → مطالبة + حساب + رقم هوية + مبلغ + حالة + محصل قديم
 
-    تختار المحصلين المستقبِلين + الحالات (Sub State) المطلوب توزيعها (الافتراضي: الكل)،
-    والنظام يوزّع بالتساوي (حسابات + مبالغ + عدد حالات) مع عمود المحصل الجديد
-    وبدون تقسيم نفس العميل على أكتر من محصل.
+    توزيع بالتساوي: مبلغ + حسابات + حالات، وكل عميل لمحصل واحد فقط.
     """
     page_header(
         "DISTRIBUTION",
         "🔀 التوزيع",
-        "وزّع مطالبات المحصل المغادر على الباقيين بالتساوي (حسابات + مبالغ + حالات) "
-        "مع الإبقاء على العميل الواحد عند محصل واحد فقط",
+        "وزّع مطالبات المحصل المغادر على الباقيين بالتساوي (مبلغ + حسابات + حالات)",
     )
 
-    mode = st.radio(
-        "اختر حالة التوزيع",
-        [DISTRIBUTION_MODE_LEAVER, DISTRIBUTION_MODE_NEW],
-        horizontal=True,
-        key="distribution_mode",
-    )
-
-    if mode == DISTRIBUTION_MODE_LEAVER:
-        st.markdown("#### 1️⃣ ارفع الملفين")
-        col_w, col_c = st.columns(2)
-        with col_w:
-            wallet_uploaded = st.file_uploader(
-                "📂 المحفظة كاملة (لاستخراج قائمة المحصلين)",
-                type=["xlsx", "xls", "csv"],
-                key="distribution_wallet_upload",
-            )
-        with col_c:
-            claims_uploaded = st.file_uploader(
-                "📂 المطالبات اللي هتتوزع (مطالبة + حساب + رقم هوية + مبلغ + حالة + محصل قديم)",
-                type=["xlsx", "xls", "csv"],
-                key="distribution_claims_upload",
-            )
-
-        wallet_sales = []
-        claims_sales = []
-        claims_substates = []
-
-        if wallet_uploaded is not None:
-            try:
-                wdf = _read_df_skip_header_row(wallet_uploaded)
-                wallet_sales, _ = _extract_distribution_sales_from_df(wdf)
-                st.caption(f"المحفظة: {wallet_uploaded.name} · محصلين: {len(wallet_sales)}")
-            except Exception as e:
-                st.error(f"تعذر قراءة المحفظة: {e}")
-
-        if claims_uploaded is not None:
-            try:
-                cdf = _read_df_skip_header_row(claims_uploaded)
-                claims_sales, _ = _extract_distribution_sales_from_df(cdf)
-                claims_substates, _ = _extract_distribution_substates_from_df(cdf)
-                st.caption(
-                    f"المطالبات: {claims_uploaded.name} · محصلين في الملف: {len(claims_sales)} · حالات: {len(claims_substates)}"
-                )
-            except Exception as e:
-                st.error(f"تعذر قراءة ملف المطالبات: {e}")
-
-        if wallet_uploaded is None or claims_uploaded is None:
-            cached = st.session_state.get(DISTRIBUTION_RESULT_KEY)
-            if cached and cached.get("df") is not None and cached.get("mode") == DISTRIBUTION_MODE_LEAVER:
-                st.success(f"✅ نتيجة محفوظة من: {cached.get('filename', '—')}")
-                _show_distribution_results(cached)
-            else:
-                st.info("ارفع **المحفظة كاملة** + **ملف المطالبات** للبدء.")
-            return
-
-        if not wallet_sales:
-            st.warning("⚠️ المحفظة مفيهاش عمود Sales Person أو مفيش محصلين صالحين.")
-            return
-        if not claims_sales:
-            st.warning("⚠️ ملف المطالبات مفيهوش عمود المحصل القديم (Sales Person).")
-            return
-
-        st.divider()
-        st.markdown("#### 2️⃣ اختيارات التوزيع")
-
-        departing_options = claims_sales
-
-        with st.container(border=True):
-            st.markdown("**👤 المحصل القديم**")
-            st.caption("المحصل اللي مشى وهيتوزع نصيبه")
-            departing = st.selectbox(
-                "المحصل القديم (اللي مشى)",
-                options=departing_options,
-                key="distribution_departing",
-                label_visibility="collapsed",
-            )
-
-        receiver_options = [s for s in wallet_sales if s != departing]
-        if not receiver_options:
-            st.error("المحفظة مفيهاش محصلين غير المغادر — مش هقدر أوزّع.")
-            return
-
-        prev_dep = st.session_state.get("_distribution_prev_departing")
-        if prev_dep != departing:
-            st.session_state["_distribution_prev_departing"] = departing
-            st.session_state["distribution_targets_drop_custom"] = list(receiver_options)
-            st.session_state["distribution_targets_drop_mode"] = "الكل"
-
-        c1, c2 = st.columns(2)
-        with c1:
-            with st.container(border=True):
-                targets = _render_drop_multiselect(
-                    "المحصلين المستقبِلين",
-                    receiver_options,
-                    "distribution_targets_drop",
-                    icon="🎯",
-                    help_text="من المحفظة — ما عدا المغادر.",
-                    default_all=True,
-                )
-        with c2:
-            with st.container(border=True):
-                if claims_substates:
-                    selected_substates = _render_drop_multiselect(
-                        "الحالات اللي هتتوزع (Sub State)",
-                        claims_substates,
-                        "distribution_substates_drop",
-                        icon="🏷️",
-                        help_text="الافتراضي: كل الحالات.",
-                        default_all=True,
-                    )
-                else:
-                    st.warning("⚠️ مفيش عمود Sub State في ملف المطالبات.")
-                    selected_substates = []
-
-        st.info(
-            "التوزيع بالتساوي على: **عدد الحسابات** + **عدد العملاء (رقم الهوية)** + "
-            "**المبالغ (Net Amount)** + **عدد الحالات لكل نوع**. "
-            "نفس العميل مش هيتقسم على أكتر من محصل، وهيتعمل عمود **المحصل بعد التوزيع**."
+    st.markdown("### 1️⃣ الملفات")
+    c1, c2 = st.columns(2)
+    with c1:
+        wallet_uploaded = st.file_uploader(
+            "المحفظة كاملة (لاستخراج المحصلين)",
+            type=["xlsx", "xls", "csv"],
+            key="dist_wallet",
+        )
+    with c2:
+        claims_uploaded = st.file_uploader(
+            "المطالبات المطلوب توزيعها",
+            type=["xlsx", "xls", "csv"],
+            key="dist_claims",
         )
 
-        run = st.button("🚀 نفّذ التوزيع", use_container_width=True, type="primary", key="distribution_run_btn")
-        if run:
-            with st.spinner("جارٍ حساب التوزيع..."):
-                ok = _run_leaver_distribution(
-                    wallet_uploaded,
-                    claims_uploaded,
-                    departing=departing,
-                    targets=targets,
-                    selected_substates=selected_substates,
-                )
-                if ok:
-                    st.rerun()
-
-        cached = st.session_state.get(DISTRIBUTION_RESULT_KEY)
-        if cached and cached.get("df") is not None and cached.get("mode") == DISTRIBUTION_MODE_LEAVER:
-            _show_distribution_results(cached)
-        elif not run:
-            st.info("اضبط الاختيارات واضغط «نفّذ التوزيع».")
-        return
-
-    # ---------- وضع موظف جديد (محفظة واحدة) ----------
-    upload_key = "distribution_upload"
-    cache_scope = "distribution_upload"
-    result_keys = (DISTRIBUTION_RESULT_KEY,)
-    uploaded = st.file_uploader(
-        "📂 ارفع المحفظة الحالية (Excel أو CSV)",
-        type=["xlsx", "xls", "csv"],
-        key=upload_key,
-        on_change=sync_file_cache,
-        args=(upload_key, cache_scope, result_keys),
-    )
-    if uploaded is not None:
-        try:
-            df = _read_df_skip_header_row(uploaded)
-            available_sales, _ = _extract_distribution_sales_from_df(df)
-            st.session_state[DISTRIBUTION_AVAILABLE_SALES_KEY] = available_sales
-        except Exception as e:
-            st.error(f"تعذر قراءة الملف: {e}")
-            available_sales = []
-    else:
-        available_sales = st.session_state.get(DISTRIBUTION_AVAILABLE_SALES_KEY, [])
-
-    if uploaded is None and not available_sales:
+    if wallet_uploaded is None or claims_uploaded is None:
         cached = st.session_state.get(DISTRIBUTION_RESULT_KEY)
         if cached and cached.get("df") is not None:
             _show_distribution_results(cached)
         else:
-            st.info("📂 ارفع المحفظة للبدء.")
-        return
-    if not available_sales:
-        st.warning("⚠️ محتاج عمود Sales Person في الملف.")
+            st.info("ارفع **المحفظة** + **ملف المطالبات** للبدء.")
         return
 
-    keep_existing = st.multiselect(
-        "👥 المحصلين الحاليين المستمرين",
-        options=available_sales,
-        default=available_sales,
-        key="distribution_keep_existing",
-    )
-    new_names_raw = st.text_area(
-        "🆕 اسم/أسماء المحصل الجديد (كل اسم في سطر)",
-        key="distribution_new_names",
-        placeholder="أحمد محمد\nسارة علي",
-    )
-    new_collectors = [n.strip() for n in new_names_raw.splitlines() if n.strip()]
-    st.caption("🔒 الحالات «واعد بالسداد» و«جدولة» تفضل ثابتة عند محصلها الحالي.")
+    try:
+        wdf = _read_df_skip_header_row(wallet_uploaded)
+        wallet_sales, _ = _extract_distribution_sales_from_df(wdf)
+    except Exception as e:
+        st.error(f"خطأ في قراءة المحفظة: {e}")
+        return
 
-    run = st.button("🚀 نفّذ التوزيع", use_container_width=True, type="primary", key="distribution_run_btn_new")
-    if run:
-        if uploaded is None:
-            st.error("ارفع المحفظة أولاً.")
-        else:
-            with st.spinner("جارٍ حساب التوزيع..."):
-                _run_distribution_pipeline(
-                    uploaded,
-                    DISTRIBUTION_MODE_NEW,
-                    new_collectors=new_collectors,
-                    keep_existing=keep_existing,
+    try:
+        cdf = _read_df_skip_header_row(claims_uploaded)
+        claims_sales, _ = _extract_distribution_sales_from_df(cdf)
+        claims_substates, _ = _extract_distribution_substates_from_df(cdf)
+    except Exception as e:
+        st.error(f"خطأ في قراءة المطالبات: {e}")
+        return
+
+    if not wallet_sales:
+        st.warning("المحفظة مفيهاش محصلين (عمود Sales Person).")
+        return
+    if not claims_sales:
+        st.warning("ملف المطالبات مفيهوش محصلين.")
+        return
+
+    st.markdown("### 2️⃣ الاختيارات")
+
+    departing = st.selectbox(
+        "المحصل القديم (اللي مشى)",
+        options=claims_sales,
+        key="dist_departing",
+    )
+
+    receivers = [s for s in wallet_sales if s != departing]
+    if not receivers:
+        st.error("مفيش محصلين في المحفظة غير المغادر.")
+        return
+
+    # إعادة ضبط اختيار المستقبِلين لو اتغير المغادر
+    if st.session_state.get("_dist_prev_dep") != departing:
+        st.session_state["_dist_prev_dep"] = departing
+        st.session_state["dist_targets"] = list(receivers)
+
+    col_a, col_b = st.columns(2)
+    with col_a:
+        with st.container(border=True):
+            targets = _render_clean_picker(
+                "المحصلين المستقبِلين",
+                receivers,
+                "dist_targets",
+                help_text="مين هياخد المطالبات بعد التوزيع",
+            )
+    with col_b:
+        with st.container(border=True):
+            if claims_substates:
+                selected_substates = _render_clean_picker(
+                    "الحالات (Sub State)",
+                    claims_substates,
+                    "dist_substates",
+                    help_text="الحالات اللي هتتوزع — الافتراضي الكل",
                 )
+            else:
+                st.warning("مفيش عمود Sub State")
+                selected_substates = []
+
+    st.caption(
+        "التوزيع بالتساوي على المبلغ + الحسابات + الحالات. "
+        "كل مطالبات نفس العميل (رقم الهوية) تروح لمحصل واحد فقط. "
+        "يُضاف عمود «المحصل بعد التوزيع»."
+    )
+
+    if st.button("🚀 نفّذ التوزيع", type="primary", use_container_width=True, key="dist_run"):
+        with st.spinner("جارٍ التوزيع..."):
+            ok = _run_leaver_distribution(
+                wallet_uploaded,
+                claims_uploaded,
+                departing=departing,
+                targets=targets,
+                selected_substates=selected_substates,
+            )
+            if ok:
                 st.rerun()
 
     cached = st.session_state.get(DISTRIBUTION_RESULT_KEY)
     if cached and cached.get("df") is not None:
+        st.divider()
         _show_distribution_results(cached)
-    else:
-        st.info("اضبط الخيارات واضغط «نفّذ التوزيع».")
 
 
 PAGES = {

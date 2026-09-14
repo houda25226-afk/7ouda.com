@@ -7525,13 +7525,30 @@ def _run_leaver_distribution(wallet_uploaded, claims_uploaded, departing, target
     substate_map = pool.groupby("_customer")["_substate"].apply(lambda s: s.value_counts().to_dict()).to_dict()
     grouped["substates"] = grouped["_customer"].map(substate_map)
 
+    def _as_substate_dict(val):
+        if isinstance(val, dict):
+            return dict(val)
+        if val is None or (isinstance(val, float) and pd.isna(val)):
+            return {}
+        try:
+            if pd.isna(val):
+                return {}
+        except (TypeError, ValueError):
+            pass
+        if hasattr(val, "items"):
+            try:
+                return dict(val)
+            except Exception:
+                return {}
+        return {}
+
     groups_for_balance = [
         {
             "customer": r["_customer"],
-            "amount": float(r["amount"]),
-            "cases": int(r["cases"]),
-            "accounts": int(r["accounts"]),
-            "substates": dict(r["substates"] or {}),
+            "amount": float(r["amount"] or 0),
+            "cases": int(r["cases"] or 0),
+            "accounts": int(r["accounts"] or 1),
+            "substates": _as_substate_dict(r["substates"]),
         }
         for _, r in grouped.iterrows()
     ]
@@ -7704,7 +7721,7 @@ def _run_distribution_pipeline(uploaded, mode, departing=None, targets=None, new
             "amount": float(r["amount"]),
             "cases": int(r["cases"]),
             "accounts": int(r.get("accounts", r["cases"]) if "accounts" in r else r["cases"]),
-            "substates": dict(r["substates"] or {}),
+            "substates": (dict(r["substates"]) if isinstance(r.get("substates"), dict) else {}),
         }
         for _, r in movable.iterrows()
     ]
@@ -7906,6 +7923,53 @@ def _show_distribution_results(result):
     )
 
 
+
+def _render_check_grid(title, options, state_key, *, columns=3, icon="•"):
+    """شبكة اختيار أنظف من الـ multiselect الافتراضي: تحديد الكل / إلغاء + مربعات اختيار."""
+    options = [str(o) for o in (options or [])]
+    if state_key not in st.session_state:
+        st.session_state[state_key] = list(options)
+    # تنظيف قيم قديمة اتشالت من الخيارات
+    st.session_state[state_key] = [x for x in st.session_state[state_key] if x in options]
+
+    selected = set(st.session_state[state_key])
+    n_sel = len(selected)
+    n_all = len(options)
+
+    head_l, head_r = st.columns([3, 2])
+    with head_l:
+        st.markdown(f"**{title}**")
+        st.caption(f"المحدد: {n_sel} من {n_all}")
+    with head_r:
+        b1, b2 = st.columns(2)
+        with b1:
+            if st.button("تحديد الكل", key=f"{state_key}_all", use_container_width=True):
+                st.session_state[state_key] = list(options)
+                st.rerun()
+        with b2:
+            if st.button("إلغاء الكل", key=f"{state_key}_none", use_container_width=True):
+                st.session_state[state_key] = []
+                st.rerun()
+
+    if not options:
+        st.warning("لا توجد عناصر للاختيار.")
+        return []
+
+    cols = st.columns(max(int(columns), 1))
+    new_selected = []
+    for i, opt in enumerate(options):
+        with cols[i % len(cols)]:
+            checked = st.checkbox(
+                f"{icon} {opt}",
+                value=(opt in selected),
+                key=f"{state_key}_cb_{i}",
+            )
+            if checked:
+                new_selected.append(opt)
+    st.session_state[state_key] = new_selected
+    return list(new_selected)
+
+
 def page_distribution():
     """تويب التوزيع — الحالة الأولى: محصل مشى.
 
@@ -7989,43 +8053,50 @@ def page_distribution():
         st.divider()
         st.markdown("#### 2️⃣ اختيارات التوزيع")
 
-        # المحصل القديم: من ملف المطالبات (أو تقاطع مع المحفظة)
         departing_options = claims_sales
-        departing = st.selectbox(
-            "👤 المحصل القديم (اللي مشى)",
-            options=departing_options,
-            key="distribution_departing",
-        )
+        with st.container(border=True):
+            departing = st.selectbox(
+                "👤 المحصل القديم (اللي مشى)",
+                options=departing_options,
+                key="distribution_departing",
+            )
 
-        # المستقبِلون: كل محصلي المحفظة ما عدا المغادر — اختيار متعدد (سلايسر قائمة)
         receiver_options = [s for s in wallet_sales if s != departing]
         if not receiver_options:
             st.error("المحفظة مفيهاش محصلين غير المغادر — مش هقدر أوزّع.")
             return
 
-        targets = st.multiselect(
-            "🎯 المحصلين اللي هوزّع عليهم (من المحفظة — كلهم ما عدا المغادر)",
-            options=receiver_options,
-            default=receiver_options,
-            key="distribution_targets_leaver",
-            help="شِيل من القائمة أي محصل مش عايز ياخد نصيب من التوزيع.",
-        )
+        # لو اتغير المغادر، صفّي المستقبِلين من القائمة القديمة
+        prev_dep = st.session_state.get("_distribution_prev_departing")
+        if prev_dep != departing:
+            st.session_state["_distribution_prev_departing"] = departing
+            st.session_state["distribution_targets_grid"] = list(receiver_options)
 
-        # الحالات — افتراضي الكل
-        if claims_substates:
-            selected_substates = st.multiselect(
-                "🏷️ الحالات اللي هتتوزع (Sub State) — الافتراضي: الكل",
-                options=claims_substates,
-                default=claims_substates,
-                key="distribution_selected_substates",
+        with st.container(border=True):
+            targets = _render_check_grid(
+                "🎯 المحصلين المستقبِلين (من المحفظة — ما عدا المغادر)",
+                receiver_options,
+                "distribution_targets_grid",
+                columns=2,
+                icon="👤",
             )
-        else:
-            st.warning("⚠️ مفيش عمود Sub State في ملف المطالبات.")
-            selected_substates = []
 
-        st.caption(
-            "ℹ️ التوزيع بالتساوي على: **عدد العملاء (رقم الهوية)** + **المبالغ (Net Amount)** "
-            "+ **عدد الحالات لكل نوع Sub State**. "
+        with st.container(border=True):
+            if claims_substates:
+                selected_substates = _render_check_grid(
+                    "🏷️ الحالات اللي هتتوزع (Sub State)",
+                    claims_substates,
+                    "distribution_substates_grid",
+                    columns=2,
+                    icon="📌",
+                )
+            else:
+                st.warning("⚠️ مفيش عمود Sub State في ملف المطالبات.")
+                selected_substates = []
+
+        st.info(
+            "التوزيع بالتساوي على: **عدد الحسابات** + **عدد العملاء (رقم الهوية)** + "
+            "**المبالغ (Net Amount)** + **عدد الحالات لكل نوع**. "
             "نفس العميل مش هيتقسم على أكتر من محصل، وهيتعمل عمود **المحصل بعد التوزيع**."
         )
 

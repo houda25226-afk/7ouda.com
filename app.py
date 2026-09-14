@@ -11,6 +11,8 @@
   - الوعود (قائمة + مكسورة)
   - الإهمال ومتابعة الإهمال
   - الجدولة المتعثرة (محفظة + سدادات)
+  - أخطاء الحالات
+  - توزيع المحفظة (محصّل مشي / محصّل جديد)
   - تحليل نشاط المحصّلين (Dashboard + تصدير HTML)
 
 أسماء الأعمدة قابلة للتعديل من قسم الإعدادات أعلى الملف.
@@ -257,6 +259,15 @@ CASE_ORIGINAL_DEBT_CANDIDATES = [
 ]
 # حد المتبقي المقبول عند الإقفال (سدد كامل / جدولة مقفلة)
 CASE_NET_AMOUNT_ERROR_MIN = 50.0
+
+# ==========================================================
+# إعدادات تويب التوزيع
+# ==========================================================
+DISTRIBUTION_RESULT_KEY = "distribution_result"
+DISTRIBUTION_ASSIGNED_COL = "المحصّل_بعد_التوزيع"
+DISTRIBUTION_PREV_COL = "المحصّل_قبل_التوزيع"
+DISTRIBUTION_MODE_KEY = "distribution_mode"  # leave | new
+
 
 
 def uploaded_file_hash(uploaded_file):
@@ -7305,12 +7316,478 @@ def page_case_errors():
 
 
 
+def _distribution_account_key(series):
+    """مفتاح فريد للعميل من رقم الحساب — بيستبعد القيم الفاضية."""
+    return series.astype("string").str.strip()
+
+
+def _distribution_build_account_units(df, account_col, sales_col, net_col, substate_col):
+    """يبني وحدات توزيع: كل حساب = صف واحد (عميل واحد → محصّل واحد)."""
+    work = df.copy()
+    work["_acct"] = _distribution_account_key(work[account_col])
+    valid = work["_acct"].notna() & work["_acct"].ne("") & work["_acct"].str.lower().ne("nan")
+    work = work.loc[valid].copy()
+    if work.empty:
+        return pd.DataFrame(), work
+
+    work["_net"] = pd.to_numeric(work[net_col], errors="coerce").fillna(0.0) if net_col and net_col in work.columns else 0.0
+    if substate_col and substate_col in work.columns:
+        work["_state"] = work[substate_col].astype(str).str.strip()
+    else:
+        work["_state"] = "—"
+    work["_sales"] = work[sales_col].astype(str).str.strip()
+
+    def _mode_or_first(s):
+        s = s.dropna()
+        if s.empty:
+            return "—"
+        m = s.mode()
+        return str(m.iloc[0]) if not m.empty else str(s.iloc[0])
+
+    units = (
+        work.groupby("_acct", sort=False)
+        .agg(
+            عدد_الصفوف=("_acct", "size"),
+            صافي_المديونية=("_net", "sum"),
+            الحالة=("_state", _mode_or_first),
+            المحصل_الحالي=("_sales", _mode_or_first),
+        )
+        .reset_index()
+        .rename(columns={"_acct": "رقم_الحساب"})
+    )
+    return units, work
+
+
+def _distribution_greedy_assign(units, target_collectors, balance_states=True):
+    """توزيع جشع: كل حساب لمحصّل واحد مع موازنة العدد + المبلغ (+ الحالات اختياريًا).
+
+    القاعدة الذهبية: الحساب يروح لمحصّل واحد فقط — مفيش تقسيم لنفس العميل.
+    """
+    if units.empty or not target_collectors:
+        out = units.copy()
+        out["المحصّل_الجديد"] = None
+        return out
+
+    targets = [str(t).strip() for t in target_collectors if str(t).strip()]
+    if not targets:
+        out = units.copy()
+        out["المحصّل_الجديد"] = None
+        return out
+
+    ordered = units.sort_values("صافي_المديونية", ascending=False).reset_index(drop=True)
+
+    load_count = {t: 0 for t in targets}
+    load_amount = {t: 0.0 for t in targets}
+    load_state = {t: {} for t in targets}
+
+    total_amount = float(ordered["صافي_المديونية"].sum()) or 1.0
+    n_accounts = max(len(ordered), 1)
+    target_count = n_accounts / len(targets)
+    target_amount = total_amount / len(targets)
+
+    assignments = []
+    for _, row in ordered.iterrows():
+        state = str(row.get("الحالة", "—"))
+        amount = float(row["صافي_المديونية"] or 0.0)
+
+        best = None
+        best_score = None
+        for t in targets:
+            count_term = (load_count[t] + 1) / target_count
+            amount_term = (load_amount[t] + amount) / target_amount if target_amount else 0.0
+            score = count_term + amount_term
+            if balance_states:
+                state_count = load_state[t].get(state, 0)
+                score += 0.15 * state_count
+            if best_score is None or score < best_score:
+                best_score = score
+                best = t
+
+        assignments.append(best)
+        load_count[best] += 1
+        load_amount[best] += amount
+        load_state[best][state] = load_state[best].get(state, 0) + 1
+
+    result = ordered.copy()
+    result["المحصّل_الجديد"] = assignments
+    return result
+
+
+def _distribution_apply_to_rows(work_rows, units_assigned, account_col, sales_col):
+    """يرجع المحفظة الأصلية مع عمود المحصّل بعد التوزيع — نفس الحساب كله لنفس المحصّل."""
+    mapping = dict(zip(units_assigned["رقم_الحساب"], units_assigned["المحصّل_الجديد"]))
+    out = work_rows.copy()
+    out[DISTRIBUTION_PREV_COL] = out[sales_col].astype(str).str.strip()
+    acct = _distribution_account_key(out[account_col])
+    out[DISTRIBUTION_ASSIGNED_COL] = acct.map(mapping)
+    missing = out[DISTRIBUTION_ASSIGNED_COL].isna()
+    out.loc[missing, DISTRIBUTION_ASSIGNED_COL] = out.loc[missing, DISTRIBUTION_PREV_COL]
+    return out
+
+
+def _distribution_summary_table(units_assigned, collector_col="المحصّل_الجديد"):
+    if units_assigned.empty or collector_col not in units_assigned.columns:
+        return pd.DataFrame()
+    summary = (
+        units_assigned.groupby(collector_col, sort=False)
+        .agg(
+            عدد_الحسابات=("رقم_الحساب", "nunique"),
+            إجمالي_المديونية=("صافي_المديونية", "sum"),
+            عدد_الصفوف=("عدد_الصفوف", "sum"),
+        )
+        .reset_index()
+        .rename(columns={collector_col: "المحصّل"})
+    )
+    total_amt = float(summary["إجمالي_المديونية"].sum()) or 1.0
+    total_acc = int(summary["عدد_الحسابات"].sum()) or 1
+    summary["نسبة_الحسابات_%"] = (summary["عدد_الحسابات"] / total_acc * 100).round(1)
+    summary["نسبة_المديونية_%"] = (summary["إجمالي_المديونية"] / total_amt * 100).round(1)
+    summary = summary.sort_values("عدد_الحسابات", ascending=False).reset_index(drop=True)
+    return summary
+
+
+def _distribution_state_breakdown(units_assigned):
+    if units_assigned.empty or "المحصّل_الجديد" not in units_assigned.columns:
+        return pd.DataFrame()
+    pivot = (
+        units_assigned.groupby(["المحصّل_الجديد", "الحالة"])
+        .size()
+        .reset_index(name="عدد_الحسابات")
+    )
+    return pivot
+
+
+def page_distribution():
+    """تويب توزيع المحفظة: محصّل مشي أو محصّل جديد — مع ضمان عميل واحد لمحصّل واحد."""
+    page_header(
+        "PORTFOLIO DISTRIBUTION",
+        "🔀 التوزيع",
+        "وزّع المطالبات على المحصّلين مع موازنة عدد الحسابات والمديونية والحالات — والعميل مايروحش لأكتر من محصّل",
+    )
+
+    if DISTRIBUTION_MODE_KEY not in st.session_state:
+        st.session_state[DISTRIBUTION_MODE_KEY] = "leave"
+
+    m1, m2 = st.columns(2)
+    with m1:
+        if st.button(
+            "🚪 محصّل مشي — إعادة توزيع مطالباته",
+            use_container_width=True,
+            type="primary" if st.session_state[DISTRIBUTION_MODE_KEY] == "leave" else "secondary",
+            key="dist_mode_leave",
+        ):
+            st.session_state[DISTRIBUTION_MODE_KEY] = "leave"
+            st.rerun()
+    with m2:
+        if st.button(
+            "🆕 محصّل جديد — توزيع المحفظة بالتساوي",
+            use_container_width=True,
+            type="primary" if st.session_state[DISTRIBUTION_MODE_KEY] == "new" else "secondary",
+            key="dist_mode_new",
+        ):
+            st.session_state[DISTRIBUTION_MODE_KEY] = "new"
+            st.rerun()
+
+    mode = st.session_state[DISTRIBUTION_MODE_KEY]
+    st.caption(
+        "الحالة 1: محصّل ساب الشغل → نوزّع حساباته على المحصّلين المختارين.  "
+        "الحالة 2: محصّل جديد / إعادة توزيع كاملة → نوزّع المحفظة (أو الحالات المختارة) بالتساوي."
+    )
+    st.divider()
+
+    upload_key = "distribution_upload"
+    cache_scope = "distribution_upload"
+    result_keys = (DISTRIBUTION_RESULT_KEY,)
+
+    uploaded = st.file_uploader(
+        "📂 ارفع ملف المحفظة (Excel أو CSV)",
+        type=["xlsx", "xls", "csv"],
+        key=upload_key,
+        on_change=sync_file_cache,
+        args=(upload_key, cache_scope, result_keys),
+    )
+
+    df = None
+    sales_col = substate_col = net_col = account_col = None
+    filename = None
+
+    if uploaded is not None:
+        try:
+            raw = read_uploaded_dataframe(uploaded)
+        except Exception as e:
+            st.error(f"تعذر قراءة الملف: {e}")
+            return
+        df = raw.iloc[1:].copy() if len(raw) > 0 else raw.copy()
+        df = df.reset_index(drop=True)
+        filename = uploaded.name
+    else:
+        cached = st.session_state.get(DISTRIBUTION_RESULT_KEY)
+        if cached and cached.get("source_df") is not None:
+            df = cached["source_df"]
+            sales_col = cached.get("sales_col")
+            substate_col = cached.get("substate_col")
+            net_col = cached.get("net_col")
+            account_col = cached.get("account_col")
+            filename = cached.get("filename")
+            st.success(f"✅ محفظة محفوظة: {filename}. لن تُحذف عند التنقل بين التبويبات.")
+        else:
+            st.info("📂 ارفع ملف المحفظة لبدء التوزيع.")
+            return
+
+    if df is None or df.empty:
+        st.warning("الملف فاضي بعد القراءة.")
+        return
+
+    sales_col = sales_col or find_column(df, SALES_PERSON_CANDIDATES)
+    substate_col = substate_col or find_column(df, PROMISE_SUB_STATE_CANDIDATES)
+    net_col = net_col or find_column(df, PROMISE_NET_AMOUNT_CANDIDATES)
+    account_col = account_col or find_column(df, ACCOUNT_NUMBER_CANDIDATES + ID_CANDIDATES + CLAIM_CANDIDATES)
+
+    missing = []
+    if not sales_col:
+        missing.append("المحصّل (Sales Person)")
+    if not account_col:
+        missing.append("رقم الحساب (Account Number)")
+    if not net_col:
+        missing.append("صافي المديونية (Net Amount)")
+    if missing:
+        st.error(
+            "تعذر العثور على أعمدة مهمة: "
+            + " · ".join(missing)
+            + f"\n\nالأعمدة الموجودة: {', '.join(map(str, df.columns))}"
+        )
+        return
+
+    all_sales = sorted(
+        {
+            str(v).strip()
+            for v in df[sales_col].tolist()
+            if str(v).strip() and str(v).strip().lower() not in {"nan", "none", "null"}
+        }
+    )
+    all_states = []
+    if substate_col:
+        all_states = sorted(
+            {
+                str(v).strip()
+                for v in df[substate_col].tolist()
+                if str(v).strip() and str(v).strip().lower() not in {"nan", "none", "null"}
+            }
+        )
+
+    st.markdown("### 🎛️ فلاتر التوزيع")
+    f1, f2 = st.columns(2)
+    with f1:
+        selected_states = st.multiselect(
+            "📋 الحالات (Sub State) — اختر الحالات اللي هتتوزع",
+            options=all_states,
+            default=all_states,
+            key="dist_states_slicer",
+            help="لو سبت القائمة فاضية مش هيتوزع حاجة. الافتراضي: كل الحالات.",
+        )
+    with f2:
+        if mode == "leave":
+            leaving = st.selectbox(
+                "🚪 المحصّل اللي مشي (مصدر المطالبات)",
+                options=all_sales,
+                key="dist_leaving_collector",
+                help="كل حسابات المحصّل ده (حسب الحالات المختارة) هتتوزع على المستهدفين.",
+            )
+            target_options = [s for s in all_sales if s != leaving]
+            target_collectors = st.multiselect(
+                "👥 المحصّلين المستهدفين (هيستلموا التوزيع)",
+                options=target_options,
+                default=target_options,
+                key="dist_target_collectors_leave",
+                help="اختار مين هيستلم من حسابات المحصّل اللي مشي.",
+            )
+        else:
+            leaving = None
+            target_collectors = st.multiselect(
+                "👥 المحصّلين المستهدفين (توزيع متساوي)",
+                options=all_sales,
+                default=all_sales,
+                key="dist_target_collectors_new",
+                help="المحفظة (أو الحالات المختارة) هتتوزع بالتساوي على القائمة دي. تقدر تضيف اسم محصّل جديد يدويًا تحت.",
+            )
+            new_name = st.text_input(
+                "➕ اسم محصّل جديد (اختياري — يُضاف لقائمة التوزيع)",
+                key="dist_new_collector_name",
+                placeholder="مثال: أحمد — فريق التحصيل",
+            )
+            if new_name and new_name.strip():
+                nn = new_name.strip()
+                if nn not in target_collectors:
+                    target_collectors = list(target_collectors) + [nn]
+
+    balance_states = st.checkbox(
+        "⚖️ موازنة الحالات (Sub State) بين المحصّلين قدر الإمكان",
+        value=True,
+        key="dist_balance_states",
+    )
+
+    can_run = bool(selected_states) and bool(target_collectors)
+    if mode == "leave" and not leaving:
+        can_run = False
+
+    run = st.button(
+        "🚀 تنفيذ التوزيع",
+        type="primary",
+        use_container_width=True,
+        disabled=not can_run,
+        key="dist_run_btn",
+    )
+    if not can_run:
+        st.warning("اختار على الأقل حالة واحدة + محصّل مستهدف واحد (وفي حالة المحصّل الماشي لازم تختار مين مشي).")
+
+    if run:
+        work = df.copy()
+        if substate_col and selected_states:
+            state_vals = work[substate_col].astype(str).str.strip()
+            work = work.loc[state_vals.isin(selected_states)].copy()
+
+        units, work_rows = _distribution_build_account_units(
+            work, account_col, sales_col, net_col, substate_col
+        )
+        if units.empty:
+            st.error("مفيش حسابات صالحة للتوزيع بعد الفلترة.")
+            return
+
+        if mode == "leave":
+            units_src = units.loc[units["المحصل_الحالي"] == leaving].copy()
+            if units_src.empty:
+                st.error(f"مفيش حسابات للمحصّل «{leaving}» ضمن الحالات المختارة.")
+                return
+            assigned_units = _distribution_greedy_assign(
+                units_src, target_collectors, balance_states=balance_states
+            )
+            changed_units = assigned_units
+            before_base = units_src
+            filter_df = work
+        else:
+            assigned_units = _distribution_greedy_assign(
+                units, target_collectors, balance_states=balance_states
+            )
+            changed_units = assigned_units
+            before_base = units
+            filter_df = work
+
+        result_df = _distribution_apply_to_rows(
+            filter_df, assigned_units, account_col, sales_col
+        )
+        before_summary = _distribution_summary_table(
+            before_base.assign(**{"المحصّل_الجديد": before_base["المحصل_الحالي"]})
+        )
+        after_summary = _distribution_summary_table(changed_units)
+        state_break = _distribution_state_breakdown(changed_units)
+
+        st.session_state[DISTRIBUTION_RESULT_KEY] = {
+            "result_df": result_df,
+            "changed_units": changed_units,
+            "before_summary": before_summary,
+            "after_summary": after_summary,
+            "state_break": state_break,
+            "source_df": df,
+            "sales_col": sales_col,
+            "substate_col": substate_col,
+            "net_col": net_col,
+            "account_col": account_col,
+            "filename": filename,
+            "mode": mode,
+            "leaving": leaving,
+            "targets": list(target_collectors),
+            "states": list(selected_states),
+        }
+        st.success("✅ تم التوزيع بنجاح — كل حساب اتوجّه لمحصّل واحد فقط.")
+        st.rerun()
+
+    cached = st.session_state.get(DISTRIBUTION_RESULT_KEY)
+    if not cached or cached.get("result_df") is None:
+        return
+
+    result_df = cached["result_df"]
+    changed_units = cached.get("changed_units")
+    after_summary = cached.get("after_summary")
+    before_summary = cached.get("before_summary")
+    state_break = cached.get("state_break")
+    mode_label = "محصّل مشي" if cached.get("mode") == "leave" else "محصّل جديد / توزيع كامل"
+
+    st.markdown(f"### 📊 نتيجة التوزيع — {mode_label}")
+    if cached.get("mode") == "leave":
+        st.caption(f"المصدر: «{cached.get('leaving')}» → المستهدفون: {' · '.join(cached.get('targets') or [])}")
+    else:
+        st.caption(f"المستهدفون: {' · '.join(cached.get('targets') or [])}")
+
+    n_accounts = int(changed_units["رقم_الحساب"].nunique()) if changed_units is not None and not changed_units.empty else 0
+    total_amt = float(changed_units["صافي_المديونية"].sum()) if changed_units is not None and not changed_units.empty else 0.0
+    n_targets = int(changed_units["المحصّل_الجديد"].nunique()) if changed_units is not None and not changed_units.empty else 0
+    k1, k2, k3, k4 = st.columns(4)
+    k1.metric("🧾 حسابات تم توزيعها", f"{n_accounts:,}")
+    k2.metric("💰 إجمالي المديونية", f"{total_amt:,.0f}")
+    k3.metric("👥 محصّلين مستلمين", f"{n_targets:,}")
+    k4.metric("📄 صفوف في النتيجة", f"{len(result_df):,}")
+
+    c1, c2 = st.columns(2)
+    with c1:
+        st.markdown("#### قبل التوزيع")
+        if before_summary is not None and not before_summary.empty:
+            st.dataframe(before_summary, use_container_width=True, hide_index=True)
+        else:
+            st.info("لا توجد بيانات.")
+    with c2:
+        st.markdown("#### بعد التوزيع")
+        if after_summary is not None and not after_summary.empty:
+            st.dataframe(after_summary, use_container_width=True, hide_index=True)
+            fig = px.bar(
+                after_summary,
+                x="المحصّل",
+                y=["عدد_الحسابات", "إجمالي_المديونية"],
+                barmode="group",
+                template=PLOTLY_TEMPLATE,
+                color_discrete_sequence=OPS_SCALE,
+            )
+            _apply_ops_chart_style(fig, "توزيع الحسابات والمديونية بعد التوزيع", height=380)
+            st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG, key="dist_after_chart")
+        else:
+            st.info("لا توجد بيانات.")
+
+    if state_break is not None and not state_break.empty:
+        st.markdown("#### توزيع الحالات حسب المحصّل")
+        st.dataframe(state_break, use_container_width=True, hide_index=True)
+
+    st.markdown("#### تفاصيل الحسابات بعد التوزيع")
+    show_cols = [c for c in ["رقم_الحساب", "المحصل_الحالي", "المحصّل_الجديد", "الحالة", "صافي_المديونية", "عدد_الصفوف"] if c in changed_units.columns]
+    st.dataframe(changed_units[show_cols], use_container_width=True, hide_index=True)
+
+    out = io.BytesIO()
+    with pd.ExcelWriter(out, engine="openpyxl") as writer:
+        result_df.to_excel(writer, index=False, sheet_name="المحفظة_بعد_التوزيع")
+        if after_summary is not None:
+            after_summary.to_excel(writer, index=False, sheet_name="ملخص_بعد")
+        if before_summary is not None:
+            before_summary.to_excel(writer, index=False, sheet_name="ملخص_قبل")
+        if changed_units is not None:
+            changed_units.to_excel(writer, index=False, sheet_name="وحدات_الحسابات")
+    st.download_button(
+        "⬇️ تحميل نتيجة التوزيع (Excel)",
+        data=out.getvalue(),
+        file_name=f"توزيع_المحفظة_{datetime.now().strftime('%Y-%m-%d')}.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        use_container_width=True,
+        type="primary",
+        key="dist_download",
+    )
+
+
+
+
 PAGES = {
     "🎯 تصنيف المكالمات": page_classification,
     "📚 الوعود": page_promises,
     "⚠️ الإهمال والمتابعة": page_neglect,
     "📅 الجدولة المتعثرة": page_schedule_stalled,
     "🧾 أخطاء الحالات": page_case_errors,
+    "🔀 التوزيع": page_distribution,
     "📊 تحليل نشاط المحصّلين": page_dashboard,
 }
 

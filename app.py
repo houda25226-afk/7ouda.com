@@ -7410,9 +7410,12 @@ def _extract_distribution_substates_from_df(df):
 
 
 def _balance_customer_groups(groups, targets):
-    """توزيع مجموعات العملاء على المحصلين بالتساوي في:
-    المبلغ + عدد الحسابات + عدد العملاء + عدد الحالات (لكل Sub State).
+    """توزيع مجموعات العملاء على المحصلين بأقصى تساوي ممكن.
+
+    الأولوية الأولى: تساوي **المبالغ**.
+    بعدين: الحسابات + العملاء + الحالات.
     كل عميل (رقم هوية) يروح لمحصل واحد كامل.
+    بعد التوزيع الأولي: تمريرة تحسين بتبادل عملاء بين المحصلين لتقليل فرق المبالغ.
     """
     targets = list(dict.fromkeys([str(t).strip() for t in (targets or []) if str(t).strip()]))
     load = {
@@ -7422,47 +7425,143 @@ def _balance_customer_groups(groups, targets):
     if not targets or not groups:
         return {}, load
 
+    # فهرس سريع للمجموعات
+    by_customer = {g["customer"]: g for g in groups}
+
     total_amount = sum(float(g.get("amount") or 0) for g in groups) or 1.0
-    total_accounts = sum(int(g.get("accounts") or 1) for g in groups) or 1
+    total_accounts = sum(max(int(g.get("accounts") or 1), 1) for g in groups) or 1
     total_customers = len(groups) or 1
     total_cases = sum(int(g.get("cases") or 0) for g in groups) or 1
     substate_totals = {}
     for g in groups:
-        for state, cnt in (g.get("substates") or {}).items():
+        for state, cnt in (g.get("substates") or {}).items() if isinstance(g.get("substates"), dict) else []:
             substate_totals[state] = substate_totals.get(state, 0) + int(cnt or 0)
     substate_totals = {s: (c or 1) for s, c in substate_totals.items()}
+
+    # وزن المبلغ أعلى بوضوح عشان الفرق يقل
+    W_AMOUNT = 6.0
+    W_ACCOUNTS = 1.5
+    W_CUSTOMERS = 1.0
+    W_CASES = 1.0
+    W_SUBSTATE = 0.8
 
     assignment = {}
     groups_sorted = sorted(
         groups,
         key=lambda g: (-float(g.get("amount") or 0), -int(g.get("accounts") or 0), -int(g.get("cases") or 0)),
     )
-    for g in groups_sorted:
+
+    def _apply(cust, collector, sign=+1):
+        g = by_customer[cust]
         g_accounts = max(int(g.get("accounts") or 1), 1)
         g_cases = int(g.get("cases") or 0)
         g_amount = float(g.get("amount") or 0)
+        g_subs = g.get("substates") if isinstance(g.get("substates"), dict) else {}
+        load[collector]["amount"] += sign * g_amount
+        load[collector]["cases"] += sign * g_cases
+        load[collector]["accounts"] += sign * g_accounts
+        load[collector]["customers"] += sign * 1
+        for state, cnt in g_subs.items():
+            load[collector]["substates"][state] = load[collector]["substates"].get(state, 0) + sign * int(cnt or 0)
+
+    for g in groups_sorted:
         g_subs = g.get("substates") if isinstance(g.get("substates"), dict) else {}
 
         def _score(t, _subs=g_subs):
             L = load[t]
             s = (
-                L["amount"] / total_amount
-                + L["accounts"] / total_accounts
-                + L["customers"] / total_customers
-                + L["cases"] / total_cases
+                W_AMOUNT * (L["amount"] / total_amount)
+                + W_ACCOUNTS * (L["accounts"] / total_accounts)
+                + W_CUSTOMERS * (L["customers"] / total_customers)
+                + W_CASES * (L["cases"] / total_cases)
             )
             for state, cnt in _subs.items():
-                s += L["substates"].get(state, 0) / substate_totals.get(state, 1)
+                s += W_SUBSTATE * (L["substates"].get(state, 0) / substate_totals.get(state, 1))
             return s
 
         best = min(targets, key=_score)
         assignment[g["customer"]] = best
-        load[best]["amount"] += g_amount
-        load[best]["cases"] += g_cases
-        load[best]["accounts"] += g_accounts
-        load[best]["customers"] += 1
-        for state, cnt in g_subs.items():
-            load[best]["substates"][state] = load[best]["substates"].get(state, 0) + int(cnt or 0)
+        _apply(g["customer"], best, +1)
+
+    # ---- تمريرة تحسين: نقل عميل من الأثقل للأقل لو الفرق يقل ----
+    def _amount_spread():
+        vals = [load[t]["amount"] for t in targets]
+        return max(vals) - min(vals) if vals else 0.0
+
+    improved = True
+    rounds = 0
+    while improved and rounds < 40:
+        improved = False
+        rounds += 1
+        richest = max(targets, key=lambda t: load[t]["amount"])
+        poorest = min(targets, key=lambda t: load[t]["amount"])
+        if richest == poorest:
+            break
+        gap = load[richest]["amount"] - load[poorest]["amount"]
+        if gap <= 0:
+            break
+        # مرشحين للنقل: عملاء عند الأثقل مبلغهم <= نصف الفجوة (عشان منعدّيش للناحية التانية بقوة)
+        candidates = [
+            c for c, t in assignment.items()
+            if t == richest and float(by_customer[c].get("amount") or 0) > 0
+            and float(by_customer[c].get("amount") or 0) < gap
+        ]
+        candidates.sort(key=lambda c: float(by_customer[c].get("amount") or 0), reverse=True)
+        best_move = None
+        best_new_gap = gap
+        for cust in candidates:
+            amt = float(by_customer[cust].get("amount") or 0)
+            # فجوة جديدة تقريبية بعد النقل
+            new_rich = load[richest]["amount"] - amt
+            new_poor = load[poorest]["amount"] + amt
+            # احسب الانتشار الكلي التقريبي
+            trial = {t: load[t]["amount"] for t in targets}
+            trial[richest] = new_rich
+            trial[poorest] = new_poor
+            new_gap = max(trial.values()) - min(trial.values())
+            if new_gap < best_new_gap - 1e-6:
+                best_new_gap = new_gap
+                best_move = cust
+        if best_move is not None:
+            _apply(best_move, richest, -1)
+            _apply(best_move, poorest, +1)
+            assignment[best_move] = poorest
+            improved = True
+
+    # ---- تبادل ثنائي محدود لو لسه في فرق كبير ----
+    for _ in range(25):
+        richest = max(targets, key=lambda t: load[t]["amount"])
+        poorest = min(targets, key=lambda t: load[t]["amount"])
+        gap = load[richest]["amount"] - load[poorest]["amount"]
+        if gap < total_amount * 0.01:  # فرق أقل من 1% من الإجمالي → كويس
+            break
+        rich_custs = [c for c, t in assignment.items() if t == richest]
+        poor_custs = [c for c, t in assignment.items() if t == poorest]
+        best_swap = None
+        best_gap = gap
+        for rc in rich_custs:
+            ra = float(by_customer[rc].get("amount") or 0)
+            for pc in poor_custs:
+                pa = float(by_customer[pc].get("amount") or 0)
+                if ra <= pa:
+                    continue
+                trial = {t: load[t]["amount"] for t in targets}
+                trial[richest] = trial[richest] - ra + pa
+                trial[poorest] = trial[poorest] - pa + ra
+                ng = max(trial.values()) - min(trial.values())
+                if ng < best_gap - 1e-6:
+                    best_gap = ng
+                    best_swap = (rc, pc)
+        if best_swap is None:
+            break
+        rc, pc = best_swap
+        _apply(rc, richest, -1)
+        _apply(pc, poorest, -1)
+        _apply(rc, poorest, +1)
+        _apply(pc, richest, +1)
+        assignment[rc] = poorest
+        assignment[pc] = richest
+
     return assignment, load
 
 
@@ -7686,6 +7785,16 @@ def _show_distribution_results(result):
     after = result.get("after_summary")
     if after is not None and not after.empty:
         st.markdown("#### ملخص بعد التوزيع")
+        if "الإجمالي" in after.columns and len(after) > 1:
+            mx = float(after["الإجمالي"].max())
+            mn = float(after["الإجمالي"].min())
+            avg = float(after["الإجمالي"].mean())
+            st.caption(
+                f"متوسط المبلغ/محصل: **{avg:,.0f}** · "
+                f"الأعلى: **{mx:,.0f}** · الأدنى: **{mn:,.0f}** · "
+                f"الفرق: **{mx - mn:,.0f}** "
+                f"({((mx - mn) / avg * 100) if avg else 0:.1f}% من المتوسط)"
+            )
         st.dataframe(after, use_container_width=True, hide_index=True)
         left, right = st.columns(2)
         with left:

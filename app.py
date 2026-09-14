@@ -7348,17 +7348,24 @@ def _extract_distribution_sales(uploaded):
 
 
 def _balance_customer_groups(groups, targets):
-    """يوزّع مجموعات العملاء (حسابات كاملة) على المحصلين المستهدفين بأكبر قدر ممكن
-    من التساوي في: المبلغ الإجمالي + عدد الحالات + عدد الحسابات مع بعض (مش معيار واحد بس).
-    كل مجموعة (عميل) بتتحط كاملة عند محصل واحد، عشان مفيش عميل يتقسم على أكتر من محصل."""
+    """يوزّع مجموعات العملاء (حسابات كاملة) على المحصلين المستهدفين بأكبر قدر ممكن من التساوي في:
+    - إجمالي المبلغ (Net Amount)
+    - عدد الحسابات (العملاء)
+    - عدد الحالات من *كل نوع* من أنواع Sub State لوحده (مش مجرد عدد إجمالي)
+    كل مجموعة (عميل) بتتحط كاملة عند محصل واحد، عشان مفيش عميل يتقسم على أكتر من محصل.
+    كل عنصر في groups لازم يكون dict فيه: customer, amount, cases, substates (dict: قيمة Sub State -> عددها)."""
     targets = list(dict.fromkeys([str(t).strip() for t in (targets or []) if str(t).strip()]))
-    load = {t: {"amount": 0.0, "cases": 0, "accounts": 0} for t in targets}
+    load = {t: {"amount": 0.0, "cases": 0, "accounts": 0, "substates": {}} for t in targets}
     if not targets or not groups:
         return {}, load
 
     total_amount = sum(g["amount"] for g in groups) or 1.0
-    total_cases = sum(g["cases"] for g in groups) or 1
     total_accounts = len(groups) or 1
+    substate_totals = {}
+    for g in groups:
+        for state, cnt in (g.get("substates") or {}).items():
+            substate_totals[state] = substate_totals.get(state, 0) + cnt
+    substate_totals = {state: (cnt or 1) for state, cnt in substate_totals.items()}
 
     assignment = {}
     # الأكبر مبلغًا / حالات الأول (Longest Processing Time) بيدي توازن أفضل
@@ -7366,16 +7373,17 @@ def _balance_customer_groups(groups, targets):
     for g in groups_sorted:
         def _score(t):
             L = load[t]
-            return (
-                L["amount"] / total_amount
-                + L["cases"] / total_cases
-                + L["accounts"] / total_accounts
-            )
+            s = L["amount"] / total_amount + L["accounts"] / total_accounts
+            for state, cnt in (g.get("substates") or {}).items():
+                s += L["substates"].get(state, 0) / substate_totals.get(state, 1)
+            return s
         best = min(targets, key=_score)
         assignment[g["customer"]] = best
         load[best]["amount"] += g["amount"]
         load[best]["cases"] += g["cases"]
         load[best]["accounts"] += 1
+        for state, cnt in (g.get("substates") or {}).items():
+            load[best]["substates"][state] = load[best]["substates"].get(state, 0) + cnt
 
     return assignment, load
 
@@ -7454,10 +7462,14 @@ def _run_distribution_pipeline(uploaded, mode, departing=None, targets=None, new
     grouped["collectors"] = grouped["_customer"].map(collectors_map)
     grouped["mixed"] = grouped["collectors"].apply(lambda c: len(c) > 1)
     grouped["single_collector"] = grouped["collectors"].apply(lambda c: c[0] if len(c) == 1 else None)
+    substate_map = pool_df.groupby("_customer")["_substate"].apply(lambda s: s.value_counts().to_dict()).to_dict()
+    grouped["substates"] = grouped["_customer"].map(substate_map)
 
     status_map = {}
     target_list = []
 
+    # قاعدة القفل (منع نقل واعد بالسداد/جدولة) بتتطبق بس في حالة "موظف جديد".
+    # في حالة "موظف مشى" كل نصيب المغادر بيتوزع عادي بما فيه الحالات الواعدة/المجدولة.
     if mode == DISTRIBUTION_MODE_LEAVER:
         if not departing:
             st.error("اختر المحصل اللي هيتوزع نصيبه أولاً.")
@@ -7466,15 +7478,13 @@ def _run_distribution_pipeline(uploaded, mode, departing=None, targets=None, new
         if not target_list:
             st.error("اختر محصل واحد على الأقل يستقبل نصيب المحصل المغادر.")
             return False
-        movable_mask = (~grouped["mixed"]) & (~grouped["locked"]) & (grouped["single_collector"] == departing)
+        movable_mask = (~grouped["mixed"]) & (grouped["single_collector"] == departing)
         movable = grouped[movable_mask]
         for _, row in grouped[~movable_mask].iterrows():
             if row["mixed"]:
                 status_map[row["_customer"]] = DISTRIBUTION_STATUS_MIXED
-            elif row["single_collector"] != departing:
-                status_map[row["_customer"]] = DISTRIBUTION_STATUS_UNRELATED
             else:
-                status_map[row["_customer"]] = DISTRIBUTION_STATUS_LOCKED
+                status_map[row["_customer"]] = DISTRIBUTION_STATUS_UNRELATED
     elif mode == DISTRIBUTION_MODE_NEW:
         target_list = list(dict.fromkeys(list(keep_existing or []) + list(new_collectors or [])))
         if not target_list:
@@ -7488,7 +7498,12 @@ def _run_distribution_pipeline(uploaded, mode, departing=None, targets=None, new
         return False
 
     groups_for_balance = [
-        {"customer": r["_customer"], "amount": float(r["amount"]), "cases": int(r["cases"])}
+        {
+            "customer": r["_customer"],
+            "amount": float(r["amount"]),
+            "cases": int(r["cases"]),
+            "substates": dict(r["substates"] or {}),
+        }
         for _, r in movable.iterrows()
     ]
     assignment, _loads = _balance_customer_groups(groups_for_balance, target_list)
@@ -7524,6 +7539,12 @@ def _run_distribution_pipeline(uploaded, mode, departing=None, targets=None, new
         .reset_index().rename(columns={DISTRIBUTION_NEW_COLLECTOR_COL: "المحصل"})
         .sort_values("الإجمالي", ascending=False)
     )
+    # توزيع كل نوع Sub State على المحصلين بعد التوزيع — عشان نتأكد إن كل نوع اتساوى لوحده
+    substate_breakdown = (
+        pool_df.groupby([DISTRIBUTION_NEW_COLLECTOR_COL, "_substate"])
+        .size().reset_index(name="العدد")
+        .rename(columns={DISTRIBUTION_NEW_COLLECTOR_COL: "المحصل", "_substate": "Sub State"})
+    )
 
     st.session_state[DISTRIBUTION_RESULT_KEY] = {
         "df": final_df,
@@ -7534,9 +7555,13 @@ def _run_distribution_pipeline(uploaded, mode, departing=None, targets=None, new
         "targets": target_list,
         "before_summary": before_summary,
         "after_summary": after_summary,
+        "substate_breakdown": substate_breakdown,
         "moved_cases": int((pool_df[DISTRIBUTION_STATUS_COL] == DISTRIBUTION_STATUS_MOVED).sum()),
+        "moved_locked_cases": int(
+            ((pool_df[DISTRIBUTION_STATUS_COL] == DISTRIBUTION_STATUS_MOVED) & (pool_df["_locked"])).sum()
+        ),
         "moved_accounts": len(assignment),
-        "locked_accounts": int(grouped["locked"].sum()),
+        "locked_accounts": int(grouped["locked"].sum()) if mode == DISTRIBUTION_MODE_NEW else 0,
         "mixed_accounts": int(grouped["mixed"].sum()),
         "total_accounts": int(len(grouped)),
         "total_cases": int(pool_df.shape[0]),
@@ -7553,12 +7578,17 @@ def _show_distribution_results(result):
     )
     st.success(f"✅ التوزيع جاهز — الملف: {result.get('filename', '—')} · {label}")
 
+    last_card = (
+        ("🔒<br>حسابات ثابتة (واعد/مجدول)", result["locked_accounts"], {"valueformat": ",d"}, THEME["text_dim"])
+        if result["mode"] == DISTRIBUTION_MODE_NEW
+        else ("🔀<br>ضمنها واعد/مجدول اتوزعت", int(result.get("moved_locked_cases", 0)), {"valueformat": ",d"}, THEME["text_dim"])
+    )
     cards = [
         ("👥<br>إجمالي الحسابات", result["total_accounts"], {"valueformat": ",d"}, THEME["text"]),
         ("🧾<br>إجمالي الحالات", result["total_cases"], {"valueformat": ",d"}, OPS_SCALE[0]),
         ("💰<br>إجمالي المبلغ", result["total_amount"], {"valueformat": ",.0f"}, OPS_SCALE[1]),
         ("🔀<br>حسابات تم توزيعها", result["moved_accounts"], {"valueformat": ",d"}, OPS_SCALE[2]),
-        ("🔒<br>حسابات ثابتة (واعد/مجدول)", result["locked_accounts"], {"valueformat": ",d"}, THEME["text_dim"]),
+        last_card,
     ]
     figure = go.Figure()
     gap = 0.014
@@ -7614,6 +7644,26 @@ def _show_distribution_results(result):
     )
     st.plotly_chart(fig2, use_container_width=True, config=PLOTLY_CONFIG, key="distribution_accounts_chart")
 
+    substate_breakdown = result.get("substate_breakdown")
+    if substate_breakdown is not None and not substate_breakdown.empty:
+        st.markdown("#### 🧩 توازن كل نوع Sub State على المحصلين")
+        st.caption("كل نوع حالة (Sub State) بيتساوى عدده لوحده قد الإمكان بين المحصلين، مش بس الإجمالي.")
+        pivot = substate_breakdown.pivot_table(
+            index="المحصل", columns="Sub State", values="العدد", fill_value=0, aggfunc="sum"
+        )
+        fig3 = px.bar(
+            substate_breakdown, x="المحصل", y="العدد", color="Sub State",
+            barmode="group", color_discrete_sequence=ACTIVITY_AGENT_PALETTE,
+        )
+        _apply_ops_chart_style(
+            fig3, "عدد الحالات لكل نوع Sub State عند كل محصل",
+            height=max(380, 34 * max(len(pivot.columns), 1) + 160),
+            xaxis_title="", yaxis_title="عدد الحالات", show_legend=True,
+        )
+        st.plotly_chart(fig3, use_container_width=True, config=PLOTLY_CONFIG, key="distribution_substate_chart")
+        with st.expander("📋 جدول تفصيلي — Sub State لكل محصل", expanded=False):
+            st.dataframe(pivot.reset_index(), use_container_width=True, hide_index=True)
+
     with st.expander("📊 المقارنة التفصيلية قبل/بعد التوزيع", expanded=False):
         c1, c2 = st.columns(2)
         with c1:
@@ -7630,6 +7680,8 @@ def _show_distribution_results(result):
     with pd.ExcelWriter(out_excel, engine="openpyxl") as writer:
         result["df"].to_excel(writer, index=False, sheet_name="التوزيع")
         after_summary.to_excel(writer, index=False, sheet_name="ملخص بعد التوزيع")
+        if substate_breakdown is not None and not substate_breakdown.empty:
+            substate_breakdown.to_excel(writer, index=False, sheet_name="تفصيل Sub State")
     st.download_button(
         "⬇️ تحميل نتيجة التوزيع (Excel)",
         data=out_excel.getvalue(),
@@ -7722,10 +7774,17 @@ def page_distribution():
             st.caption(f"هيتم إضافة {len(new_collectors)} محصل جديد: {'، '.join(new_collectors)}")
         departing, targets = None, None
 
-    st.caption(
-        "🔒 أي حالة «واعد بالسداد» أو «جدولة»، أو عميل عنده حالات موزّعة أصلاً على أكثر من محصل — "
-        "هتفضل زي ما هي وملهاش نقل، مهما كان وضع التوزيع."
-    )
+    if mode == DISTRIBUTION_MODE_LEAVER:
+        st.caption(
+            "ℹ️ في وضع «موظف مشى»: كل نصيب المحصل المغادر بيتوزع عادي على الباقيين، "
+            "بما في ذلك الحالات «واعد بالسداد» و«جدولة» — مفيش استثناء ليها هنا."
+        )
+    else:
+        st.caption(
+            "🔒 في وضع «موظف جديد»: أي عميل عنده حالة «واعد بالسداد» أو «جدولة» هيفضل ثابت عند محصله الحالي "
+            "ومش هيتحرك، وباقي المحفظة القابلة للتحريك بس هي اللي بتتوزع على الكل."
+        )
+    st.caption("👤 وفي الحالتين: العميل الواحد (كل حساباته) بيتحرك كتلة واحدة كاملة عند محصل واحد، مفيش تقسيم لعميل على أكتر من محصل.")
 
     run = st.button("🚀 نفّذ التوزيع", use_container_width=True, type="primary", key="distribution_run_btn")
 

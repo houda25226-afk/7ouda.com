@@ -264,7 +264,14 @@ CASE_NET_AMOUNT_ERROR_MIN = 50.0
 DISTRIBUTION_RESULT_KEY = "distribution_result"
 DISTRIBUTION_AVAILABLE_SALES_KEY = "distribution_available_sales"
 # عمود تعريف العميل عشان مايتقسمش على أكتر من محصل — Debitor أولاً ثم رقم حساب العميل
-DISTRIBUTION_CUSTOMER_ID_CANDIDATES = SCHEDULE_DEBITOR_CANDIDATES + ACCOUNT_NUMBER_CANDIDATES
+DISTRIBUTION_CUSTOMER_ID_CANDIDATES = (
+    SCHEDULE_DEBITOR_CANDIDATES
+    + ACCOUNT_NUMBER_CANDIDATES
+    + [
+        "رقم الهوية", "رقم هويه", "National ID", "national id", "NationalId",
+        "Identity", "identity", "ID Number", "id number", "Customer ID", "customer id",
+    ]
+)
 # الحالات اللي ممنوع تتنقل من محصل لمحصل تاني
 DISTRIBUTION_LOCKED_SUB_STATES = [PROMISE_SUB_STATE_VALUE, SCHEDULE_SUB_STATE_VALUE]
 DISTRIBUTION_MODE_LEAVER = "👤 موظف مشى"
@@ -7347,6 +7354,22 @@ def _extract_distribution_sales(uploaded):
     return [n for n in names if n not in PROMISE_EXCLUDED_SALES]
 
 
+def _extract_distribution_substates(uploaded):
+    """قراءة قيم Sub State الفريدة من الملف لاختيار الحالات اللي هتتوزع."""
+    if uploaded is None:
+        return []
+    try:
+        raw_df = read_uploaded_dataframe(uploaded)
+    except Exception:
+        return []
+    df = raw_df.iloc[1:].copy() if len(raw_df) > 0 else raw_df
+    substate_col = find_column(df, PROMISE_SUB_STATE_CANDIDATES)
+    if not substate_col:
+        return []
+    vals = df[substate_col].astype(str).str.strip()
+    return sorted({v for v in vals.tolist() if v and v.lower() not in {"nan", "none", "null", ""}})
+
+
 def _balance_customer_groups(groups, targets):
     """يوزّع مجموعات العملاء (حسابات كاملة) على المحصلين المستهدفين بأكبر قدر ممكن من التساوي في:
     - إجمالي المبلغ (Net Amount)
@@ -7388,8 +7411,13 @@ def _balance_customer_groups(groups, targets):
     return assignment, load
 
 
-def _run_distribution_pipeline(uploaded, mode, departing=None, targets=None, new_collectors=None, keep_existing=None):
-    """ينفذ عملية التوزيع (موظف مشى / موظف جديد) ويحفظ النتيجة في الكاش."""
+def _run_distribution_pipeline(uploaded, mode, departing=None, targets=None, new_collectors=None, keep_existing=None, selected_substates=None):
+    """ينفذ عملية التوزيع (موظف مشى / موظف جديد) ويحفظ النتيجة في الكاش.
+
+    في وضع «موظف مشى» يمكن تحديد حالات Sub State اللي هتتوزع فقط؛
+    وملف الرفع ممكن يكون محفظة كاملة أو ملف المطالبات المطلوب توزيعها
+    (المحصل القديم + رقم الهوية/Debitor + رقم المطالبة + Sub State + Net Amount).
+    """
     file_hash = uploaded_file_hash(uploaded)
     selection_token = hashlib.sha256(
         "|".join([
@@ -7398,6 +7426,7 @@ def _run_distribution_pipeline(uploaded, mode, departing=None, targets=None, new
             ",".join(sorted(targets or [])),
             ",".join(sorted(new_collectors or [])),
             ",".join(sorted(keep_existing or [])),
+            ",".join(sorted(selected_substates or [])),
         ]).encode("utf-8")
     ).hexdigest()[:16]
     run_token = f"{file_hash}:{selection_token}"
@@ -7474,17 +7503,49 @@ def _run_distribution_pipeline(uploaded, mode, departing=None, targets=None, new
         if not departing:
             st.error("اختر المحصل اللي هيتوزع نصيبه أولاً.")
             return False
-        target_list = list(dict.fromkeys(targets or []))
+        target_list = list(dict.fromkeys([str(t).strip() for t in (targets or []) if str(t).strip()]))
         if not target_list:
             st.error("اختر محصل واحد على الأقل يستقبل نصيب المحصل المغادر.")
             return False
-        movable_mask = (~grouped["mixed"]) & (grouped["single_collector"] == departing)
-        movable = grouped[movable_mask]
-        for _, row in grouped[~movable_mask].iterrows():
+        selected = [str(s).strip() for s in (selected_substates or []) if str(s).strip()]
+        if not selected:
+            st.error("اختر حالة واحدة على الأقل من عمود Sub State للتوزيع.")
+            return False
+        # صفوف المغادر اللي حالتها ضمن الاختيار فقط هي اللي هتتوزع
+        leaver_selected_mask = (pool_df["_sales"] == departing) & (pool_df["_substate"].isin(selected))
+        if not leaver_selected_mask.any():
+            st.error(
+                f"مفيش صفوف للمحصل «{departing}» ضمن الحالات المختارة.\n"
+                f"الحالات المختارة: {', '.join(selected)}"
+            )
+            return False
+        # تجميع العملاء على مستوى الصفوف المختارة فقط (رقم الهوية / Debitor)
+        selected_rows = pool_df.loc[leaver_selected_mask].copy()
+        sel_grouped = (
+            selected_rows.groupby("_customer")
+            .agg(amount=("_amount", "sum"), cases=("_amount", "size"))
+            .reset_index()
+        )
+        sel_collectors = selected_rows.groupby("_customer")["_sales"].apply(lambda s: sorted(set(s))).to_dict()
+        sel_grouped["collectors"] = sel_grouped["_customer"].map(sel_collectors)
+        sel_grouped["mixed"] = sel_grouped["collectors"].apply(lambda c: len(c) > 1)
+        sel_substate_map = selected_rows.groupby("_customer")["_substate"].apply(lambda s: s.value_counts().to_dict()).to_dict()
+        sel_grouped["substates"] = sel_grouped["_customer"].map(sel_substate_map)
+
+        movable = sel_grouped[~sel_grouped["mixed"]].copy()
+        for _, row in sel_grouped[sel_grouped["mixed"]].iterrows():
+            status_map[row["_customer"]] = DISTRIBUTION_STATUS_MIXED
+        # باقي عملاء الملف (مش ضمن الاختيار أو مش للمغادر) يتعلّم حالتهم
+        for _, row in grouped.iterrows():
+            cust = row["_customer"]
+            if cust in status_map or cust in set(movable["_customer"]):
+                continue
             if row["mixed"]:
-                status_map[row["_customer"]] = DISTRIBUTION_STATUS_MIXED
+                status_map[cust] = DISTRIBUTION_STATUS_MIXED
+            elif row["single_collector"] == departing:
+                status_map[cust] = DISTRIBUTION_STATUS_EXCLUDED  # عند المغادر لكن خارج الحالات المختارة
             else:
-                status_map[row["_customer"]] = DISTRIBUTION_STATUS_UNRELATED
+                status_map[cust] = DISTRIBUTION_STATUS_UNRELATED
     elif mode == DISTRIBUTION_MODE_NEW:
         target_list = list(dict.fromkeys(list(keep_existing or []) + list(new_collectors or [])))
         if not target_list:
@@ -7508,9 +7569,16 @@ def _run_distribution_pipeline(uploaded, mode, departing=None, targets=None, new
     ]
     assignment, _loads = _balance_customer_groups(groups_for_balance, target_list)
 
+    selected_set = set(str(s).strip() for s in (selected_substates or []) if str(s).strip()) if mode == DISTRIBUTION_MODE_LEAVER else set()
+
     def _resolve_row(row):
         cust = row["_customer"]
         if cust in assignment:
+            # في وضع موظف مشى: ننقل فقط الصفوف ذات الحالات المختارة
+            if mode == DISTRIBUTION_MODE_LEAVER and selected_set:
+                if row["_sales"] == departing and row["_substate"] in selected_set:
+                    return pd.Series([assignment[cust], DISTRIBUTION_STATUS_MOVED])
+                return pd.Series([row["_sales"], DISTRIBUTION_STATUS_EXCLUDED])
             return pd.Series([assignment[cust], DISTRIBUTION_STATUS_MOVED])
         return pd.Series([row["_sales"], status_map.get(cust, DISTRIBUTION_STATUS_UNRELATED)])
 
@@ -7553,6 +7621,7 @@ def _run_distribution_pipeline(uploaded, mode, departing=None, targets=None, new
         "mode": mode,
         "departing": departing,
         "targets": target_list,
+        "selected_substates": list(selected_substates or []) if mode == DISTRIBUTION_MODE_LEAVER else [],
         "before_summary": before_summary,
         "after_summary": after_summary,
         "substate_breakdown": substate_breakdown,
@@ -7694,13 +7763,17 @@ def _show_distribution_results(result):
 
 
 def page_distribution():
-    """صفحة التوزيع: توزيع حالات المحفظة عند رحيل محصل أو انضمام محصل جديد،
-    مع منع تقسيم العميل الواحد على أكثر من محصل، ومنع نقل الحالات الواعدة بالسداد أو المجدولة."""
+    """صفحة التوزيع: توزيع المطالبات عند رحيل محصل أو انضمام محصل جديد.
+
+    في وضع «موظف مشى» ترفع ملف المطالبات المطلوب توزيعها (المحصل القديم + رقم الهوية + رقم المطالبة
+    + Sub State + Net Amount)، وتختار الحالات من Sub State، ويتم التوزيع بالتساوي حسب المبالغ
+    وعدد الحالات مع الإبقاء على العميل (رقم الهوية) عند محصل واحد فقط، وعمود بالمحصل الجديد.
+    """
     page_header(
         "DISTRIBUTION",
         "🔀 التوزيع",
-        "وزّع حالات المحفظة على المحصلين عند رحيل محصل أو انضمام محصل جديد، "
-        "مع الحفاظ على عدم تقسيم العميل الواحد على أكثر من محصل، ومنع نقل الحالات الواعدة بالسداد أو المجدولة",
+        "وزّع المطالبات على المحصلين عند رحيل محصل أو انضمام محصل جديد — "
+        "بدون تقسيم العميل (رقم الهوية) على أكتر من محصل، مع توازن المبالغ والحالات",
     )
 
     mode = st.radio(
@@ -7714,20 +7787,33 @@ def page_distribution():
     cache_scope = "distribution_upload"
     result_keys = (DISTRIBUTION_RESULT_KEY,)
 
+    if mode == DISTRIBUTION_MODE_LEAVER:
+        upload_label = (
+            "📂 ارفع ملف المطالبات المطلوب توزيعها (Excel أو CSV) — "
+            "لازم يضم: المحصل القديم (Sales Person) + رقم الهوية/Debitor + رقم المطالبة (Claim) "
+            "+ Sub State + Net Amount"
+        )
+    else:
+        upload_label = "📂 ارفع المحفظة الحالية (Excel أو CSV)"
+
     uploaded = st.file_uploader(
-        "📂 ارفع المحفظة الحالية (Excel أو CSV)",
+        upload_label,
         type=["xlsx", "xls", "csv"],
         key=upload_key,
         on_change=sync_file_cache,
         args=(upload_key, cache_scope, result_keys),
     )
 
+    available_substates = []
     if uploaded is not None:
         st.caption(f"الملف: {uploaded.name}")
         available_sales = _extract_distribution_sales(uploaded)
         st.session_state[DISTRIBUTION_AVAILABLE_SALES_KEY] = available_sales
+        available_substates = _extract_distribution_substates(uploaded)
+        st.session_state["distribution_available_substates"] = available_substates
     else:
         available_sales = st.session_state.get(DISTRIBUTION_AVAILABLE_SALES_KEY, [])
+        available_substates = st.session_state.get("distribution_available_substates", [])
 
     cached = st.session_state.get(DISTRIBUTION_RESULT_KEY)
 
@@ -7736,7 +7822,10 @@ def page_distribution():
             st.success(f"✅ نتيجة محفوظة من: {cached.get('filename', '—')}. لن تُحذف عند التنقل بين التبويبات.")
             _show_distribution_results(cached)
         else:
-            st.info("📂 ارفع ملف المحفظة الحالية للبدء.")
+            st.info(
+                "📂 ارفع الملف للبدء: في وضع «موظف مشى» ارفع المطالبات المطلوب توزيعها "
+                "(مش لازم المحفظة كاملة)."
+            )
         return
 
     if not available_sales:
@@ -7745,17 +7834,48 @@ def page_distribution():
 
     st.divider()
 
+    selected_substates = None
     if mode == DISTRIBUTION_MODE_LEAVER:
         departing = st.selectbox(
-            "👤 المحصل اللي هيتوزع نصيبه (مشى)", options=available_sales, key="distribution_departing",
+            "👤 المحصل القديم (اللي مشى وهيتوزع نصيبه)",
+            options=available_sales,
+            key="distribution_departing",
         )
         remaining_options = [s for s in available_sales if s != departing]
-        targets = st.multiselect(
-            "🎯 المحصلين اللي هيستقبلوا التوزيع",
-            options=remaining_options,
-            default=remaining_options,
-            key="distribution_targets_leaver",
+        if available_substates:
+            selected_substates = st.multiselect(
+                "🏷️ الحالات اللي هتتوزع (من عمود Sub State)",
+                options=available_substates,
+                default=available_substates,
+                key="distribution_selected_substates",
+                help="اختَر الحالات الفرعية المطلوب إعادة توزيعها فقط. باقي الحالات تفضل عند المحصل القديم.",
+            )
+        else:
+            st.warning("⚠️ لم يتم العثور على عمود Sub State في الملف.")
+            selected_substates = []
+
+        if remaining_options:
+            targets = st.multiselect(
+                "🎯 المحصلين اللي هيستقبلوا التوزيع (من الملف)",
+                options=remaining_options,
+                default=remaining_options,
+                key="distribution_targets_leaver",
+            )
+        else:
+            targets = []
+            st.info(
+                "الملف فيه محصل واحد بس (القديم). اكتب أسماء المحصلين المستقبِلين يدويًا تحت."
+            )
+
+        extra_targets_raw = st.text_area(
+            "✍️ أسماء محصلين إضافيين يستقبلوا التوزيع (كل اسم في سطر) — لو مش موجودين في الملف",
+            key="distribution_targets_leaver_manual",
+            placeholder="مثال:\nأحمد محمد\nسارة علي",
         )
+        extra_targets = [n.strip() for n in extra_targets_raw.splitlines() if n.strip()]
+        targets = list(dict.fromkeys(list(targets) + extra_targets))
+        if targets:
+            st.caption(f"المستقبِلون ({len(targets)}): {'، '.join(targets)}")
         new_collectors, keep_existing = None, None
     else:
         keep_existing = st.multiselect(
@@ -7773,29 +7893,39 @@ def page_distribution():
         if new_collectors:
             st.caption(f"هيتم إضافة {len(new_collectors)} محصل جديد: {'، '.join(new_collectors)}")
         departing, targets = None, None
+        selected_substates = None
 
     if mode == DISTRIBUTION_MODE_LEAVER:
         st.caption(
-            "ℹ️ في وضع «موظف مشى»: كل نصيب المحصل المغادر بيتوزع عادي على الباقيين، "
-            "بما في ذلك الحالات «واعد بالسداد» و«جدولة» — مفيش استثناء ليها هنا."
+            "ℹ️ في وضع «موظف مشى»: بتختار أنت حالات Sub State اللي هتتوزع، "
+            "والنظام بيوزّعها بالتساوي حسب **Net Amount** و**عدد الحالات لكل نوع**، "
+            "مع الإبقاء على نفس رقم الهوية عند محصل واحد، ويضيف عمود «المحصل بعد التوزيع»."
         )
     else:
         st.caption(
             "🔒 في وضع «موظف جديد»: أي عميل عنده حالة «واعد بالسداد» أو «جدولة» هيفضل ثابت عند محصله الحالي "
             "ومش هيتحرك، وباقي المحفظة القابلة للتحريك بس هي اللي بتتوزع على الكل."
         )
-    st.caption("👤 وفي الحالتين: العميل الواحد (كل حساباته) بيتحرك كتلة واحدة كاملة عند محصل واحد، مفيش تقسيم لعميل على أكتر من محصل.")
+    st.caption(
+        "👤 العميل الواحد (رقم الهوية / Debitor) بيتحرك كتلة واحدة عند محصل واحد — "
+        "مفيش تقسيم لنفس العميل على أكتر من محصل."
+    )
 
     run = st.button("🚀 نفّذ التوزيع", use_container_width=True, type="primary", key="distribution_run_btn")
 
     if run:
         if uploaded is None:
-            st.error("محتاج ترفع ملف المحفظة الحالية الأول قبل تنفيذ التوزيع.")
+            st.error("محتاج ترفع الملف الأول قبل تنفيذ التوزيع.")
         else:
             with st.spinner("جارٍ حساب التوزيع..."):
                 _run_distribution_pipeline(
-                    uploaded, mode, departing=departing, targets=targets,
-                    new_collectors=new_collectors, keep_existing=keep_existing,
+                    uploaded,
+                    mode,
+                    departing=departing,
+                    targets=targets,
+                    new_collectors=new_collectors,
+                    keep_existing=keep_existing,
+                    selected_substates=selected_substates,
                 )
 
     cached = st.session_state.get(DISTRIBUTION_RESULT_KEY)

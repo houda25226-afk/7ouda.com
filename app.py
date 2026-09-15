@@ -7479,8 +7479,21 @@ def page_distribution():
         )
         return
 
-    sales_vals = df[sales_col].astype(str).str.strip()
-    all_sales = sorted({v for v in sales_vals.tolist() if v and v.lower() not in {"nan", "none", "null", ""}})
+    def _safe_person_text(val):
+        if val is None or (isinstance(val, float) and pd.isna(val)):
+            return ""
+        try:
+            if pd.isna(val):
+                return ""
+        except (TypeError, ValueError):
+            pass
+        text = str(val).strip()
+        if text.lower() in {"nan", "none", "null", "nat", ""}:
+            return ""
+        return text
+
+    sales_vals = df[sales_col].map(_safe_person_text)
+    all_sales = sorted({v for v in sales_vals.tolist() if v})
     if not all_sales:
         st.warning("لا يوجد محصلون في الملف.")
         return
@@ -7500,9 +7513,22 @@ def page_distribution():
         return
 
     # الحالات
+    def _safe_state_text(val):
+        if val is None or (isinstance(val, float) and pd.isna(val)):
+            return ""
+        try:
+            if pd.isna(val):
+                return ""
+        except (TypeError, ValueError):
+            pass
+        text = str(val).strip()
+        if text.lower() in {"nan", "none", "null", "nat", ""}:
+            return ""
+        return text
+
     if substate_col and substate_col in source_df.columns:
-        state_vals = source_df[substate_col].astype(str).str.strip()
-        available_states = sorted({v for v in state_vals.tolist() if v and v.lower() not in {"nan", "none", "null", ""}})
+        state_vals = source_df[substate_col].map(_safe_state_text)
+        available_states = sorted({v for v in state_vals.tolist() if v})
     else:
         available_states = []
         state_vals = pd.Series([""] * len(source_df), index=source_df.index)

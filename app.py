@@ -7839,13 +7839,18 @@ def page_distribution():
 
         selected_states = list(available_states)
         if available_states and not include_all_states:
-            selected_states = st.multiselect(
-                "اختر الحالات",
-                options=available_states,
-                default=available_states,
-                key="distribution_selected_states",
-                placeholder="اضغط واختر الحالات…",
-            )
+            st.caption("اختر الحالات بعلامة ✓ — المختار يظهر واضح:")
+            cols = st.columns(3)
+            selected_states = []
+            for i, state_name in enumerate(available_states):
+                with cols[i % 3]:
+                    checked = st.checkbox(
+                        state_name,
+                        value=True,
+                        key=f"distribution_state_cb_{i}",
+                    )
+                    if checked:
+                        selected_states.append(state_name)
             st.caption(f"مختار: {len(selected_states)} / {len(available_states)}")
             if not selected_states:
                 st.warning("اختر حالة واحدة على الأقل أو فعّل «كل الحالات».")
@@ -7882,21 +7887,31 @@ def page_distribution():
                 value=True,
                 key="distribution_select_all_targets",
             )
+        default_targets = target_options if select_all_targets else []
+        # لو toggle اتغير، نحدّث الاختيار عبر key منفصل بحذر
         with t_left:
             if select_all_targets:
                 selected_targets = list(target_options)
                 st.caption(f"✓ كل المحصلين المستهدفين ({len(selected_targets)})")
+                # عرض قائمة مختصرة للقراءة فقط
                 with st.expander("عرض الأسماء", expanded=False):
                     st.write(" · ".join(selected_targets))
             else:
-                selected_targets = st.multiselect(
-                    "اختر المحصلين",
-                    options=target_options,
-                    default=[],
-                    key="distribution_target_collectors",
-                    placeholder="اضغط واختر المحصلين…",
-                )
+                st.caption("اختر المحصلين بعلامة ✓:")
+                cols = st.columns(3)
+                selected_targets = []
+                for i, name in enumerate(target_options):
+                    with cols[i % 3]:
+                        checked = st.checkbox(
+                            name,
+                            value=False,
+                            key=f"distribution_target_cb_{i}",
+                        )
+                        if checked:
+                            selected_targets.append(name)
                 st.caption(f"مختار: {len(selected_targets)} / {len(target_options)}")
+                if selected_targets:
+                    st.success("المختار: " + " · ".join(selected_targets))
 
     if len(selected_targets) < 1:
         st.warning("اختر محصل واحد على الأقل، أو فعّل «كل المحصلين».")

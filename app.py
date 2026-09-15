@@ -7356,7 +7356,7 @@ def _distribution_balance_accounts(
     - وحدة التوزيع = **Debitor** (العميل): كل صفوف نفس الـ Debitor تروح لمحصل *واحد* فقط.
     - عدد العملاء = عدد Debitor الفريد.
     - عدد الحسابات = عدد Account Number الفريد داخل حصة كل محصل.
-    - الموازنة: الحفاظ على فرق الحسابات ≤ max_account_diff (افتراضي 4) ثم تقليل فرق المبالغ.
+    - الموازنة: **تقليل فرق المبالغ أولاً** (حسب الحد اللي المستخدم يحدده)، مع قيد فرق الحسابات ≤ max_account_diff (افتراضي 4).
     """
     empty_stats = {
         "ok": False,
@@ -7419,46 +7419,132 @@ def _distribution_balance_accounts(
     }
     assignment = {}  # customer_key -> collector
     max_account_diff = int(max_account_diff) if max_account_diff is not None else 4
+    max_amount_diff_val = float(max_amount_diff) if max_amount_diff is not None else float("inf")
+
+    def _sim_spreads(name, item):
+        sim_accounts, sim_amounts = [], []
+        for t in target_collectors:
+            if t == name:
+                new_acc = len(loads[t]["account_keys"] | item["account_keys"])
+                new_amt = loads[t]["amount"] + item["amount"]
+            else:
+                new_acc = len(loads[t]["account_keys"])
+                new_amt = loads[t]["amount"]
+            sim_accounts.append(new_acc)
+            sim_amounts.append(new_amt)
+        acc_spread = max(sim_accounts) - min(sim_accounts) if sim_accounts else 0
+        amt_spread = max(sim_amounts) - min(sim_amounts) if sim_amounts else 0.0
+        return acc_spread, amt_spread
 
     def _pick_best(item):
-        """اختيار المحصل مع أولوية: فرق الحسابات ≤ الحد، ثم أقل فرق مبالغ، ثم أقل حسابات."""
+        """أولوية: 1) فرق الحسابات ≤ 4  2) تقليل فرق المبالغ بقوة  3) باقي التوازن."""
 
         def score(name):
-            # محاكاة بعد الإسناد
-            sim_accounts = []
-            sim_amounts = []
-            for t in target_collectors:
-                if t == name:
-                    new_acc = len(loads[t]["account_keys"] | item["account_keys"])
-                    new_amt = loads[t]["amount"] + item["amount"]
-                else:
-                    new_acc = len(loads[t]["account_keys"])
-                    new_amt = loads[t]["amount"]
-                sim_accounts.append(new_acc)
-                sim_amounts.append(new_amt)
-            acc_spread = max(sim_accounts) - min(sim_accounts) if sim_accounts else 0
-            amt_spread = max(sim_amounts) - min(sim_amounts) if sim_amounts else 0.0
-            # تجاوز حد فرق الحسابات يُعاقب بشدة
+            acc_spread, amt_spread = _sim_spreads(name, item)
             over_acc = max(0, acc_spread - max_account_diff)
+            over_amt = max(0.0, amt_spread - max_amount_diff_val)
             return (
-                over_acc,                                      # 0 أفضل (ضمن حد الحسابات)
-                acc_spread,                                    # أصغر فرق حسابات
-                amt_spread,                                    # أصغر فرق مبالغ
-                loads[name]["amount"] + item["amount"],        # أقل حمل مبلغ لهذا المحصل
-                len(loads[name]["account_keys"]),              # أقل حسابات حالية
+                over_acc,                                      # قيد صارم: متجاوزين حد الحسابات؟
+                over_amt,                                      # متجاوزين حد المبلغ اللي المستخدم حدده؟
+                amt_spread,                                    # **الأهم**: أصغر فرق مبالغ
+                loads[name]["amount"] + item["amount"],        # أقل حمل مبلغ حالي للمحصل
+                acc_spread,                                    # فرق حسابات (ثانوي طالما ضمن الحد)
                 loads[name]["customers"],
                 str(name),
             )
 
         return min(target_collectors, key=score)
 
+    def _apply_assign(item, collector):
+        assignment[item["key"]] = collector
+        loads[collector]["amount"] += item["amount"]
+        loads[collector]["customers"] += 1
+        loads[collector]["rows"] += item["n_rows"]
+        loads[collector]["account_keys"].update(item["account_keys"])
+
+    def _unapply_assign(item, collector):
+        loads[collector]["amount"] -= item["amount"]
+        loads[collector]["customers"] -= 1
+        loads[collector]["rows"] -= item["n_rows"]
+        # إعادة بناء account_keys من assignment الحالي بعد إلغاء هذا العنصر
+        # (آمن لأننا هنحسبها من grouped لاحقًا عند الحاجة)
+
     for item in grouped:
         best = _pick_best(item)
-        assignment[item["key"]] = best
-        loads[best]["amount"] += item["amount"]
-        loads[best]["customers"] += 1
-        loads[best]["rows"] += item["n_rows"]
-        loads[best]["account_keys"].update(item["account_keys"])
+        _apply_assign(item, best)
+
+    # ── تحسين محلي: نقل عملاء من الأعلى مبلغًا للأقل لتقليل فرق المبالغ
+    # مع الإبقاء على فرق الحسابات ≤ الحد
+    items_by_key = {it["key"]: it for it in grouped}
+
+    def _rebuild_account_keys():
+        for n in target_collectors:
+            loads[n]["account_keys"] = set()
+        for key, coll in assignment.items():
+            it = items_by_key[key]
+            loads[coll]["account_keys"].update(it["account_keys"])
+
+    def _current_spreads():
+        amts = [loads[n]["amount"] for n in target_collectors]
+        accs = [len(loads[n]["account_keys"]) for n in target_collectors]
+        amt_sp = max(amts) - min(amts) if amts else 0.0
+        acc_sp = max(accs) - min(accs) if accs else 0
+        return amt_sp, acc_sp
+
+    improved = True
+    passes = 0
+    while improved and passes < 8:
+        improved = False
+        passes += 1
+        amt_sp, acc_sp = _current_spreads()
+        if amt_sp <= max_amount_diff_val and acc_sp <= max_account_diff:
+            break
+        # من الأعلى مبلغًا إلى الأقل
+        ordered = sorted(target_collectors, key=lambda n: loads[n]["amount"], reverse=True)
+        high, low = ordered[0], ordered[-1]
+        if high == low:
+            break
+        # جرّب نقل أصغر عميل من high يقلل فرق المبالغ بدون كسر حد الحسابات
+        candidates = [
+            items_by_key[k] for k, c in assignment.items() if c == high
+        ]
+        candidates.sort(key=lambda it: it["amount"])  # الأصغر أولاً لضبط أدق
+        best_move = None
+        best_new_amt_sp = amt_sp
+        for it in candidates:
+            # محاكاة النقل
+            new_high_amt = loads[high]["amount"] - it["amount"]
+            new_low_amt = loads[low]["amount"] + it["amount"]
+            amts = []
+            accs = []
+            for t in target_collectors:
+                if t == high:
+                    amts.append(new_high_amt)
+                    accs.append(len(loads[t]["account_keys"] - it["account_keys"]))
+                elif t == low:
+                    amts.append(new_low_amt)
+                    accs.append(len(loads[t]["account_keys"] | it["account_keys"]))
+                else:
+                    amts.append(loads[t]["amount"])
+                    accs.append(len(loads[t]["account_keys"]))
+            new_amt_sp = max(amts) - min(amts)
+            new_acc_sp = max(accs) - min(accs)
+            if new_acc_sp > max_account_diff:
+                continue
+            if new_amt_sp + 1e-9 < best_new_amt_sp:
+                best_new_amt_sp = new_amt_sp
+                best_move = it
+        if best_move is not None:
+            # نفّذ النقل
+            assignment[best_move["key"]] = low
+            loads[high]["amount"] -= best_move["amount"]
+            loads[high]["customers"] -= 1
+            loads[high]["rows"] -= best_move["n_rows"]
+            loads[low]["amount"] += best_move["amount"]
+            loads[low]["customers"] += 1
+            loads[low]["rows"] += best_move["n_rows"]
+            _rebuild_account_keys()
+            improved = True
 
     assigned = work.copy()
     assigned[DISTRIBUTION_ASSIGNED_COL] = assigned["_dist_customer_key"].map(assignment)
@@ -7774,7 +7860,7 @@ def page_distribution():
                 key="distribution_max_account_diff",
                 help="الهدف: فرق 2–3 حسابات، والحد الأقصى المسموح افتراضيًا 4.",
             )
-        st.caption("الخوارزمية تحافظ على فرق الحسابات ضمن الحد أولاً، ثم تقلل فرق المبالغ قدر الإمكان.")
+        st.caption("الأولوية لتقليل فرق المبالغ حسب الحد اللي انت محدده، مع الإبقاء على فرق الحسابات ≤ الحد (افتراضي 4).")
 
     dist_customers = source_df[debitor_col].map(lambda v: _normalize_match_id(v)).replace("", pd.NA).nunique(dropna=True)
     dist_accounts = source_df[account_col].map(lambda v: _normalize_match_id(v)).replace("", pd.NA).nunique(dropna=True)

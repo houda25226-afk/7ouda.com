@@ -7349,13 +7349,14 @@ def _distribution_balance_accounts(
     debitor_col,
     account_col,
     max_amount_diff,
+    max_account_diff=4,
 ):
     """توزيع كل صفوف المصدر مع ضمانات صارمة:
 
     - وحدة التوزيع = **Debitor** (العميل): كل صفوف نفس الـ Debitor تروح لمحصل *واحد* فقط.
     - عدد العملاء = عدد Debitor الفريد.
     - عدد الحسابات = عدد Account Number الفريد داخل حصة كل محصل.
-    - الموازنة على Net Amount ثم عدد العملاء.
+    - الموازنة: الحفاظ على فرق الحسابات ≤ max_account_diff (افتراضي 4) ثم تقليل فرق المبالغ.
     """
     empty_stats = {
         "ok": False,
@@ -7417,17 +7418,42 @@ def _distribution_balance_accounts(
         for name in target_collectors
     }
     assignment = {}  # customer_key -> collector
+    max_account_diff = int(max_account_diff) if max_account_diff is not None else 4
+
+    def _pick_best(item):
+        """اختيار المحصل مع أولوية: فرق الحسابات ≤ الحد، ثم أقل فرق مبالغ، ثم أقل حسابات."""
+
+        def score(name):
+            # محاكاة بعد الإسناد
+            sim_accounts = []
+            sim_amounts = []
+            for t in target_collectors:
+                if t == name:
+                    new_acc = len(loads[t]["account_keys"] | item["account_keys"])
+                    new_amt = loads[t]["amount"] + item["amount"]
+                else:
+                    new_acc = len(loads[t]["account_keys"])
+                    new_amt = loads[t]["amount"]
+                sim_accounts.append(new_acc)
+                sim_amounts.append(new_amt)
+            acc_spread = max(sim_accounts) - min(sim_accounts) if sim_accounts else 0
+            amt_spread = max(sim_amounts) - min(sim_amounts) if sim_amounts else 0.0
+            # تجاوز حد فرق الحسابات يُعاقب بشدة
+            over_acc = max(0, acc_spread - max_account_diff)
+            return (
+                over_acc,                                      # 0 أفضل (ضمن حد الحسابات)
+                acc_spread,                                    # أصغر فرق حسابات
+                amt_spread,                                    # أصغر فرق مبالغ
+                loads[name]["amount"] + item["amount"],        # أقل حمل مبلغ لهذا المحصل
+                len(loads[name]["account_keys"]),              # أقل حسابات حالية
+                loads[name]["customers"],
+                str(name),
+            )
+
+        return min(target_collectors, key=score)
 
     for item in grouped:
-        best = min(
-            target_collectors,
-            key=lambda n: (
-                loads[n]["amount"],
-                loads[n]["customers"],
-                len(loads[n]["account_keys"]),
-                str(n),
-            ),
-        )
+        best = _pick_best(item)
         assignment[item["key"]] = best
         loads[best]["amount"] += item["amount"]
         loads[best]["customers"] += 1
@@ -7480,15 +7506,25 @@ def _distribution_balance_accounts(
     min_amt = min(amounts) if amounts else 0.0
     max_cust = max(customer_counts) if customer_counts else 0
     min_cust = min(customer_counts) if customer_counts else 0
+    account_counts = [len(loads[n]["account_keys"]) for n in target_collectors]
+    max_acc = max(account_counts) if account_counts else 0
+    min_acc = min(account_counts) if account_counts else 0
     actual_amt_diff = float(max_amt - min_amt)
     actual_cust_diff = int(max_cust - min_cust)
-    within = actual_amt_diff <= float(max_amount_diff) if max_amount_diff is not None else True
+    actual_acc_diff = int(max_acc - min_acc)
+    within_amount = actual_amt_diff <= float(max_amount_diff) if max_amount_diff is not None else True
+    within_accounts = actual_acc_diff <= int(max_account_diff)
+    within = within_amount and within_accounts
 
     stats = {
         "ok": True,
         "message": "تم التوزيع بنجاح.",
         "max_amount_diff_actual": actual_amt_diff,
         "max_count_diff_actual": actual_cust_diff,
+        "max_account_diff_actual": actual_acc_diff,
+        "max_account_diff_limit": int(max_account_diff),
+        "within_amount_limit": within_amount,
+        "within_account_limit": within_accounts,
         "within_limit": within,
         "total_customers": int(sum(customer_counts)),
         "total_accounts": int(work["_dist_account_key"].nunique()),
@@ -7716,18 +7752,29 @@ def page_distribution():
         st.warning("اختر محصل واحد على الأقل، أو فعّل «كل المحصلين».")
         return
 
-    # ─── 4) فرق المبالغ ───
+    # ─── 4) حدود الفرق ───
     with st.container(border=True):
-        st.markdown("##### 4️⃣ أقصى فرق مسموح في Net Amount")
-        max_diff = st.number_input(
-            "الفرق",
-            min_value=0.0,
-            value=1000.0,
-            step=100.0,
-            key="distribution_max_amount_diff",
-            label_visibility="collapsed",
-        )
-        st.caption("الخوارزمية تسعى لأقل فرق. لو الناتج أقل من أو يساوي الرقم ده ✓")
+        st.markdown("##### 4️⃣ حدود الفرق المسموح")
+        lim1, lim2 = st.columns(2)
+        with lim1:
+            max_diff = st.number_input(
+                "أقصى فرق Net Amount",
+                min_value=0.0,
+                value=1000.0,
+                step=100.0,
+                key="distribution_max_amount_diff",
+            )
+        with lim2:
+            max_account_diff = st.number_input(
+                "أقصى فرق عدد الحسابات",
+                min_value=0,
+                max_value=50,
+                value=4,
+                step=1,
+                key="distribution_max_account_diff",
+                help="الهدف: فرق 2–3 حسابات، والحد الأقصى المسموح افتراضيًا 4.",
+            )
+        st.caption("الخوارزمية تحافظ على فرق الحسابات ضمن الحد أولاً، ثم تقلل فرق المبالغ قدر الإمكان.")
 
     dist_customers = source_df[debitor_col].map(lambda v: _normalize_match_id(v)).replace("", pd.NA).nunique(dropna=True)
     dist_accounts = source_df[account_col].map(lambda v: _normalize_match_id(v)).replace("", pd.NA).nunique(dropna=True)
@@ -7756,6 +7803,7 @@ def page_distribution():
             debitor_col,
             account_col,
             max_diff,
+            max_account_diff=int(max_account_diff),
         )
 
     if not stats.get("ok"):
@@ -7834,12 +7882,15 @@ def _show_distribution_results(cached):
 
     st.subheader(f"📊 نتيجة التوزيع — من: {source_collector}")
 
-    k0, k1, k2, k3, k4 = st.columns(5)
+    acc_diff = stats.get("max_account_diff_actual", 0)
+    acc_limit = stats.get("max_account_diff_limit", 4)
+    k0, k1, k2, k3, k4, k5 = st.columns(6)
     k0.metric("صفوف موزّعة", f"{stats.get('output_rows', 0):,}")
     k1.metric("عملاء (Debitor)", f"{stats.get('unique_customers', 0):,}")
     k2.metric("حسابات (Account)", f"{stats.get('unique_accounts', 0):,}")
     k3.metric("فرق المبالغ", f"{actual_diff:,.0f}")
     k4.metric("فرق العملاء", f"{cust_diff:,}")
+    k5.metric("فرق الحسابات", f"{acc_diff:,} / حد {acc_limit}")
 
     if stats.get("input_rows") == stats.get("output_rows") and not stats.get("duplicate_debitor_targets"):
         st.success(
@@ -7856,12 +7907,21 @@ def _show_distribution_results(cached):
     else:
         st.caption("✔️ لا يوجد Debitor مسند لأكثر من محصل.")
 
-    if within:
-        st.info(f"فرق المبالغ {actual_diff:,.0f} ضمن الحد {float(max_diff):,.0f}.")
+    acc_diff = stats.get("max_account_diff_actual", 0)
+    acc_limit = stats.get("max_account_diff_limit", 4)
+    msgs = []
+    if stats.get("within_amount_limit", within):
+        msgs.append(f"فرق المبالغ {actual_diff:,.0f} ضمن الحد {float(max_diff):,.0f}")
     else:
-        st.warning(
-            f"أفضل توازن متاح: فرق المبالغ {actual_diff:,.0f} أكبر من الحد {float(max_diff):,.0f}."
-        )
+        msgs.append(f"فرق المبالغ {actual_diff:,.0f} تجاوز الحد {float(max_diff):,.0f}")
+    if stats.get("within_account_limit", acc_diff <= acc_limit):
+        msgs.append(f"فرق الحسابات {acc_diff} ضمن الحد {acc_limit}")
+    else:
+        msgs.append(f"فرق الحسابات {acc_diff} تجاوز الحد {acc_limit} (أفضل توازن متاح مع قيد Debitor)")
+    if within:
+        st.info(" · ".join(msgs))
+    else:
+        st.warning(" · ".join(msgs))
 
     if summary_df is not None and not summary_df.empty:
         st.markdown("#### ملخص لكل محصل")

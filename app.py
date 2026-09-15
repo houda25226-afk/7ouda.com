@@ -12,7 +12,7 @@
   - الإهمال ومتابعة الإهمال
   - الجدولة المتعثرة (محفظة + سدادات)
   - أخطاء الحالات
-  - توزيع المحفظة (محصّل مشي / محصّل جديد)
+  - توزيع المحفظة (محصّل مشي)
   - تحليل نشاط المحصّلين (Dashboard + تصدير HTML)
 
 أسماء الأعمدة قابلة للتعديل من قسم الإعدادات أعلى الملف.
@@ -261,12 +261,13 @@ CASE_ORIGINAL_DEBT_CANDIDATES = [
 CASE_NET_AMOUNT_ERROR_MIN = 50.0
 
 # ==========================================================
-# إعدادات تويب التوزيع
+# إعدادات تويب التوزيع (محصّل مشي)
 # ==========================================================
 DISTRIBUTION_RESULT_KEY = "distribution_result"
 DISTRIBUTION_ASSIGNED_COL = "المحصّل_بعد_التوزيع"
 DISTRIBUTION_PREV_COL = "المحصّل_قبل_التوزيع"
-DISTRIBUTION_MODE_KEY = "distribution_mode"  # leave | new
+# أقصى فرق مسموح افتراضيًا بين أعلى وأقل محصّل في مبالغ الجزء الموزَّع فقط
+DISTRIBUTION_DEFAULT_AMOUNT_TOLERANCE = 5000.0
 
 
 
@@ -7321,8 +7322,11 @@ def _distribution_account_key(series):
     return series.astype("string").str.strip()
 
 
-def _distribution_build_units(df, account_col, sales_col, net_col, substate_col):
-    """يبني وحدات توزيع: كل حساب = صف واحد (عميل واحد → محصّل واحد)."""
+def _distribution_build_account_units(df, account_col, sales_col, net_col, substate_col):
+    """يبني وحدات توزيع: كل حساب = صف واحد (عميل واحد → محصّل واحد).
+
+    لو للعميل أكتر من مطالبة/صف، بتتلم في وحدة واحدة عشان تروح لمحصّل واحد بس.
+    """
     work = df.copy()
     work["_acct"] = _distribution_account_key(work[account_col])
     valid = work["_acct"].notna() & work["_acct"].ne("") & work["_acct"].str.lower().ne("nan")
@@ -7330,7 +7334,11 @@ def _distribution_build_units(df, account_col, sales_col, net_col, substate_col)
     if work.empty:
         return pd.DataFrame(), work
 
-    work["_net"] = pd.to_numeric(work[net_col], errors="coerce").fillna(0.0) if net_col and net_col in work.columns else 0.0
+    work["_net"] = (
+        pd.to_numeric(work[net_col], errors="coerce").fillna(0.0)
+        if net_col and net_col in work.columns
+        else 0.0
+    )
     if substate_col and substate_col in work.columns:
         work["_state"] = work[substate_col].astype(str).str.strip()
     else:
@@ -7358,37 +7366,70 @@ def _distribution_build_units(df, account_col, sales_col, net_col, substate_col)
     return units, work
 
 
-def _distribution_target_baseline(all_units, target_collectors):
-    """يحسب الوضع الحالي (عدد حسابات / مبلغ / حالات) لكل محصّل مستهدف قبل التوزيع الجديد،
-    عشان التوزيع الجديد يوازن على أساس الإجمالي (رصيده الحالي + اللي هيتضاف له) مش بس اللي هيتضاف."""
-    load_count = {t: 0 for t in target_collectors}
-    load_amount = {t: 0.0 for t in target_collectors}
-    load_state = {t: {} for t in target_collectors}
-    if all_units is None or all_units.empty:
+def _distribution_existing_loads(units_all, target_collectors, leaving_collector):
+    """أحمال المحصّلين المستهدفين الحالية (بدون حسابات المحصّل الماشي)."""
+    targets = [str(t).strip() for t in target_collectors if str(t).strip()]
+    load_count = {t: 0 for t in targets}
+    load_amount = {t: 0.0 for t in targets}
+    load_state = {t: {} for t in targets}
+    if units_all is None or units_all.empty:
         return load_count, load_amount, load_state
-    base = all_units.loc[all_units["المحصل_الحالي"].isin(target_collectors)]
-    for _, row in base.iterrows():
-        t = row["المحصل_الحالي"]
-        load_count[t] += 1
-        load_amount[t] += float(row["صافي_المديونية"] or 0.0)
+    others = units_all.loc[units_all["المحصل_الحالي"] != leaving_collector]
+    for _, row in others.iterrows():
+        coll = str(row.get("المحصل_الحالي", "")).strip()
+        if coll not in load_count:
+            continue
+        amt = float(row.get("صافي_المديونية") or 0.0)
         state = str(row.get("الحالة", "—"))
-        load_state[t][state] = load_state[t].get(state, 0) + 1
+        load_count[coll] += 1
+        load_amount[coll] += amt
+        load_state[coll][state] = load_state[coll].get(state, 0) + 1
     return load_count, load_amount, load_state
 
 
-def _distribution_assign_leave(units_to_assign, target_collectors, load_count, load_amount, load_state):
-    """توزيع جشع بيوازن المبالغ أولًا (أكبر تأثير) ثم عدد الحسابات ثم الحالات.
+def _distribution_greedy_assign(
+    units,
+    target_collectors,
+    *,
+    balance_states=True,
+    existing_count=None,
+    existing_amount=None,
+    existing_state=None,
+    amount_tolerance=None,
+):
+    """توزيع جشع: كل حساب لمحصّل واحد مع موازنة العدد + المبلغ (+ الحالات).
 
-    القاعدة الذهبية: الحساب يروح لمحصّل واحد فقط — مفيش تقسيم لنفس العميل.
-    بيبدأ بأكبر الحسابات مبلغًا وفي كل خطوة بيختار المحصّل اللي هيقلل الفرق
-    في إجمالي المديونية بين المحصّلين المستهدفين (Longest-Processing-Time balancing).
+    - يراعي الأحمال الحالية للمستهدفين (existing_*).
+    - يحاول يخلي فرق المبالغ (max - min) أقرب ما يمكن من amount_tolerance.
+    - القاعدة الذهبية: الحساب يروح لمحصّل واحد فقط.
     """
-    if units_to_assign.empty or not target_collectors:
-        out = units_to_assign.copy()
+    if units.empty or not target_collectors:
+        out = units.copy()
         out["المحصّل_الجديد"] = None
-        return out, load_count, load_amount, load_state
+        return out
 
-    ordered = units_to_assign.sort_values("صافي_المديونية", ascending=False).reset_index(drop=True)
+    targets = [str(t).strip() for t in target_collectors if str(t).strip()]
+    if not targets:
+        out = units.copy()
+        out["المحصّل_الجديد"] = None
+        return out
+
+    ordered = units.sort_values("صافي_المديونية", ascending=False).reset_index(drop=True)
+
+    load_count = {t: int((existing_count or {}).get(t, 0)) for t in targets}
+    load_amount = {t: float((existing_amount or {}).get(t, 0.0)) for t in targets}
+    load_state = {t: dict((existing_state or {}).get(t, {})) for t in targets}
+
+    incoming_amount = float(ordered["صافي_المديونية"].sum()) or 0.0
+    incoming_count = len(ordered)
+    base_amount = sum(load_amount.values())
+    base_count = sum(load_count.values())
+    target_amount = (base_amount + incoming_amount) / len(targets) if targets else 1.0
+    target_count = (base_count + incoming_count) / len(targets) if targets else 1.0
+    if target_amount <= 0:
+        target_amount = 1.0
+    if target_count <= 0:
+        target_count = 1.0
 
     assignments = []
     for _, row in ordered.iterrows():
@@ -7397,12 +7438,20 @@ def _distribution_assign_leave(units_to_assign, target_collectors, load_count, l
 
         best = None
         best_score = None
-        for t in target_collectors:
-            # المبلغ هو العامل المسيطر عشان نقلل الفرق بين المحصلين في المديونية
-            amount_term = load_amount[t] + amount
-            count_term = load_count[t] + 1
-            state_term = load_state[t].get(state, 0)
-            score = (amount_term * 1000.0) + (count_term * 1.0) + (state_term * 0.1)
+        for t in targets:
+            new_count = load_count[t] + 1
+            new_amount = load_amount[t] + amount
+            count_term = abs(new_count - target_count) / max(target_count, 1.0)
+            amount_term = abs(new_amount - target_amount) / max(target_amount, 1.0)
+            score = count_term + 1.5 * amount_term
+            if balance_states:
+                state_count = load_state[t].get(state, 0)
+                score += 0.2 * state_count
+            if amount_tolerance is not None and amount_tolerance >= 0:
+                trial_amounts = {k: (v + amount if k == t else v) for k, v in load_amount.items()}
+                spread = max(trial_amounts.values()) - min(trial_amounts.values())
+                if spread > amount_tolerance:
+                    score += 2.0 * ((spread - amount_tolerance) / max(amount_tolerance, 1.0))
             if best_score is None or score < best_score:
                 best_score = score
                 best = t
@@ -7414,14 +7463,13 @@ def _distribution_assign_leave(units_to_assign, target_collectors, load_count, l
 
     result = ordered.copy()
     result["المحصّل_الجديد"] = assignments
-    return result, load_count, load_amount, load_state
+    return result
 
 
-def _distribution_apply_to_rows(full_df, units_assigned, account_col, sales_col):
-    """يرجع المحفظة كاملة مع عمود المحصّل الجديد — الحسابات اللي اتنقلت بس بتتغيّر،
-    وباقي المحفظة زي ما هي عشان الملف اللي بيتحمّل يبقى المحفظة كاملة بعد التعديل."""
+def _distribution_apply_to_rows(work_rows, units_assigned, account_col, sales_col):
+    """يرجع المحفظة الأصلية مع عمود المحصّل بعد التوزيع — نفس الحساب كله لنفس المحصّل."""
     mapping = dict(zip(units_assigned["رقم_الحساب"], units_assigned["المحصّل_الجديد"]))
-    out = full_df.copy()
+    out = work_rows.copy()
     out[DISTRIBUTION_PREV_COL] = out[sales_col].astype(str).str.strip()
     acct = _distribution_account_key(out[account_col])
     out[DISTRIBUTION_ASSIGNED_COL] = acct.map(mapping)
@@ -7430,27 +7478,29 @@ def _distribution_apply_to_rows(full_df, units_assigned, account_col, sales_col)
     return out
 
 
-def _distribution_summary_table(load_count, load_amount, target_collectors):
-    rows = []
-    for t in target_collectors:
-        rows.append({
-            "المحصّل": t,
-            "عدد_الحسابات": load_count.get(t, 0),
-            "إجمالي_المديونية": load_amount.get(t, 0.0),
-        })
-    summary = pd.DataFrame(rows)
-    if summary.empty:
-        return summary
+def _distribution_summary_table(units_assigned, collector_col="المحصّل_الجديد"):
+    if units_assigned.empty or collector_col not in units_assigned.columns:
+        return pd.DataFrame()
+    summary = (
+        units_assigned.groupby(collector_col, sort=False)
+        .agg(
+            عدد_الحسابات=("رقم_الحساب", "nunique"),
+            إجمالي_المديونية=("صافي_المديونية", "sum"),
+            عدد_الصفوف=("عدد_الصفوف", "sum"),
+        )
+        .reset_index()
+        .rename(columns={collector_col: "المحصّل"})
+    )
     total_amt = float(summary["إجمالي_المديونية"].sum()) or 1.0
     total_acc = int(summary["عدد_الحسابات"].sum()) or 1
     summary["نسبة_الحسابات_%"] = (summary["عدد_الحسابات"] / total_acc * 100).round(1)
     summary["نسبة_المديونية_%"] = (summary["إجمالي_المديونية"] / total_amt * 100).round(1)
-    summary = summary.sort_values("إجمالي_المديونية", ascending=False).reset_index(drop=True)
+    summary = summary.sort_values("عدد_الحسابات", ascending=False).reset_index(drop=True)
     return summary
 
 
 def _distribution_state_breakdown(units_assigned):
-    if units_assigned is None or units_assigned.empty or "المحصّل_الجديد" not in units_assigned.columns:
+    if units_assigned.empty or "المحصّل_الجديد" not in units_assigned.columns:
         return pd.DataFrame()
     pivot = (
         units_assigned.groupby(["المحصّل_الجديد", "الحالة"])
@@ -7460,49 +7510,60 @@ def _distribution_state_breakdown(units_assigned):
     return pivot
 
 
+def _distribution_final_loads_table(units_all, changed_units, leaving_collector, target_collectors):
+    """ملخص الحمل النهائي لكل مستهدف = (حمل قديم بدون الماشي) + الحسابات اللي استلمها."""
+    targets = [str(t).strip() for t in target_collectors if str(t).strip()]
+    if not targets:
+        return pd.DataFrame()
+
+    old_count = {t: 0 for t in targets}
+    old_amount = {t: 0.0 for t in targets}
+    if units_all is not None and not units_all.empty:
+        others = units_all.loc[units_all["المحصل_الحالي"] != leaving_collector]
+        for _, row in others.iterrows():
+            coll = str(row.get("المحصل_الحالي", "")).strip()
+            if coll not in old_count:
+                continue
+            old_count[coll] += 1
+            old_amount[coll] += float(row.get("صافي_المديونية") or 0.0)
+
+    new_count = {t: 0 for t in targets}
+    new_amount = {t: 0.0 for t in targets}
+    if changed_units is not None and not changed_units.empty:
+        for _, row in changed_units.iterrows():
+            coll = str(row.get("المحصّل_الجديد", "")).strip()
+            if coll not in new_count:
+                continue
+            new_count[coll] += 1
+            new_amount[coll] += float(row.get("صافي_المديونية") or 0.0)
+
+    rows = []
+    for t in targets:
+        rows.append(
+            {
+                "المحصّل": t,
+                "حسابات_قديمة": old_count[t],
+                "مديونية_قديمة": round(old_amount[t], 2),
+                "حسابات_مستلمة": new_count[t],
+                "مديونية_مستلمة": round(new_amount[t], 2),
+                "إجمالي_الحسابات": old_count[t] + new_count[t],
+                "إجمالي_المديونية": round(old_amount[t] + new_amount[t], 2),
+            }
+        )
+    summary = pd.DataFrame(rows)
+    if not summary.empty:
+        summary = summary.sort_values("إجمالي_المديونية", ascending=False).reset_index(drop=True)
+    return summary
+
+
 def page_distribution():
-    """تويب توزيع المحفظة — الحالة الأولى: محصّل مشي (إعادة توزيع مطالباته على الباقيين).
-    حالة (محصّل جديد) هتتضاف لاحقًا."""
+    """تويب التوزيع — حالة محصّل مشي فقط (حالة الموظف الجديد لاحقًا)."""
     page_header(
         "PORTFOLIO DISTRIBUTION",
-        "🔀 التوزيع",
-        "وزّع مطالبات المحصّل الماشي على الباقيين مع موازنة المبالغ والحسابات والحالات — والعميل مايروحش لأكتر من محصّل",
+        "🔀 التوزيع — محصّل مشي",
+        "اختَر المحصّل اللي مشي، والحالات اللي هتتوزع، والمحصّلين المستهدفين — "
+        "وكل عميل (بكل مطالباته) يروح لمحصّل واحد مع موازنة المبالغ والحسابات والحالات",
     )
-
-    if DISTRIBUTION_MODE_KEY not in st.session_state:
-        st.session_state[DISTRIBUTION_MODE_KEY] = "leave"
-
-    m1, m2 = st.columns(2)
-    with m1:
-        if st.button(
-            "🚪 محصّل مشي — إعادة توزيع مطالباته",
-            use_container_width=True,
-            type="primary" if st.session_state[DISTRIBUTION_MODE_KEY] == "leave" else "secondary",
-            key="dist_mode_leave",
-        ):
-            st.session_state[DISTRIBUTION_MODE_KEY] = "leave"
-            st.rerun()
-    with m2:
-        if st.button(
-            "🆕 محصّل جديد (قريبًا)",
-            use_container_width=True,
-            type="primary" if st.session_state[DISTRIBUTION_MODE_KEY] == "new" else "secondary",
-            key="dist_mode_new",
-        ):
-            st.session_state[DISTRIBUTION_MODE_KEY] = "new"
-            st.rerun()
-
-    mode = st.session_state[DISTRIBUTION_MODE_KEY]
-
-    if mode == "new":
-        st.info("🆕 حالة (محصّل جديد) لسه قيد التطوير — هتضاف في تحديث لاحق.")
-        return
-
-    st.caption(
-        "محصّل ساب الشغل → بنوزّع حساباته (حسب الحالات المختارة) على المحصّلين المختارين، "
-        "مع موازنة إجمالي المديونية بين المحصّلين أولًا، وبعدين عدد الحسابات والحالات."
-    )
-    st.divider()
 
     upload_key = "distribution_upload"
     cache_scope = "distribution_upload"
@@ -7550,7 +7611,9 @@ def page_distribution():
     sales_col = sales_col or find_column(df, SALES_PERSON_CANDIDATES)
     substate_col = substate_col or find_column(df, PROMISE_SUB_STATE_CANDIDATES)
     net_col = net_col or find_column(df, PROMISE_NET_AMOUNT_CANDIDATES)
-    account_col = account_col or find_column(df, ACCOUNT_NUMBER_CANDIDATES + ID_CANDIDATES + CLAIM_CANDIDATES)
+    account_col = account_col or find_column(
+        df, ACCOUNT_NUMBER_CANDIDATES + ID_CANDIDATES + CLAIM_CANDIDATES
+    )
 
     missing = []
     if not sales_col:
@@ -7567,11 +7630,6 @@ def page_distribution():
         )
         return
 
-    all_units, _ = _distribution_build_units(df, account_col, sales_col, net_col, substate_col)
-    if all_units.empty:
-        st.error("مفيش حسابات صالحة في الملف.")
-        return
-
     all_sales = sorted(
         {
             str(v).strip()
@@ -7579,54 +7637,67 @@ def page_distribution():
             if str(v).strip() and str(v).strip().lower() not in {"nan", "none", "null"}
         }
     )
-
-    st.markdown("### 🎛️ إعدادات التوزيع")
-    c1, c2 = st.columns(2)
-    with c1:
-        leaving = st.selectbox(
-            "🚪 المحصّل اللي مشي",
-            options=all_sales,
-            key="dist_leaving_collector",
-        )
-    with c2:
-        target_options = [s for s in all_sales if s != leaving]
-        target_collectors = st.multiselect(
-            "👥 المحصّلين المستهدفين (هيستلموا التوزيع)",
-            options=target_options,
-            default=target_options,
-            key="dist_target_collectors_leave",
-            help="اختار محصّل واحد أو أكتر يستلموا حسابات المحصّل الماشي.",
-        )
-
+    all_states = []
     if substate_col:
-        leaving_states_all = sorted(
+        all_states = sorted(
             {
                 str(v).strip()
-                for v in all_units.loc[all_units["المحصل_الحالي"] == leaving, "الحالة"].tolist()
+                for v in df[substate_col].tolist()
                 if str(v).strip() and str(v).strip().lower() not in {"nan", "none", "null"}
             }
         )
-    else:
-        leaving_states_all = []
 
-    selected_states = st.multiselect(
-        "📋 الحالات (Sub State) اللي عايز توزّعها من عند المحصّل الماشي",
-        options=leaving_states_all,
-        default=leaving_states_all,
-        key="dist_states_slicer",
-        help="لو سبت القائمة فاضية مش هيتوزع حاجة. الافتراضي: كل حالات المحصّل الماشي.",
+    st.markdown("### 🎛️ إعدادات التوزيع")
+    leaving = st.selectbox(
+        "🚪 المحصّل اللي مشي (مصدر المطالبات)",
+        options=all_sales,
+        key="dist_leaving_collector",
+        help="كل حسابات المحصّل ده (حسب الحالات المختارة) هتتوزع على المستهدفين — "
+        "ولو العميل عنده أكتر من مطالبة هتروح كلها لنفس المحصّل.",
     )
 
-    max_diff = st.number_input(
-        "💰 أقصى فرق مسموح بيه في إجمالي المديونية بين أي محصّلين (اختياري)",
-        min_value=0.0,
-        value=0.0,
-        step=1000.0,
-        help="سيبها 0 لو مش عايز حد أقصى مُحدَّد — النظام هيحاول يقلل الفرق قد الإمكان في كل الأحوال. "
-             "لو حطيت رقم هنقولك بعد التوزيع لو الفرق الفعلي زاد عنه.",
-    )
+    target_options = [s for s in all_sales if s != leaving]
+    c1, c2 = st.columns(2)
+    with c1:
+        target_collectors = st.multiselect(
+            "👥 المحصّلين المستهدفين (هيستلموا العملاء)",
+            options=target_options,
+            default=target_options,
+            key="dist_target_collectors_leave",
+            help="اختَر مين هيستلم من حسابات المحصّل اللي مشي.",
+        )
+    with c2:
+        selected_states = st.multiselect(
+            "📋 الحالات (Sub State) اللي هتتوزع",
+            options=all_states,
+            default=all_states,
+            key="dist_states_slicer",
+            help="لو سبت القائمة فاضية مش هيتوزع حاجة. الافتراضي: كل الحالات.",
+        )
 
-    can_run = bool(leaving) and bool(target_collectors) and bool(selected_states)
+    c3, c4 = st.columns(2)
+    with c3:
+        amount_tolerance = st.number_input(
+            "💰 أقصى فرق مسموح في المبالغ بين المحصّلين",
+            min_value=0.0,
+            value=float(DISTRIBUTION_DEFAULT_AMOUNT_TOLERANCE),
+            step=500.0,
+            key="dist_amount_tolerance",
+            help="الفرق بين أعلى وأقل محصّل في إجمالي المديونية للجزء الموزَّع فقط "
+            "(مطالبات/عملاء المحصّل الماشي). الخوارزمية بتحاول تفضّل التوزيع اللي يقرّب من الحد ده.",
+        )
+    with c4:
+        balance_states = st.checkbox(
+            "⚖️ موازنة الحالات (Sub State) بين المحصّلين قدر الإمكان",
+            value=True,
+            key="dist_balance_states",
+        )
+        st.caption(
+            "الموازنة على المطالبات/العملاء اللي هتتوزع من المحصّل الماشي فقط — "
+            "مش على محفظة المستهدفين كلها."
+        )
+
+    can_run = bool(selected_states) and bool(target_collectors) and bool(leaving)
     run = st.button(
         "🚀 تنفيذ التوزيع",
         type="primary",
@@ -7635,49 +7706,78 @@ def page_distribution():
         key="dist_run_btn",
     )
     if not can_run:
-        st.warning("لازم تختار: المحصّل الماشي + محصّل مستهدف واحد على الأقل + حالة واحدة على الأقل.")
+        st.warning("اختَر المحصّل الماشي + حالة واحدة على الأقل + محصّل مستهدف واحد على الأقل.")
 
     if run:
-        units_src = all_units.loc[
-            (all_units["المحصل_الحالي"] == leaving) & (all_units["الحالة"].isin(selected_states))
-        ].copy()
+        work = df.copy()
+        if substate_col and selected_states:
+            state_vals = work[substate_col].astype(str).str.strip()
+            work = work.loc[state_vals.isin(selected_states)].copy()
+
+        units_all, _ = _distribution_build_account_units(
+            work, account_col, sales_col, net_col, substate_col
+        )
+        if units_all.empty:
+            st.error("مفيش حسابات صالحة للتوزيع بعد الفلترة.")
+            return
+
+        units_src = units_all.loc[units_all["المحصل_الحالي"] == leaving].copy()
         if units_src.empty:
             st.error(f"مفيش حسابات للمحصّل «{leaving}» ضمن الحالات المختارة.")
             return
 
-        load_count, load_amount, load_state = _distribution_target_baseline(all_units, target_collectors)
-        assigned_units, load_count, load_amount, load_state = _distribution_assign_leave(
-            units_src, target_collectors, load_count, load_amount, load_state
+        # الموازنة فقط على الوحدات المُوزَّعة (عملاء/مطالبات المحصّل الماشي)
+        assigned_units = _distribution_greedy_assign(
+            units_src,
+            target_collectors,
+            balance_states=balance_states,
+            existing_count=None,
+            existing_amount=None,
+            existing_state=None,
+            amount_tolerance=float(amount_tolerance),
+        )
+        changed_units = assigned_units
+
+        leaving_mask = work[sales_col].astype(str).str.strip() == leaving
+        leaving_rows = work.loc[leaving_mask].copy()
+        result_df = _distribution_apply_to_rows(
+            leaving_rows, assigned_units, account_col, sales_col
         )
 
-        result_df = _distribution_apply_to_rows(df, assigned_units, account_col, sales_col)
+        before_summary = _distribution_summary_table(
+            units_src.assign(**{"المحصّل_الجديد": units_src["المحصل_الحالي"]})
+        )
+        after_summary = _distribution_summary_table(changed_units)
+        state_break = _distribution_state_breakdown(changed_units)
+        final_loads = _distribution_final_loads_table(
+            units_all, changed_units, leaving, target_collectors
+        )
 
-        summary_after = _distribution_summary_table(load_count, load_amount, target_collectors)
-        state_break = _distribution_state_breakdown(assigned_units)
-
-        actual_diff = 0.0
-        if summary_after is not None and not summary_after.empty:
-            actual_diff = float(
-                summary_after["إجمالي_المديونية"].max() - summary_after["إجمالي_المديونية"].min()
+        # فرق المبالغ على الجزء الموزَّع فقط
+        amount_spread = None
+        if after_summary is not None and not after_summary.empty:
+            amount_spread = float(
+                after_summary["إجمالي_المديونية"].max() - after_summary["إجمالي_المديونية"].min()
             )
 
         st.session_state[DISTRIBUTION_RESULT_KEY] = {
             "result_df": result_df,
-            "assigned_units": assigned_units,
-            "summary_after": summary_after,
+            "changed_units": changed_units,
+            "before_summary": before_summary,
+            "after_summary": after_summary,
             "state_break": state_break,
-            "actual_diff": actual_diff,
-            "max_diff": max_diff,
+            "final_loads": final_loads,
             "source_df": df,
             "sales_col": sales_col,
             "substate_col": substate_col,
             "net_col": net_col,
             "account_col": account_col,
             "filename": filename,
-            "mode": mode,
             "leaving": leaving,
             "targets": list(target_collectors),
             "states": list(selected_states),
+            "amount_tolerance": float(amount_tolerance),
+            "amount_spread": amount_spread,
         }
         st.success("✅ تم التوزيع بنجاح — كل حساب اتوجّه لمحصّل واحد فقط.")
         st.rerun()
@@ -7687,77 +7787,119 @@ def page_distribution():
         return
 
     result_df = cached["result_df"]
-    assigned_units = cached.get("assigned_units")
-    summary_after = cached.get("summary_after")
+    changed_units = cached.get("changed_units")
+    after_summary = cached.get("after_summary")
+    before_summary = cached.get("before_summary")
     state_break = cached.get("state_break")
-    actual_diff = cached.get("actual_diff", 0.0)
-    max_diff_cached = cached.get("max_diff", 0.0)
+    final_loads = cached.get("final_loads")
 
-    st.markdown("### 📊 نتيجة التوزيع")
-    st.caption(f"المصدر: «{cached.get('leaving')}» → المستهدفون: {' · '.join(cached.get('targets') or [])}")
+    st.markdown("### 📊 نتيجة التوزيع — محصّل مشي")
+    st.caption(
+        f"المصدر: «{cached.get('leaving')}» → المستهدفون: "
+        f"{' · '.join(cached.get('targets') or [])}"
+    )
 
-    n_accounts = int(assigned_units["رقم_الحساب"].nunique()) if assigned_units is not None and not assigned_units.empty else 0
-    total_amt = float(assigned_units["صافي_المديونية"].sum()) if assigned_units is not None and not assigned_units.empty else 0.0
+    n_accounts = (
+        int(changed_units["رقم_الحساب"].nunique())
+        if changed_units is not None and not changed_units.empty
+        else 0
+    )
+    total_amt = (
+        float(changed_units["صافي_المديونية"].sum())
+        if changed_units is not None and not changed_units.empty
+        else 0.0
+    )
+    n_targets = (
+        int(changed_units["المحصّل_الجديد"].nunique())
+        if changed_units is not None and not changed_units.empty
+        else 0
+    )
+    amount_spread = cached.get("amount_spread")
+    tolerance = cached.get("amount_tolerance")
+
     k1, k2, k3, k4 = st.columns(4)
-    k1.metric("🧾 حسابات اتوزّعت", f"{n_accounts:,}")
+    k1.metric("🧾 حسابات تم توزيعها", f"{n_accounts:,}")
     k2.metric("💰 إجمالي المديونية الموزّعة", f"{total_amt:,.0f}")
-    k3.metric("👥 محصّلين مستلمين", f"{len(cached.get('targets') or []):,}")
-    k4.metric("📄 صفوف في النتيجة", f"{len(result_df):,}")
+    k3.metric("👥 محصّلين مستلمين", f"{n_targets:,}")
+    if amount_spread is not None:
+        delta = None
+        if tolerance is not None:
+            delta = f"{'ضمن الحد' if amount_spread <= tolerance else 'فوق الحد'} ({tolerance:,.0f})"
+        k4.metric("📏 فرق المبالغ (max−min)", f"{amount_spread:,.0f}", delta=delta)
+    else:
+        k4.metric("📄 صفوف في النتيجة", f"{len(result_df):,}")
 
-    if max_diff_cached and max_diff_cached > 0:
-        if actual_diff <= max_diff_cached:
-            st.success(
-                f"✅ الفرق الفعلي بين أعلى وأقل محصّل بعد التوزيع = {actual_diff:,.0f} "
-                f"— ضمن الحد المسموح ({max_diff_cached:,.0f})."
-            )
+    if final_loads is not None and not final_loads.empty:
+        with st.expander("📦 معلومات إضافية: الحمل الكلي بعد الاستلام (قديم + مستلم) — للمراجعة فقط، الموازنة كانت على الجزء الموزَّع", expanded=False):
+            st.dataframe(final_loads, use_container_width=True, hide_index=True)
+
+    c1, c2 = st.columns(2)
+    with c1:
+        st.markdown("#### حسابات المحصّل الماشي (قبل)")
+        if before_summary is not None and not before_summary.empty:
+            st.dataframe(before_summary, use_container_width=True, hide_index=True)
         else:
-            st.warning(
-                f"⚠️ الفرق الفعلي بين أعلى وأقل محصّل بعد التوزيع = {actual_diff:,.0f} "
-                f"— أعلى من الحد المطلوب ({max_diff_cached:,.0f}). النظام وزّع بأقل فرق ممكن حسب البيانات المتاحة."
+            st.info("لا توجد بيانات.")
+    with c2:
+        st.markdown("#### توزيع الحسابات المستلمة (بعد)")
+        if after_summary is not None and not after_summary.empty:
+            st.dataframe(after_summary, use_container_width=True, hide_index=True)
+            fig2 = px.bar(
+                after_summary,
+                x="المحصّل",
+                y=["عدد_الحسابات", "إجمالي_المديونية"],
+                barmode="group",
+                template=PLOTLY_TEMPLATE,
+                color_discrete_sequence=OPS_SCALE,
             )
-    else:
-        st.info(f"ℹ️ الفرق بين أعلى وأقل محصّل بعد التوزيع (إجمالي المديونية) = {actual_diff:,.0f}")
-
-    st.markdown("#### إجمالي كل محصّل بعد التوزيع (شامل رصيده الحالي + اللي استلمه)")
-    if summary_after is not None and not summary_after.empty:
-        st.dataframe(summary_after, use_container_width=True, hide_index=True)
-        fig = px.bar(
-            summary_after,
-            x="المحصّل",
-            y=["عدد_الحسابات", "إجمالي_المديونية"],
-            barmode="group",
-            template=PLOTLY_TEMPLATE,
-            color_discrete_sequence=OPS_SCALE,
-        )
-        _apply_ops_chart_style(fig, "إجمالي الحسابات والمديونية لكل محصّل بعد التوزيع", height=380)
-        st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG, key="dist_after_chart")
-    else:
-        st.info("لا توجد بيانات.")
+            _apply_ops_chart_style(fig2, "الحسابات والمديونية المستلمة", height=360)
+            st.plotly_chart(fig2, use_container_width=True, config=PLOTLY_CONFIG, key="dist_after_chart")
+        else:
+            st.info("لا توجد بيانات.")
 
     if state_break is not None and not state_break.empty:
-        st.markdown("#### توزيع الحالات المنقولة حسب المحصّل")
+        st.markdown("#### توزيع الحالات حسب المحصّل المستلم")
         st.dataframe(state_break, use_container_width=True, hide_index=True)
 
-    st.markdown("#### تفاصيل الحسابات المنقولة")
-    show_cols = [c for c in ["رقم_الحساب", "المحصل_الحالي", "المحصّل_الجديد", "الحالة", "صافي_المديونية", "عدد_الصفوف"] if c in assigned_units.columns]
-    st.dataframe(assigned_units[show_cols], use_container_width=True, hide_index=True)
+    st.markdown("#### تفاصيل الحسابات بعد التوزيع")
+    show_cols = [
+        c
+        for c in [
+            "رقم_الحساب",
+            "المحصل_الحالي",
+            "المحصّل_الجديد",
+            "الحالة",
+            "صافي_المديونية",
+            "عدد_الصفوف",
+        ]
+        if changed_units is not None and c in changed_units.columns
+    ]
+    if changed_units is not None and show_cols:
+        st.dataframe(changed_units[show_cols], use_container_width=True, hide_index=True)
 
     out = io.BytesIO()
     with pd.ExcelWriter(out, engine="openpyxl") as writer:
         result_df.to_excel(writer, index=False, sheet_name="المحفظة_بعد_التوزيع")
-        if summary_after is not None:
-            summary_after.to_excel(writer, index=False, sheet_name="ملخص_بعد_التوزيع")
-        if assigned_units is not None:
-            assigned_units.to_excel(writer, index=False, sheet_name="الحسابات_المنقولة")
+        if after_summary is not None and not after_summary.empty:
+            after_summary.to_excel(writer, index=False, sheet_name="ملخص_مستلم")
+        if final_loads is not None and not final_loads.empty:
+            final_loads.to_excel(writer, index=False, sheet_name="حمل_نهائي")
+        if before_summary is not None and not before_summary.empty:
+            before_summary.to_excel(writer, index=False, sheet_name="ملخص_قبل")
+        if changed_units is not None and not changed_units.empty:
+            changed_units.to_excel(writer, index=False, sheet_name="وحدات_الحسابات")
+        if state_break is not None and not state_break.empty:
+            state_break.to_excel(writer, index=False, sheet_name="توزيع_الحالات")
     st.download_button(
         "⬇️ تحميل نتيجة التوزيع (Excel)",
         data=out.getvalue(),
-        file_name=f"توزيع_المحفظة_{datetime.now().strftime('%Y-%m-%d')}.xlsx",
+        file_name=f"توزيع_محصل_مشي_{datetime.now().strftime('%Y-%m-%d')}.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         use_container_width=True,
         type="primary",
         key="dist_download",
     )
+
 
 
 

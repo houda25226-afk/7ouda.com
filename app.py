@@ -7349,14 +7349,15 @@ def _distribution_balance_accounts(
     debitor_col,
     account_col,
     max_amount_diff,
-    max_account_diff=4,
+    max_account_diff=3,
 ):
     """توزيع كل صفوف المصدر مع ضمانات صارمة:
 
     - وحدة التوزيع = **Debitor** (العميل): كل صفوف نفس الـ Debitor تروح لمحصل *واحد* فقط.
     - عدد العملاء = عدد Debitor الفريد.
     - عدد الحسابات = عدد Account Number الفريد داخل حصة كل محصل.
-    - الموازنة: **1) تساوي الحسابات  2) تساوي عدد العملاء (Debitor)  3) تقليل فرق المبالغ** دون تجاوز حدود المستخدم.
+    - الموازنة: **1) تساوي الحسابات (فرق ≤ 3)**  **2) تساوي عدد العملاء**  **3) تقليل فرق المبالغ**
+      بنقل عملاء (مطالباتهم كاملة) من المحصل الأكبر مبلغًا للأصغر حتى يقترب الفرق من الحد.
     """
     empty_stats = {
         "ok": False,
@@ -7406,6 +7407,7 @@ def _distribution_balance_accounts(
             "n_accounts": int(grp["_dist_account_key"].nunique()),
             "account_keys": set(grp["_dist_account_key"].tolist()),
         })
+    # الأكبر مبلغًا أولًا عشان التوازن يتحسّن من البداية
     grouped.sort(key=lambda x: (x["amount"], x["n_accounts"], x["n_rows"]), reverse=True)
 
     loads = {
@@ -7418,7 +7420,7 @@ def _distribution_balance_accounts(
         for name in target_collectors
     }
     assignment = {}  # customer_key -> collector
-    max_account_diff = int(max_account_diff) if max_account_diff is not None else 4
+    max_account_diff = int(max_account_diff) if max_account_diff is not None else 3
     max_amount_diff_val = float(max_amount_diff) if max_amount_diff is not None else float("inf")
 
     def _sim_state(name, item):
@@ -7442,10 +7444,10 @@ def _distribution_balance_accounts(
         return acc_spread, cust_spread, amt_spread
 
     def _pick_best(item):
-        """الأولوية:
-        1) تساوي عدد الحسابات (ضمن حد ≤ 4)
+        """الأولوية عند الإسناد الأولي:
+        1) تساوي عدد الحسابات (ضمن حد ≤ max_account_diff)
         2) تساوي عدد العملاء (Debitor)
-        3) تقليل فرق المبالغ (مع عدم تجاوز حد المستخدم)
+        3) تقليل فرق المبالغ
         """
 
         def score(name):
@@ -7453,11 +7455,11 @@ def _distribution_balance_accounts(
             over_acc = max(0, acc_spread - max_account_diff)
             over_amt = max(0.0, amt_spread - max_amount_diff_val)
             return (
-                over_acc,                                      # 1) متجاوزين حد الحسابات؟
-                acc_spread,                                    # 1) أصغر فرق حسابات
-                cust_spread,                                   # 2) أصغر فرق عدد عملاء
-                over_amt,                                      # 3) متجاوزين حد المبلغ؟
-                amt_spread,                                    # 3) أصغر فرق مبالغ
+                over_acc,
+                acc_spread,
+                cust_spread,
+                over_amt,
+                amt_spread,
                 loads[name]["amount"] + item["amount"],
                 loads[name]["customers"],
                 str(name),
@@ -7476,9 +7478,6 @@ def _distribution_balance_accounts(
         best = _pick_best(item)
         _apply_assign(item, best)
 
-    # ── تحسين محلي على مرحلتين ──
-    # أ) توازن الحسابات + العملاء أولاً
-    # ب) تقليل فرق المبالغ بدون كسر توازن الحسابات/العملاء
     items_by_key = {it["key"]: it for it in grouped}
 
     def _rebuild_account_keys():
@@ -7498,11 +7497,10 @@ def _distribution_balance_accounts(
             max(custs) - min(custs) if custs else 0,
         )
 
-    def _try_moves(prefer="accounts"):
-        """محاولة نقل عميل واحد يحسّن المعيار المطلوب."""
+    def _try_one_move(prefer="accounts"):
+        """نقل عميل واحد من محصل لآخر لتحسين المعيار المطلوب."""
         amt_sp, acc_sp, cust_sp = _current_state()
         if prefer == "accounts":
-            # من الأكثر حسابات → الأقل حسابات
             ordered = sorted(
                 target_collectors,
                 key=lambda n: (len(loads[n]["account_keys"]), loads[n]["customers"], loads[n]["amount"]),
@@ -7520,126 +7518,134 @@ def _distribution_balance_accounts(
                 key=lambda n: (loads[n]["amount"], len(loads[n]["account_keys"]), loads[n]["customers"]),
                 reverse=True,
             )
-        high, low = ordered[0], ordered[-1]
-        if high == low:
-            return False
-
-        candidates = [items_by_key[k] for k, c in assignment.items() if c == high]
-        # للحسابات/العملاء: ننقل الأصغر حجمًا أولاً؛ للمبالغ: نختار ما يقلل الفرق أكثر
-        if prefer == "amounts":
-            candidates.sort(key=lambda it: it["amount"])
-        else:
-            candidates.sort(key=lambda it: (it["n_accounts"], it["amount"]))
 
         best_move = None
         best_score = None
-        for it in candidates:
-            amts, accs, custs = [], [], []
-            for t in target_collectors:
-                if t == high:
-                    amts.append(loads[t]["amount"] - it["amount"])
-                    accs.append(len(loads[t]["account_keys"] - it["account_keys"]))
-                    custs.append(loads[t]["customers"] - 1)
-                elif t == low:
-                    amts.append(loads[t]["amount"] + it["amount"])
-                    accs.append(len(loads[t]["account_keys"] | it["account_keys"]))
-                    custs.append(loads[t]["customers"] + 1)
+        # نجرب كل أزواج (مصدر غني → هدف ضعيف) مش بس الأول والأخير
+        for hi_i in range(len(ordered)):
+            for lo_i in range(len(ordered) - 1, hi_i, -1):
+                high, low = ordered[hi_i], ordered[lo_i]
+                candidates = [items_by_key[k] for k, c in assignment.items() if c == high]
+                if prefer == "amounts":
+                    # نفضّل نقل مبلغ يقربنا من نصف الفرق
+                    gap = loads[high]["amount"] - loads[low]["amount"]
+                    target_move = gap / 2.0
+                    candidates.sort(key=lambda it: abs(it["amount"] - target_move))
                 else:
-                    amts.append(loads[t]["amount"])
-                    accs.append(len(loads[t]["account_keys"]))
-                    custs.append(loads[t]["customers"])
-            new_amt_sp = max(amts) - min(amts)
-            new_acc_sp = max(accs) - min(accs)
-            new_cust_sp = max(custs) - min(custs)
+                    candidates.sort(key=lambda it: (it["n_accounts"], it["amount"]))
 
-            # قيود: فرق الحسابات ما يعدّيش الحد، وفرق المبالغ ما يكبرش عن الحد
-            if new_acc_sp > max_account_diff:
-                continue
-            if new_amt_sp > max(max_amount_diff_val, amt_sp):  # متسمحش فرق المبالغ يزيد
-                continue
+                for it in candidates:
+                    amts, accs, custs = [], [], []
+                    for t in target_collectors:
+                        if t == high:
+                            amts.append(loads[t]["amount"] - it["amount"])
+                            accs.append(len(loads[t]["account_keys"] - it["account_keys"]))
+                            custs.append(loads[t]["customers"] - 1)
+                        elif t == low:
+                            amts.append(loads[t]["amount"] + it["amount"])
+                            accs.append(len(loads[t]["account_keys"] | it["account_keys"]))
+                            custs.append(loads[t]["customers"] + 1)
+                        else:
+                            amts.append(loads[t]["amount"])
+                            accs.append(len(loads[t]["account_keys"]))
+                            custs.append(loads[t]["customers"])
+                    new_amt_sp = max(amts) - min(amts)
+                    new_acc_sp = max(accs) - min(accs)
+                    new_cust_sp = max(custs) - min(custs)
 
-            if prefer == "accounts":
-                # نحسّن فرق الحسابات أو نحافظ عليه ونحسّن العملاء
-                if new_acc_sp < acc_sp or (new_acc_sp == acc_sp and new_cust_sp < cust_sp):
-                    score = (new_acc_sp, new_cust_sp, new_amt_sp)
-                else:
-                    continue
-            elif prefer == "customers":
-                if new_cust_sp < cust_sp or (new_cust_sp == cust_sp and new_acc_sp <= acc_sp and new_amt_sp <= amt_sp):
-                    score = (new_cust_sp, new_acc_sp, new_amt_sp)
-                else:
-                    continue
-            else:  # amounts
-                # نقل يقلل فرق المبالغ بدون ما يفسد توازن الحسابات/العملاء
-                if new_acc_sp > acc_sp:
-                    continue
-                if new_cust_sp > cust_sp + 1:  # نسمح بفرق عملاء +1 كحد أقصى أثناء ضبط المبلغ
-                    continue
-                if new_amt_sp + 1e-9 < amt_sp:
-                    score = (new_amt_sp, new_acc_sp, new_cust_sp)
-                else:
-                    continue
+                    # فرق الحسابات ما يعدّيش الحد أبدًا
+                    if new_acc_sp > max_account_diff:
+                        continue
 
-            if best_score is None or score < best_score:
-                best_score = score
-                best_move = it
+                    if prefer == "accounts":
+                        if new_acc_sp < acc_sp or (new_acc_sp == acc_sp and new_cust_sp < cust_sp):
+                            score = (new_acc_sp, new_cust_sp, new_amt_sp)
+                        else:
+                            continue
+                    elif prefer == "customers":
+                        if new_acc_sp > max_account_diff:
+                            continue
+                        if new_cust_sp < cust_sp or (
+                            new_cust_sp == cust_sp and new_acc_sp <= acc_sp and new_amt_sp <= amt_sp + 1e-9
+                        ):
+                            score = (new_cust_sp, new_acc_sp, new_amt_sp)
+                        else:
+                            continue
+                    else:  # amounts — نقل يقلل فرق المبالغ مع الإبقاء على فرق الحسابات ضمن الحد
+                        if new_amt_sp + 1e-9 >= amt_sp:
+                            continue
+                        # نسمح بفرق عملاء أكبر شوية عشان نقدر نعدّل المبالغ،
+                        # بس الحسابات لازم تفضل ضمن الحد
+                        if new_acc_sp > max_account_diff:
+                            continue
+                        score = (new_amt_sp, new_acc_sp, new_cust_sp)
+
+                    if best_score is None or score < best_score:
+                        best_score = score
+                        best_move = (it, high, low)
 
         if best_move is None:
             return False
-        assignment[best_move["key"]] = low
-        loads[high]["amount"] -= best_move["amount"]
+        it, high, low = best_move
+        assignment[it["key"]] = low
+        loads[high]["amount"] -= it["amount"]
         loads[high]["customers"] -= 1
-        loads[high]["rows"] -= best_move["n_rows"]
-        loads[low]["amount"] += best_move["amount"]
+        loads[high]["rows"] -= it["n_rows"]
+        loads[low]["amount"] += it["amount"]
         loads[low]["customers"] += 1
-        loads[low]["rows"] += best_move["n_rows"]
+        loads[low]["rows"] += it["n_rows"]
         _rebuild_account_keys()
         return True
 
     # مرحلة 1: توازن الحسابات
-    for _ in range(12):
-        if not _try_moves("accounts"):
+    for _ in range(40):
+        if not _try_one_move("accounts"):
             break
     # مرحلة 2: توازن عدد العملاء
-    for _ in range(12):
-        if not _try_moves("customers"):
+    for _ in range(40):
+        if not _try_one_move("customers"):
             break
-    # مرحلة 3: تقليل فرق المبالغ بدون كسر التوازن السابق
-    for _ in range(16):
+    # مرحلة 3: تقليل فرق المبالغ — من الكبير للصغير مع الحفاظ على حد الحسابات
+    for _ in range(80):
         amt_sp, acc_sp, cust_sp = _current_state()
         if amt_sp <= max_amount_diff_val and acc_sp <= max_account_diff:
             break
-        if not _try_moves("amounts"):
+        if not _try_one_move("amounts"):
+            break
+    # مرحلة 4: إعادة ضبط خفيفة للحسابات لو اتأثرت
+    for _ in range(20):
+        _, acc_sp, _ = _current_state()
+        if acc_sp <= max_account_diff:
+            break
+        if not _try_one_move("accounts"):
             break
 
     assigned = work.copy()
     assigned[DISTRIBUTION_ASSIGNED_COL] = assigned["_dist_customer_key"].map(assignment)
 
-    # أي صف فاته الإسناد (لا يجب أن يحدث) — إصلاح احتياطي
+    # أي عميل فاته إسناد (نادر) → لأقل مبلغ حاليًا
     unassigned = int(assigned[DISTRIBUTION_ASSIGNED_COL].isna().sum())
     if unassigned:
         for idx in assigned.index[assigned[DISTRIBUTION_ASSIGNED_COL].isna()]:
-            best = min(
-                target_collectors,
-                key=lambda n: (loads[n]["amount"], loads[n]["customers"], str(n)),
-            )
-            ckey = assigned.at[idx, "_dist_customer_key"]
-            assigned.at[idx, DISTRIBUTION_ASSIGNED_COL] = best
-            assignment[ckey] = best
-            loads[best]["amount"] += float(assigned.at[idx, "_dist_amount"] or 0)
-            loads[best]["customers"] += 1
-            loads[best]["rows"] += 1
-            loads[best]["account_keys"].add(assigned.at[idx, "_dist_account_key"])
+            key = assigned.at[idx, "_dist_customer_key"]
+            item = items_by_key.get(key)
+            if item is None:
+                continue
+            best = min(target_collectors, key=lambda n: (loads[n]["amount"], loads[n]["customers"], str(n)))
+            assignment[key] = best
+            _apply_assign(item, best)
+            assigned.loc[assigned["_dist_customer_key"] == key, DISTRIBUTION_ASSIGNED_COL] = best
 
-    # تحقق صارم: كل Debitor → محصل واحد فقط
+    # تحقق: Debitor واحد → محصل واحد
     debitor_targets = assigned.groupby("_dist_customer_key")[DISTRIBUTION_ASSIGNED_COL].nunique()
     duplicate_debitor_targets = int((debitor_targets > 1).sum())
 
+    # بناء الملخص
     summary_rows = []
     amounts, customer_counts = [], []
     for name in target_collectors:
-        amt = loads[name]["amount"]
-        cust = loads[name]["customers"]
+        amt = float(loads[name]["amount"])
+        cust = int(loads[name]["customers"])
         acc_n = len(loads[name]["account_keys"])
         amounts.append(amt)
         customer_counts.append(cust)
@@ -7699,6 +7705,7 @@ def _distribution_balance_accounts(
         },
     }
     return assigned, summary_df, stats
+
 
 
 def page_distribution():
@@ -7832,19 +7839,19 @@ def page_distribution():
 
         selected_states = list(available_states)
         if available_states and not include_all_states:
-            left, right = st.columns([3, 1])
-            with left:
-                selected_states = st.multiselect(
-                    "الحالات",
-                    options=available_states,
-                    default=available_states,
-                    key="distribution_selected_states",
-                    placeholder="اختر الحالات…",
-                    label_visibility="collapsed",
-                )
-            with right:
-                st.write("")
-                st.caption(f"{len(selected_states)} / {len(available_states)}")
+            st.caption("اختر الحالات بعلامة ✓ — المختار يظهر واضح:")
+            cols = st.columns(3)
+            selected_states = []
+            for i, state_name in enumerate(available_states):
+                with cols[i % 3]:
+                    checked = st.checkbox(
+                        state_name,
+                        value=True,
+                        key=f"distribution_state_cb_{i}",
+                    )
+                    if checked:
+                        selected_states.append(state_name)
+            st.caption(f"مختار: {len(selected_states)} / {len(available_states)}")
             if not selected_states:
                 st.warning("اختر حالة واحدة على الأقل أو فعّل «كل الحالات».")
                 return
@@ -7890,15 +7897,21 @@ def page_distribution():
                 with st.expander("عرض الأسماء", expanded=False):
                     st.write(" · ".join(selected_targets))
             else:
-                selected_targets = st.multiselect(
-                    "المحصلون",
-                    options=target_options,
-                    default=[],
-                    key="distribution_target_collectors",
-                    placeholder="اختر المحصلين…",
-                    label_visibility="collapsed",
-                )
+                st.caption("اختر المحصلين بعلامة ✓:")
+                cols = st.columns(3)
+                selected_targets = []
+                for i, name in enumerate(target_options):
+                    with cols[i % 3]:
+                        checked = st.checkbox(
+                            name,
+                            value=False,
+                            key=f"distribution_target_cb_{i}",
+                        )
+                        if checked:
+                            selected_targets.append(name)
                 st.caption(f"مختار: {len(selected_targets)} / {len(target_options)}")
+                if selected_targets:
+                    st.success("المختار: " + " · ".join(selected_targets))
 
     if len(selected_targets) < 1:
         st.warning("اختر محصل واحد على الأقل، أو فعّل «كل المحصلين».")
@@ -7921,10 +7934,10 @@ def page_distribution():
                 "أقصى فرق عدد الحسابات",
                 min_value=0,
                 max_value=50,
-                value=4,
+                value=3,
                 step=1,
                 key="distribution_max_account_diff",
-                help="الهدف: فرق 2–3 حسابات، والحد الأقصى المسموح افتراضيًا 4.",
+                help="الهدف: فرق الحسابات بين المحصلين ما يعدّيش 3.",
             )
         st.caption("الأولوية: تساوي الحسابات ثم عدد العملاء، وبعدها تقليل فرق المبالغ (من غير ما الفرق يبقى كبير).")
 
@@ -7997,14 +8010,33 @@ def page_distribution():
         st.error("فشل التحقق النهائي على Debitor: عميل واحد عند أكثر من محصل.")
         return
 
+    before_summary = pd.DataFrame([{
+        "المحصّل": source_collector,
+        "عدد العملاء (Debitor)": int(dist_customers),
+        "عدد الحسابات (Account Number)": int(dist_accounts),
+        "عدد المطالبات/الصفوف": int(len(source_df)),
+        "إجمالي Net Amount": round(float(dist_amount), 2),
+    }])
+    # قبل التوزيع: المستهدفين صفر من حصة المصدر (للمقارنة)
+    before_targets = pd.DataFrame([{
+        "المحصّل": t,
+        "عدد العملاء (Debitor)": 0,
+        "عدد الحسابات (Account Number)": 0,
+        "عدد المطالبات/الصفوف": 0,
+        "إجمالي Net Amount": 0.0,
+    } for t in selected_targets])
+
     result_payload = {
         "filename": filename,
         "source_collector": source_collector,
         "targets": list(selected_targets),
         "selected_states": list(selected_states),
         "max_diff": float(max_diff),
+        "max_account_diff": int(max_account_diff),
         "stats": stats,
         "summary_df": summary_df,
+        "before_summary": before_summary,
+        "before_targets": before_targets,
         "assigned_df": assigned_df.drop(
             columns=[c for c in assigned_df.columns if str(c).startswith("_dist_")],
             errors="ignore",
@@ -8035,7 +8067,7 @@ def _show_distribution_results(cached):
     st.subheader(f"📊 نتيجة التوزيع — من: {source_collector}")
 
     acc_diff = stats.get("max_account_diff_actual", 0)
-    acc_limit = stats.get("max_account_diff_limit", 4)
+    acc_limit = stats.get("max_account_diff_limit", cached.get("max_account_diff", 3))
     k0, k1, k2, k3, k4, k5 = st.columns(6)
     k0.metric("صفوف موزّعة", f"{stats.get('output_rows', 0):,}")
     k1.metric("عملاء (Debitor)", f"{stats.get('unique_customers', 0):,}")
@@ -8059,40 +8091,55 @@ def _show_distribution_results(cached):
     else:
         st.caption("✔️ لا يوجد Debitor مسند لأكثر من محصل.")
 
-    acc_diff = stats.get("max_account_diff_actual", 0)
-    acc_limit = stats.get("max_account_diff_limit", 4)
     msgs = []
     if stats.get("within_amount_limit", within):
         msgs.append(f"فرق المبالغ {actual_diff:,.0f} ضمن الحد {float(max_diff):,.0f}")
     else:
-        msgs.append(f"فرق المبالغ {actual_diff:,.0f} تجاوز الحد {float(max_diff):,.0f}")
+        msgs.append(f"فرق المبالغ {actual_diff:,.0f} تجاوز الحد {float(max_diff):,.0f} — أفضل توازن متاح مع قيود الحسابات والعميل")
     if stats.get("within_account_limit", acc_diff <= acc_limit):
         msgs.append(f"فرق الحسابات {acc_diff} ضمن الحد {acc_limit}")
     else:
-        msgs.append(f"فرق الحسابات {acc_diff} تجاوز الحد {acc_limit} (أفضل توازن متاح مع قيد Debitor)")
+        msgs.append(f"فرق الحسابات {acc_diff} تجاوز الحد {acc_limit}")
     if within:
         st.info(" · ".join(msgs))
     else:
         st.warning(" · ".join(msgs))
 
+    # ── جداول قبل / بعد ──
+    st.markdown("#### 📋 مقارنة قبل وبعد التوزيع")
+    before_summary = cached.get("before_summary")
+    col_before, col_after = st.columns(2)
+    with col_before:
+        st.markdown("**قبل التوزيع (حصة المحصل المستقيل)**")
+        if before_summary is not None and not getattr(before_summary, "empty", True):
+            st.dataframe(before_summary, use_container_width=True, hide_index=True)
+        else:
+            st.caption("لا توجد بيانات قبل.")
+    with col_after:
+        st.markdown("**بعد التوزيع (حسب المحصل الجديد)**")
+        if summary_df is not None and not getattr(summary_df, "empty", True):
+            st.dataframe(summary_df, use_container_width=True, hide_index=True)
+        else:
+            st.caption("لا توجد بيانات بعد.")
+
     if summary_df is not None and not summary_df.empty:
-        st.markdown("#### ملخص لكل محصل")
+        st.markdown("#### ملخص لكل محصل بعد التوزيع")
         st.dataframe(summary_df, use_container_width=True, hide_index=True)
         try:
             fig = px.bar(
-                summary_df,
+                summary_df.sort_values("إجمالي Net Amount"),
                 x="إجمالي Net Amount",
                 y="المحصّل",
                 orientation="h",
                 text="إجمالي Net Amount",
-                color="عدد العملاء (Debitor)",
+                color="إجمالي Net Amount",
                 color_continuous_scale=OPS_SCALE,
                 template=PLOTLY_TEMPLATE,
             )
             _apply_ops_chart_style(
                 fig,
                 "توزيع المبالغ بعد الإسناد",
-                height=max(360, 48 * len(summary_df) + 120),
+                height=max(360, 36 * len(summary_df) + 120),
                 xaxis_title="إجمالي Net Amount",
                 show_legend=False,
                 margin=dict(t=70, b=55, l=160, r=60),
@@ -8103,8 +8150,26 @@ def _show_distribution_results(cached):
         except Exception:
             pass
 
+        # جدول مقارنة عدد العملاء/الحسابات جنب بعض
+        try:
+            compare = summary_df.copy()
+            st.markdown("#### 📊 توازن العملاء والحسابات والمبالغ")
+            st.dataframe(
+                compare[[
+                    "المحصّل",
+                    "عدد العملاء (Debitor)",
+                    "عدد الحسابات (Account Number)",
+                    "عدد المطالبات/الصفوف",
+                    "إجمالي Net Amount",
+                ]],
+                use_container_width=True,
+                hide_index=True,
+            )
+        except Exception:
+            pass
+
     if assigned_df is not None and not assigned_df.empty:
-        st.markdown("#### تفاصيل التوزيع")
+        st.markdown("#### تفاصيل التوزيع (كل عميل → محصل واحد)")
         show_cols = []
         for c in [
             cached.get("debitor_col"),
@@ -8152,6 +8217,7 @@ def _show_distribution_results(cached):
                 type="primary",
                 disabled=updated_df is None or getattr(updated_df, "empty", True),
             )
+
 
 
 PAGES = {

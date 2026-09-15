@@ -7314,13 +7314,47 @@ DISTRIBUTION_ASSIGNED_COL = "المحصّل_الجديد"
 DISTRIBUTION_SOURCE_COL = "المحصّل_السابق"
 
 
-def _distribution_balance_accounts(accounts_df, target_collectors, amount_col, account_col, substate_col, max_amount_diff):
-    """توزيع حسابات المصدر على المحصلين المستهدفين بأقل فرق ممكن في المبلغ وعدد الحسابات.
+def _distribution_safe_text(val):
+    """تحويل أي قيمة لنص نظيف أو سلسلة فارغة."""
+    if val is None:
+        return ""
+    try:
+        if pd.isna(val):
+            return ""
+    except (TypeError, ValueError):
+        pass
+    text = str(val).strip()
+    if text.lower() in {"nan", "none", "null", "nat", ""}:
+        return ""
+    return text
 
-    الاستراتيجية:
-    - نرتب الحسابات تنازليًا حسب Net Amount (مع كسر التعادل بعدد الحسابات الفرعية إن وُجدت).
-    - نسند كل حساب للمحصل صاحب أقل إجمالي مبلغ حاليًا، وعند التعادل أقل عدد حسابات.
-    - النتيجة تُقيَّم بفرق المبالغ وفرق أعداد الحسابات.
+
+def _distribution_account_key(val, row_index):
+    """مفتاح عميل موحّد: Account Number بعد تطبيع، أو مفتاح صف فريد لو فاضي.
+
+    مهم: نفس العميل (نفس رقم الحساب) لازم يتسند لمحصل واحد فقط بكل مطالباته.
+    """
+    key = _normalize_match_id(val) if val is not None and not (isinstance(val, float) and pd.isna(val)) else ""
+    if not key:
+        try:
+            if pd.isna(val):
+                key = ""
+            else:
+                key = _normalize_match_id(val)
+        except (TypeError, ValueError):
+            key = _normalize_match_id(val)
+    if key:
+        return f"ACC::{key}"
+    # بدون رقم حساب: كل صف وحدة مستقلة عشان متتلمّش غلط، وبرضو متتوزّعش على أكتر من محصل
+    return f"ROW::{row_index}"
+
+
+def _distribution_balance_accounts(accounts_df, target_collectors, amount_col, account_col, substate_col, max_amount_diff):
+    """توزيع *كل* صفوف المصدر على المستهدفين مع ضمان:
+
+    1) كل Account Number يروح لمحصل واحد فقط (كل مطالبات العميل معه).
+    2) لا يُستبعد أي صف من المدخلات — كل الصفوف الممرَّرة تُسند.
+    3) موازنة Net Amount ثم عدد العملاء بأقل فرق ممكن.
     """
     if accounts_df is None or accounts_df.empty or not target_collectors:
         return pd.DataFrame(), pd.DataFrame(), {
@@ -7329,55 +7363,76 @@ def _distribution_balance_accounts(accounts_df, target_collectors, amount_col, a
             "max_amount_diff_actual": 0.0,
             "max_count_diff_actual": 0,
             "within_limit": True,
+            "input_rows": 0,
+            "output_rows": 0,
+            "unique_customers": 0,
+            "duplicate_account_targets": 0,
         }
 
     work = accounts_df.copy()
-    work["_dist_amount"] = pd.to_numeric(work[amount_col], errors="coerce").fillna(0.0) if amount_col and amount_col in work.columns else 0.0
-    # مفتاح الحساب لتفادي تكرار نفس Account Number على أكثر من محصل إن تكرر الصف
+    work["_dist_amount"] = (
+        pd.to_numeric(work[amount_col], errors="coerce").fillna(0.0)
+        if amount_col and amount_col in work.columns
+        else 0.0
+    )
     if account_col and account_col in work.columns:
-        work["_dist_account_key"] = work[account_col].map(_normalize_match_id)
+        work["_dist_account_key"] = [
+            _distribution_account_key(v, i) for i, v in zip(work.index, work[account_col].tolist())
+        ]
     else:
-        work["_dist_account_key"] = work.index.astype(str)
+        work["_dist_account_key"] = [f"ROW::{i}" for i in work.index]
 
-    # لو نفس رقم الحساب متكرر: نجمّعه كوحدة واحدة (مجموع المبلغ) عشان متتوزعش على أكتر من محصل
+    # تجميع كل صفوف نفس العميل كوحدة واحدة
     grouped_rows = []
     for key, grp in work.groupby("_dist_account_key", sort=False):
         grouped_rows.append({
             "key": key,
             "amount": float(grp["_dist_amount"].sum()),
             "indices": list(grp.index),
-            "substate": str(grp.iloc[0][substate_col]).strip() if substate_col and substate_col in grp.columns else "",
             "n_rows": len(grp),
         })
-    # ترتيب تنازلي حسب المبلغ ثم عدد الصفوف
+    # أكبر مبلغ أولاً (greedy multifit) لتقليل الفروقات
     grouped_rows.sort(key=lambda x: (x["amount"], x["n_rows"]), reverse=True)
 
-    loads = {
-        name: {"amount": 0.0, "accounts": 0, "rows": 0, "by_state": {}}
-        for name in target_collectors
-    }
-    assignment = {}  # key -> collector
+    loads = {name: {"amount": 0.0, "accounts": 0, "rows": 0} for name in target_collectors}
+    assignment = {}
 
     for item in grouped_rows:
-        # اختيار المحصل الأقل حملاً: أولاً بالمبلغ، ثم بعدد الحسابات، ثم بالاسم للثبات
         best = min(
             target_collectors,
-            key=lambda n: (loads[n]["amount"], loads[n]["accounts"], n),
+            key=lambda n: (loads[n]["amount"], loads[n]["accounts"], str(n)),
         )
         assignment[item["key"]] = best
         loads[best]["amount"] += item["amount"]
         loads[best]["accounts"] += 1
         loads[best]["rows"] += item["n_rows"]
-        st_name = item["substate"] or "—"
-        loads[best]["by_state"][st_name] = loads[best]["by_state"].get(st_name, 0) + 1
 
-    # تطبيق الإسناد على الصفوف
     assigned = work.copy()
     assigned[DISTRIBUTION_ASSIGNED_COL] = assigned["_dist_account_key"].map(assignment)
 
+    # تحقق صارم: مفيش عميل اتسند لأكتر من محصل + كل الصفوف اتسندت
+    unassigned = int(assigned[DISTRIBUTION_ASSIGNED_COL].isna().sum())
+    if unassigned:
+        # أي صف فاته الإسناد — نوزعه فورًا على الأقل حملًا
+        for idx in assigned.index[assigned[DISTRIBUTION_ASSIGNED_COL].isna()]:
+            best = min(target_collectors, key=lambda n: (loads[n]["amount"], loads[n]["accounts"], str(n)))
+            key = assigned.at[idx, "_dist_account_key"]
+            assigned.at[idx, DISTRIBUTION_ASSIGNED_COL] = best
+            assignment[key] = best
+            amt = float(assigned.at[idx, "_dist_amount"] or 0)
+            loads[best]["amount"] += amt
+            loads[best]["accounts"] += 1
+            loads[best]["rows"] += 1
+
+    # نفس المفتاح → لازم محصل واحد فقط
+    key_to_targets = (
+        assigned.groupby("_dist_account_key")[DISTRIBUTION_ASSIGNED_COL]
+        .nunique()
+    )
+    duplicate_account_targets = int((key_to_targets > 1).sum())
+
     summary_rows = []
-    amounts = []
-    counts = []
+    amounts, counts = [], []
     for name in target_collectors:
         amt = loads[name]["amount"]
         cnt = loads[name]["accounts"]
@@ -7385,8 +7440,8 @@ def _distribution_balance_accounts(accounts_df, target_collectors, amount_col, a
         counts.append(cnt)
         summary_rows.append({
             "المحصّل": name,
-            "عدد الحسابات": cnt,
-            "عدد الصفوف": loads[name]["rows"],
+            "عدد العملاء (حسابات فريدة)": cnt,
+            "عدد المطالبات/الصفوف": loads[name]["rows"],
             "إجمالي Net Amount": round(amt, 2),
         })
     summary_df = pd.DataFrame(summary_rows)
@@ -7410,6 +7465,11 @@ def _distribution_balance_accounts(accounts_df, target_collectors, amount_col, a
         "total_accounts": int(sum(counts)),
         "total_amount": float(sum(amounts)),
         "target_count": len(target_collectors),
+        "input_rows": int(len(work)),
+        "output_rows": int(len(assigned)),
+        "unique_customers": int(work["_dist_account_key"].nunique()),
+        "duplicate_account_targets": duplicate_account_targets,
+        "unassigned_fixed": unassigned,
         "loads": loads,
     }
     return assigned, summary_df, stats
@@ -7420,7 +7480,7 @@ def page_distribution():
     page_header(
         "PORTFOLIO DISTRIBUTION",
         "⚖️ التوزيع",
-        "اختر المحصل المستقيل → حدّد المحصلين المستهدفين والحالات → وزّع الحسابات بأقل فرق ممكن في المبالغ وعدد الحسابات",
+        "كل مطالبات المحصل المستقيل تُوزَّع — وكل عميل (Account Number) يروح لمحصل واحد فقط",
     )
 
     upload_key = "distribution_upload"
@@ -7435,16 +7495,7 @@ def page_distribution():
         args=(upload_key, cache_scope, result_keys),
     )
 
-    raw_df = None
-    filename = None
-    if uploaded is not None:
-        try:
-            raw_df = read_uploaded_dataframe(uploaded)
-            filename = uploaded.name
-        except Exception as e:
-            st.error(f"تعذر قراءة الملف: {e}")
-            return
-    else:
+    if uploaded is None:
         cached = st.session_state.get(DISTRIBUTION_RESULT_KEY)
         if cached and cached.get("assigned_df") is not None:
             st.success(
@@ -7456,21 +7507,41 @@ def page_distribution():
         st.info("📂 ارفع ملف المحفظة لبدء التوزيع.")
         return
 
-    # حذف أول صف بعد العناوين إن وُجد (نفس قاعدة باقي التطبيق)
-    df = raw_df.iloc[1:].copy().reset_index(drop=True) if len(raw_df) > 0 else raw_df.copy()
+    try:
+        raw_df = read_uploaded_dataframe(uploaded)
+        filename = uploaded.name
+    except Exception as e:
+        st.error(f"تعذر قراءة الملف: {e}")
+        return
 
-    sales_col = find_column(df, SALES_PERSON_CANDIDATES)
+    # بعض ملفات المحفظة فيها صف وصف تحت العناوين — نخليه اختياري
+    skip_first = st.checkbox(
+        "تجاهل أول صف بعد العناوين (لو الملف فيه صف وصف)",
+        value=True,
+        key="distribution_skip_first_row",
+        help="لو لاحظت إن في عملاء ناقصين، جرّب تعطيل الخيار ده.",
+    )
+    if skip_first and len(raw_df) > 0:
+        df = raw_df.iloc[1:].copy().reset_index(drop=True)
+    else:
+        df = raw_df.copy().reset_index(drop=True)
+
+    # أعمدة المحصل: Sales Person + Collected by
+    sales_col = find_column(df, SALES_PERSON_CANDIDATES) or find_column(df, COLLECTED_BY_CANDIDATES)
     net_col = find_column(df, PROMISE_NET_AMOUNT_CANDIDATES)
-    account_col = find_column(df, ACCOUNT_NUMBER_CANDIDATES)
+    account_col = find_column(df, ACCOUNT_NUMBER_CANDIDATES) or find_column(
+        df, WALLET_CUSTOMER_ID_CANDIDATES
+    )
     substate_col = find_column(df, PROMISE_SUB_STATE_CANDIDATES)
+    claim_col = find_column(df, CLAIM_CANDIDATES)
 
     missing = []
     if not sales_col:
-        missing.append("المحصّل (Sales Person / Create By)")
+        missing.append("المحصّل (Sales Person / Collected by / Create By)")
     if not net_col:
         missing.append("صافي المبلغ (Net Amount)")
     if not account_col:
-        missing.append("رقم الحساب (Account Number)")
+        missing.append("رقم الحساب / رقم العميل (Account Number)")
     if missing:
         st.error(
             "تعذر العثور على أعمدة مهمة: "
@@ -7479,121 +7550,125 @@ def page_distribution():
         )
         return
 
-    def _safe_person_text(val):
-        if val is None or (isinstance(val, float) and pd.isna(val)):
-            return ""
-        try:
-            if pd.isna(val):
-                return ""
-        except (TypeError, ValueError):
-            pass
-        text = str(val).strip()
-        if text.lower() in {"nan", "none", "null", "nat", ""}:
-            return ""
-        return text
-
-    sales_vals = df[sales_col].map(_safe_person_text)
+    sales_vals = df[sales_col].map(_distribution_safe_text)
     all_sales = sorted({v for v in sales_vals.tolist() if v})
     if not all_sales:
         st.warning("لا يوجد محصلون في الملف.")
         return
 
+    st.caption(
+        f"الأعمدة المستخدمة: المحصل=`{sales_col}` · المبلغ=`{net_col}` · "
+        f"الحساب=`{account_col}`"
+        + (f" · الحالة=`{substate_col}`" if substate_col else "")
+        + (f" · المطالبة=`{claim_col}`" if claim_col else "")
+    )
+
     st.markdown("#### 1️⃣ اختيار المحصل المستقيل (مصدر التوزيع)")
     source_collector = st.selectbox(
-        "المحصل اللي هيتوزع عملاؤه",
+        "المحصل اللي هيتوزع *كل* عملاؤه/مطالباته",
         options=all_sales,
         key="distribution_source_collector",
-        help="عملاء هذا المحصل فقط هم اللي هيتم إعادة توزيعهم.",
+        help="كل صفوف هذا المحصل (بعد فلتر الحالات إن وُجد) هتتوزع. كل عميل يروح لمحصل واحد فقط.",
     )
 
     source_mask = sales_vals == source_collector
-    source_df = df.loc[source_mask].copy()
-    if source_df.empty:
+    source_all = df.loc[source_mask].copy()
+    if source_all.empty:
         st.warning("لا توجد صفوف لهذا المحصل.")
         return
 
-    # الحالات
-    def _safe_state_text(val):
-        if val is None or (isinstance(val, float) and pd.isna(val)):
-            return ""
-        try:
-            if pd.isna(val):
-                return ""
-        except (TypeError, ValueError):
-            pass
-        text = str(val).strip()
-        if text.lower() in {"nan", "none", "null", "nat", ""}:
-            return ""
-        return text
+    source_accounts_all = (
+        source_all[account_col].map(lambda v: _normalize_match_id(v)).replace("", pd.NA).nunique(dropna=True)
+    )
+    source_amount_all = pd.to_numeric(source_all[net_col], errors="coerce").fillna(0).sum()
+    st.info(
+        f"📦 عند **{source_collector}** في الملف: "
+        f"**{len(source_all):,}** صف/مطالبة · "
+        f"**{int(source_accounts_all):,}** عميل فريد · "
+        f"إجمالي المبلغ **{source_amount_all:,.0f}**"
+    )
 
-    if substate_col and substate_col in source_df.columns:
-        state_vals = source_df[substate_col].map(_safe_state_text)
-        available_states = sorted({v for v in state_vals.tolist() if v})
+    # الحالات
+    st.markdown("#### 2️⃣ الحالات (Sub State) — افتراضيًا الكل")
+    include_all_states = st.checkbox(
+        "توزيع كل الحالات (بدون استبعاد)",
+        value=True,
+        key="distribution_include_all_states",
+    )
+    if substate_col and substate_col in source_all.columns:
+        state_vals_all = source_all[substate_col].map(_distribution_safe_text)
+        available_states = sorted({v for v in state_vals_all.tolist() if v})
     else:
         available_states = []
-        state_vals = pd.Series([""] * len(source_df), index=source_df.index)
+        state_vals_all = pd.Series([""] * len(source_all), index=source_all.index)
 
-    st.markdown("#### 2️⃣ الحالات (Sub State) المطلوب توزيعها")
-    if available_states:
+    if available_states and not include_all_states:
         selected_states = st.multiselect(
-            "اختر الحالات — الافتراضي: كل الحالات",
+            "اختر الحالات المطلوب توزيعها فقط",
             options=available_states,
             default=available_states,
             key="distribution_selected_states",
         )
         if not selected_states:
-            st.warning("لازم تختار حالة واحدة على الأقل.")
+            st.warning("لازم تختار حالة واحدة على الأقل، أو فعّل «توزيع كل الحالات».")
             return
-        source_df = source_df.loc[state_vals.isin(selected_states)].copy()
+        source_df = source_all.loc[state_vals_all.isin(selected_states)].copy()
     else:
-        selected_states = []
-        st.caption("لم يُعثر على عمود Sub State — سيتم توزيع كل صفوف المحصل المستقيل.")
+        selected_states = list(available_states)
+        source_df = source_all.copy()
+        if not available_states:
+            st.caption("لم يُعثر على عمود Sub State — سيتم توزيع كل صفوف المحصل.")
+        else:
+            st.caption(f"سيتم توزيع كل الحالات ({len(available_states)} حالة).")
 
     if source_df.empty:
-        st.warning("لا توجد صفوف مطابقة للحالات المختارة عند هذا المحصل.")
+        st.warning("لا توجد صفوف مطابقة بعد فلتر الحالات.")
         return
 
-    # المحصلون المستهدفون
+    # لو فلتر الحالات قلّل العدد ننبّه
+    if len(source_df) < len(source_all):
+        st.warning(
+            f"⚠️ فلتر الحالات استبعد {len(source_all) - len(source_df):,} صف من أصل {len(source_all):,}. "
+            "لو عايز الكل، فعّل «توزيع كل الحالات»."
+        )
+
+    st.markdown("#### 3️⃣ المحصلون المستهدفون")
     target_options = [s for s in all_sales if s != source_collector]
-    st.markdown("#### 3️⃣ المحصلون المستهدفون (هيستلموا العملاء)")
     if not target_options:
         st.error("لا يوجد محصلون آخرون في الملف للتوزيع عليهم.")
         return
-
     selected_targets = st.multiselect(
         "اختر المحصلين اللي هيتوزع عليهم",
         options=target_options,
         default=target_options,
         key="distribution_target_collectors",
-        help="وزّع عملاء المحصل المستقيل على المجموعة دي بالتساوي قدر الإمكان.",
     )
     if len(selected_targets) < 1:
         st.warning("اختار محصل واحد على الأقل كمستهدف.")
         return
 
-    st.markdown("#### 4️⃣ الحد الأقصى لفرق المبالغ بين المحصلين")
+    st.markdown("#### 4️⃣ أقصى فرق مسموح في إجمالي Net Amount")
     max_diff = st.number_input(
-        "أقصى فرق مسموح في إجمالي Net Amount بين أعلى وأقل محصل بعد التوزيع",
+        "أقصى فرق بين أعلى وأقل محصل بعد التوزيع",
         min_value=0.0,
         value=1000.0,
         step=100.0,
         key="distribution_max_amount_diff",
-        help="الخوارزمية بتسعى لأقل فرق ممكن. لو الفرق الفعلي أقل من أو يساوي الرقم ده يبقى ضمن الحد.",
     )
 
-    # ملخص ما سيتم توزيعه
     total_rows = len(source_df)
-    total_accounts = source_df[account_col].map(_normalize_match_id).replace("", pd.NA).nunique()
+    total_accounts = (
+        source_df[account_col].map(lambda v: _normalize_match_id(v)).replace("", pd.NA).nunique(dropna=True)
+    )
     total_amount = pd.to_numeric(source_df[net_col], errors="coerce").fillna(0).sum()
     m1, m2, m3, m4 = st.columns(4)
-    m1.metric("🧾 صفوف للتوزيع", f"{total_rows:,}")
-    m2.metric("🔢 حسابات فريدة", f"{int(total_accounts):,}")
+    m1.metric("🧾 مطالبات/صفوف هتتوزع", f"{total_rows:,}")
+    m2.metric("👤 عملاء فريدون", f"{int(total_accounts):,}")
     m3.metric("💰 إجمالي Net Amount", f"{total_amount:,.0f}")
     m4.metric("👥 مستهدفون", f"{len(selected_targets):,}")
 
     run = st.button("⚖️ تنفيذ التوزيع", type="primary", use_container_width=True, key="distribution_run_btn")
     if not run and DISTRIBUTION_RESULT_KEY in st.session_state:
-        # لو فيه نتيجة سابقة لنفس الملف/الاختيارات نعرضها
         cached = st.session_state.get(DISTRIBUTION_RESULT_KEY)
         if cached and cached.get("filename") == filename:
             _show_distribution_results(cached)
@@ -7602,7 +7677,7 @@ def page_distribution():
         st.info("اضغط «تنفيذ التوزيع» بعد ضبط الاختيارات.")
         return
 
-    with st.spinner("جارٍ توزيع الحسابات بأقل فرق ممكن..."):
+    with st.spinner("جارٍ توزيع كل العملاء — كل عميل لمحصل واحد فقط..."):
         assigned_df, summary_df, stats = _distribution_balance_accounts(
             source_df,
             selected_targets,
@@ -7616,25 +7691,43 @@ def page_distribution():
         st.error(stats.get("message", "فشل التوزيع."))
         return
 
+    # ضمان: عدد صفوف الإخراج = عدد صفوف الإدخال
+    if stats.get("output_rows") != stats.get("input_rows"):
+        st.error(
+            f"خطأ داخلي: دخل {stats.get('input_rows')} صف وخرج {stats.get('output_rows')}. لم يُحفظ التوزيع."
+        )
+        return
+    if stats.get("duplicate_account_targets", 0) > 0:
+        st.error(
+            f"خطأ: وُجد {stats['duplicate_account_targets']} عميل مسند لأكثر من محصل. لم يُحفظ التوزيع."
+        )
+        return
+
     assigned_df = assigned_df.copy()
     assigned_df[DISTRIBUTION_SOURCE_COL] = source_collector
 
-    # بناء ملف المحفظة المحدّث: باقي الصفوف كما هي + صفوف المصدر بالمحصل الجديد
-    updated = df.copy()
-    # إزالة صفوف المصدر القديمة ثم إلحاق النسخة المعاد إسنادها
-    # source_mask على df الأصلي؛ نطابق بالـ index من source_df
-    updated = updated.drop(index=source_df.index, errors="ignore").copy()
-    reassigned = assigned_df.drop(columns=[c for c in assigned_df.columns if c.startswith("_dist_")], errors="ignore")
-    # تحديث عمود المحصل
-    reassigned = reassigned.copy()
+    # المحفظة المحدّثة: حذف صفوف المصدر الموزَّعة فقط + إلحاقها بالمحصل الجديد
+    updated = df.drop(index=source_df.index, errors="ignore").copy()
+    reassigned = assigned_df.drop(
+        columns=[c for c in assigned_df.columns if str(c).startswith("_dist_")],
+        errors="ignore",
+    ).copy()
     reassigned[sales_col] = reassigned[DISTRIBUTION_ASSIGNED_COL]
-    # دمج
-    # تأكد من نفس الأعمدة
     for col in updated.columns:
         if col not in reassigned.columns:
             reassigned[col] = pd.NA
-    reassigned = reassigned[updated.columns]
+    reassigned = reassigned.reindex(columns=list(updated.columns))
     updated_full = pd.concat([updated, reassigned], ignore_index=True)
+
+    # تحقق نهائي على المحفظة: نفس Account Number من المصدر ما يبقاش عند أكتر من محصل جديد
+    if account_col in reassigned.columns and DISTRIBUTION_ASSIGNED_COL in assigned_df.columns:
+        check = assigned_df[[account_col, DISTRIBUTION_ASSIGNED_COL]].copy()
+        check["_k"] = check[account_col].map(lambda v: _normalize_match_id(v))
+        check = check[check["_k"] != ""]
+        multi = check.groupby("_k")[DISTRIBUTION_ASSIGNED_COL].nunique()
+        if int((multi > 1).sum()) > 0:
+            st.error("فشل التحقق النهائي: عميل واحد ظهر عند أكثر من محصل.")
+            return
 
     result_payload = {
         "filename": filename,
@@ -7644,12 +7737,17 @@ def page_distribution():
         "max_diff": float(max_diff),
         "stats": stats,
         "summary_df": summary_df,
-        "assigned_df": assigned_df.drop(columns=[c for c in assigned_df.columns if c.startswith("_dist_")], errors="ignore"),
+        "assigned_df": assigned_df.drop(
+            columns=[c for c in assigned_df.columns if str(c).startswith("_dist_")],
+            errors="ignore",
+        ),
         "updated_df": updated_full,
         "sales_col": sales_col,
         "net_col": net_col,
         "account_col": account_col,
         "substate_col": substate_col,
+        "source_total_rows": int(len(source_all)),
+        "distributed_rows": int(len(source_df)),
     }
     st.session_state[DISTRIBUTION_RESULT_KEY] = result_payload
     _show_distribution_results(result_payload)
@@ -7666,30 +7764,40 @@ def _show_distribution_results(cached):
     within = stats.get("within_limit", True)
 
     st.subheader(f"📊 نتيجة التوزيع — من: {source_collector}")
-    k1, k2, k3, k4 = st.columns(4)
-    k1.metric("💰 فرق المبالغ (أعلى − أقل)", f"{actual_diff:,.0f}")
-    k2.metric("🔢 فرق عدد الحسابات", f"{count_diff:,}")
-    k3.metric("🎯 الحد المطلوب للمبلغ", f"{float(max_diff):,.0f}")
+
+    k0, k1, k2, k3, k4 = st.columns(5)
+    k0.metric("🧾 صفوف تم توزيعها", f"{stats.get('output_rows', 0):,}")
+    k1.metric("👤 عملاء فريدون", f"{stats.get('unique_customers', 0):,}")
+    k2.metric("💰 فرق المبالغ", f"{actual_diff:,.0f}")
+    k3.metric("🔢 فرق عدد العملاء", f"{count_diff:,}")
     k4.metric("الحالة", "✅ ضمن الحد" if within else "⚠️ تجاوز الحد")
 
-    if within:
+    if stats.get("input_rows") == stats.get("output_rows"):
         st.success(
-            f"تم التوزيع بنجاح. فرق المبالغ الفعلي {actual_diff:,.0f} "
-            f"{'≤' if actual_diff <= float(max_diff) else '>'} الحد {float(max_diff):,.0f}، "
-            f"وفرق عدد الحسابات {count_diff}."
+            f"تم توزيع **كل** الـ {stats.get('output_rows', 0):,} صف/مطالبة "
+            f"({stats.get('unique_customers', 0):,} عميل). "
+            "كل عميل مسند لمحصل واحد فقط."
+        )
+    else:
+        st.error("عدد الصفوف المخرجة لا يطابق المدخلة — راجع التوزيع.")
+
+    if stats.get("duplicate_account_targets", 0):
+        st.error(f"تنبيه: {stats['duplicate_account_targets']} عميل ظهر عند أكثر من محصل.")
+    else:
+        st.caption("✔️ لا يوجد عميل مسند لأكثر من محصل.")
+
+    if within:
+        st.info(
+            f"فرق المبالغ الفعلي {actual_diff:,.0f} مقابل الحد {float(max_diff):,.0f}."
         )
     else:
         st.warning(
-            f"تم التوزيع بأفضل توازن متاح، لكن فرق المبالغ ({actual_diff:,.0f}) "
-            f"أكبر من الحد المطلوب ({float(max_diff):,.0f}). "
-            "يمكنك زيادة عدد المحصلين المستهدفين أو تعديل الحد."
+            f"أفضل توازن متاح: فرق المبالغ {actual_diff:,.0f} أكبر من الحد {float(max_diff):,.0f}."
         )
 
     if summary_df is not None and not summary_df.empty:
         st.markdown("#### ملخص لكل محصل مستهدف")
         st.dataframe(summary_df, use_container_width=True, hide_index=True)
-
-        # رسم بسيط
         try:
             fig = px.bar(
                 summary_df,
@@ -7697,7 +7805,7 @@ def _show_distribution_results(cached):
                 y="المحصّل",
                 orientation="h",
                 text="إجمالي Net Amount",
-                color="عدد الحسابات",
+                color="عدد العملاء (حسابات فريدة)",
                 color_continuous_scale=OPS_SCALE,
                 template=PLOTLY_TEMPLATE,
             )
@@ -7716,7 +7824,7 @@ def _show_distribution_results(cached):
             pass
 
     if assigned_df is not None and not assigned_df.empty:
-        st.markdown("#### تفاصيل الحسابات المعاد توزيعها")
+        st.markdown("#### تفاصيل المطالبات المعاد توزيعها")
         show_cols = []
         for c in [
             cached.get("account_col"),
@@ -7734,7 +7842,6 @@ def _show_distribution_results(cached):
             hide_index=True,
         )
 
-        # تحميل: 1) فقط المعاد توزيعه  2) المحفظة كاملة بعد التحديث
         def _to_xlsx(frame, sheet):
             buf = io.BytesIO()
             with pd.ExcelWriter(buf, engine="openpyxl") as writer:
@@ -7744,7 +7851,7 @@ def _show_distribution_results(cached):
         c1, c2 = st.columns(2)
         with c1:
             st.download_button(
-                "⬇️ تحميل الحسابات المعاد توزيعها فقط",
+                "⬇️ تحميل المطالبات المعاد توزيعها فقط",
                 data=_to_xlsx(assigned_df, "التوزيع"),
                 file_name=f"توزيع_{source_collector}.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -7762,7 +7869,7 @@ def _show_distribution_results(cached):
                 use_container_width=True,
                 key="distribution_download_full",
                 type="primary",
-                disabled=updated_df is None or updated_df.empty,
+                disabled=updated_df is None or getattr(updated_df, "empty", True),
             )
 
 

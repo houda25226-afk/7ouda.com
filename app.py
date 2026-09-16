@@ -7341,8 +7341,13 @@ def _greedy_assign_customers(
     account_weight=1.0,
 ):
     """
-    توزيع أولي متعدد الأهداف + بحث محلي قوي (نقل + تبادل عملاء كاملين)
-    يستمر لحد ما مفيش حركة بتحسّن فرق المبالغ/العملاء/الحسابات.
+    توزيع مطالبات/عملاء المحصل المستقيل فقط على المستهدفين.
+    الهدف: أقرب تساوي ممكن في (المبلغ، عدد العملاء، عدد الحسابات/المطالبات)
+    بين المحصلين المستهدفين — مش موازنة المحفظة الأصلية بتاعتهم.
+
+    مراحل:
+    1) إسناد أولي: كل عميل يروح للأقل حملاً حسب score مطبّع.
+    2) بحث محلي مكثّف: نقل + تبادل عملاء كاملين لحد ثبات التحسين.
     """
     if customers_df.empty or not target_collectors:
         return {}, pd.DataFrame(), []
@@ -7360,10 +7365,12 @@ def _greedy_assign_customers(
     total_amount = float(customers_df["amount"].sum())
     total_clients = int(len(customers_df))
     total_accounts = int(customers_df["n_accounts"].sum())
+    total_rows = int(customers_df["n_rows"].sum())
 
-    avg_amount = max(total_amount / n_targets if n_targets else 1.0, 1e-9)
-    avg_clients = max(total_clients / n_targets if n_targets else 1.0, 1e-9)
-    avg_accounts = max(total_accounts / n_targets if n_targets else 1.0, 1e-9)
+    avg_amount = max(total_amount / n_targets, 1e-9)
+    avg_clients = max(total_clients / n_targets, 1e-9)
+    avg_accounts = max(total_accounts / n_targets, 1e-9)
+    avg_rows = max(total_rows / n_targets, 1e-9)
 
     state = {
         name: {"amount": 0.0, "clients": 0, "accounts": 0, "rows": 0, "client_keys": []}
@@ -7378,64 +7385,69 @@ def _greedy_assign_customers(
         amts = [st[n]["amount"] for n in target_collectors]
         clis = [st[n]["clients"] for n in target_collectors]
         accs = [st[n]["accounts"] for n in target_collectors]
+        rows = [st[n]["rows"] for n in target_collectors]
         return (
-            (max(amts) - min(amts)) if amts else 0.0,
-            (max(clis) - min(clis)) if clis else 0,
-            (max(accs) - min(accs)) if accs else 0,
-        )
-
-    def _imbalance(st):
-        amts = [st[n]["amount"] / avg_amount for n in target_collectors]
-        clis = [st[n]["clients"] / avg_clients for n in target_collectors]
-        accs = [st[n]["accounts"] / avg_accounts for n in target_collectors]
-        def _r(vals):
-            return max(vals) - min(vals) if vals else 0.0
-        return (
-            amount_weight * _r(amts)
-            + client_weight * _r(clis)
-            + account_weight * _r(accs)
+            max(amts) - min(amts),
+            max(clis) - min(clis),
+            max(accs) - min(accs),
+            max(rows) - min(rows),
         )
 
     def _cost(st):
-        """تكلفة مركبة للبحث المحلي: أولوية لتقليل فرق المبالغ ثم العملاء ثم الحسابات."""
-        a, c, k = _ranges(st)
-        # عقوبة قوية لو عدّينا الـ tolerance
+        """تكلفة: تقليل فروقات المبالغ والعملاء والحسابات والمطالبات للمطالبات الموزّعة فقط."""
+        a, c, k, r = _ranges(st)
+        # عقوبات لو عدّينا الـ tolerance
         pen = 0.0
         if max_diff_amount is not None and a > max_diff_amount:
-            pen += 1000.0 * ((a - max_diff_amount) / max(avg_amount, 1.0))
+            pen += 5000.0 * ((a - max_diff_amount) / avg_amount)
         if max_diff_clients is not None and c > max_diff_clients:
-            pen += 500.0 * (c - max_diff_clients)
+            pen += 2000.0 * (c - max_diff_clients)
         if max_diff_accounts is not None and k > max_diff_accounts:
-            pen += 500.0 * (k - max_diff_accounts)
-        # التكلفة الأساسية (مطبّعة)
+            pen += 2000.0 * (k - max_diff_accounts)
+
         base = (
             amount_weight * (a / avg_amount)
-            + client_weight * (c / max(avg_clients, 1e-9))
-            + account_weight * (k / max(avg_accounts, 1e-9))
+            + client_weight * (c / avg_clients)
+            + account_weight * (k / avg_accounts)
+            + 0.5 * account_weight * (r / avg_rows)  # المطالبات كبُعد إضافي
         )
-        return pen + base, a, c, k
+        # ثانوي: مجموع مربعات الانحراف عن المتوسط (يساعد على التوزيع المتساوي)
+        amt_var = sum((st[n]["amount"] - avg_amount) ** 2 for n in target_collectors) / (avg_amount ** 2)
+        cli_var = sum((st[n]["clients"] - avg_clients) ** 2 for n in target_collectors) / (avg_clients ** 2)
+        acc_var = sum((st[n]["accounts"] - avg_accounts) ** 2 for n in target_collectors) / (avg_accounts ** 2)
+        base += 0.15 * (amount_weight * amt_var + client_weight * cli_var + account_weight * acc_var)
+        return (pen + base, a, c, k, r)
 
-    # ---------- المرحلة 1: إسناد أولي ----------
+    def _imbalance_assign(st):
+        amts = [st[n]["amount"] / avg_amount for n in target_collectors]
+        clis = [st[n]["clients"] / avg_clients for n in target_collectors]
+        accs = [st[n]["accounts"] / avg_accounts for n in target_collectors]
+        def _r(v):
+            return max(v) - min(v)
+        return amount_weight * _r(amts) + client_weight * _r(clis) + account_weight * _r(accs)
+
+    # ----- 1) إسناد أولي -----
     for _, row in ordered.iterrows():
         ck = row["client_key"]
-        amt = float(row["amount"] or 0)
-        nacc = int(row["n_accounts"] or 0)
-        nrows = int(row["n_rows"] or 0)
+        info = cust_info[ck]
+        amt, nacc, nrows = info["amount"], info["n_accounts"], info["n_rows"]
 
-        best = None
-        best_score = None
+        best, best_score = None, None
         for name in target_collectors:
             state[name]["amount"] += amt
             state[name]["clients"] += 1
             state[name]["accounts"] += nacc
-            score = _imbalance(state)
-            tie = (score, state[name]["amount"], state[name]["clients"], name)
+            state[name]["rows"] += nrows
+            score = _imbalance_assign(state)
+            # بعد الإضافة: فضّل الأقل مبلغاً ثم عملاء
+            tie = (score, state[name]["amount"], state[name]["clients"], state[name]["accounts"], name)
             if best_score is None or tie < best_score:
                 best_score = tie
                 best = name
             state[name]["amount"] -= amt
             state[name]["clients"] -= 1
             state[name]["accounts"] -= nacc
+            state[name]["rows"] -= nrows
 
         state[best]["amount"] += amt
         state[best]["clients"] += 1
@@ -7443,146 +7455,201 @@ def _greedy_assign_customers(
         state[best]["rows"] += nrows
         state[best]["client_keys"].append(ck)
 
-    # ---------- المرحلة 2: بحث محلي — نقل + تبادل ----------
+    # ----- 2) بحث محلي: نقل + تبادل -----
     moved_count = 0
     swap_count = 0
-    max_rounds = max(200, len(customers_df) * 4)
+    max_rounds = max(400, len(customers_df) * 6)
 
-    def _apply_transfer(src, dst, ck):
+    def _transfer(src, dst, ck):
         info = cust_info[ck]
-        amt, nacc, nrows = info["amount"], info["n_accounts"], info["n_rows"]
         state[src]["client_keys"].remove(ck)
-        state[src]["amount"] -= amt
+        state[src]["amount"] -= info["amount"]
         state[src]["clients"] -= 1
-        state[src]["accounts"] -= nacc
-        state[src]["rows"] -= nrows
+        state[src]["accounts"] -= info["n_accounts"]
+        state[src]["rows"] -= info["n_rows"]
         state[dst]["client_keys"].append(ck)
-        state[dst]["amount"] += amt
+        state[dst]["amount"] += info["amount"]
         state[dst]["clients"] += 1
-        state[dst]["accounts"] += nacc
-        state[dst]["rows"] += nrows
-
-    def _undo_transfer(src, dst, ck):
-        # عكس _apply_transfer
-        _apply_transfer(dst, src, ck)
-
-    def _apply_swap(a_name, ck_a, b_name, ck_b):
-        _apply_transfer(a_name, b_name, ck_a)
-        _apply_transfer(b_name, a_name, ck_b)
+        state[dst]["accounts"] += info["n_accounts"]
+        state[dst]["rows"] += info["n_rows"]
 
     for _round in range(max_rounds):
-        cur_cost, cur_a, cur_c, cur_k = _cost(state)
+        cur = _cost(state)
+        cur_cost = cur[0]
         improved = False
 
-        # --- (أ) أفضل نقل من محصل أغنى لأفقر ---
-        by_amt_desc = sorted(target_collectors, key=lambda n: state[n]["amount"], reverse=True)
+        by_amt_desc = sorted(target_collectors, key=lambda n: (state[n]["amount"], state[n]["accounts"], state[n]["clients"]), reverse=True)
         by_amt_asc = list(reversed(by_amt_desc))
+        rich_list = by_amt_desc[: min(8, n_targets)]
+        poor_list = by_amt_asc[: min(8, n_targets)]
 
-        best_transfer = None  # (new_cost_tuple, src, dst, ck)
-        # نركّز على الأغنى قدام الأفقر (أول 4 × آخر 4 لتسريع)
-        rich_list = by_amt_desc[: min(6, n_targets)]
-        poor_list = by_amt_asc[: min(6, n_targets)]
-
+        # (أ) نقل
+        best_transfer = None
         for src in rich_list:
-            if state[src]["clients"] <= 0:
+            if state[src]["clients"] == 0:
                 continue
-            # جرب العملاء من الأصغر مبلغاً للأكبر — أسهل للموازنة الدقيقة
-            src_keys = sorted(
-                state[src]["client_keys"],
-                key=lambda ck: cust_info[ck]["amount"],
-            )
+            src_keys = sorted(state[src]["client_keys"], key=lambda ck: cust_info[ck]["amount"])
             for dst in poor_list:
-                if src == dst:
-                    continue
-                if state[src]["amount"] <= state[dst]["amount"]:
+                if src == dst or state[src]["amount"] <= state[dst]["amount"]:
                     continue
                 for ck in src_keys:
                     info = cust_info[ck]
-                    # نقل مؤقت
+                    # مؤقت
                     state[src]["amount"] -= info["amount"]
                     state[src]["clients"] -= 1
                     state[src]["accounts"] -= info["n_accounts"]
+                    state[src]["rows"] -= info["n_rows"]
                     state[dst]["amount"] += info["amount"]
                     state[dst]["clients"] += 1
                     state[dst]["accounts"] += info["n_accounts"]
-                    new_cost = _cost(state)
+                    state[dst]["rows"] += info["n_rows"]
+                    new = _cost(state)
                     state[src]["amount"] += info["amount"]
                     state[src]["clients"] += 1
                     state[src]["accounts"] += info["n_accounts"]
+                    state[src]["rows"] += info["n_rows"]
                     state[dst]["amount"] -= info["amount"]
                     state[dst]["clients"] -= 1
                     state[dst]["accounts"] -= info["n_accounts"]
-
-                    if new_cost[0] < cur_cost - 1e-9:
-                        if best_transfer is None or new_cost < best_transfer[0]:
-                            best_transfer = (new_cost, src, dst, ck)
+                    state[dst]["rows"] -= info["n_rows"]
+                    if new[0] < cur_cost - 1e-12:
+                        if best_transfer is None or new[0] < best_transfer[0][0]:
+                            best_transfer = (new, src, dst, ck)
 
         if best_transfer is not None:
             _, src, dst, ck = best_transfer
-            _apply_transfer(src, dst, ck)
+            _transfer(src, dst, ck)
             moved_count += 1
             improved = True
-            continue  # أعد تقييم من أول الجولة بعد كل تحسين
+            continue
 
-        # --- (ب) أفضل تبادل بين زوج محصلين ---
-        best_swap = None  # (new_cost, a, ck_a, b, ck_b)
-        # أزواج مرشحة: أغنى مع أفقر
+        # (ب) تبادل 1↔1
+        best_swap = None
         pairs = []
-        for i, a in enumerate(by_amt_desc[: min(5, n_targets)]):
-            for b in by_amt_asc[: min(5, n_targets)]:
+        for a in rich_list:
+            for b in poor_list:
                 if a != b:
                     pairs.append((a, b))
-        # إزالة تكرار الاتجاه
-        seen_pairs = set()
-        uniq_pairs = []
+        seen = set()
+        uniq = []
         for a, b in pairs:
             key = tuple(sorted((a, b)))
-            if key not in seen_pairs:
-                seen_pairs.add(key)
-                uniq_pairs.append((a, b))
+            if key not in seen:
+                seen.add(key)
+                uniq.append((a, b))
 
-        for a_name, b_name in uniq_pairs:
-            keys_a = list(state[a_name]["client_keys"])
-            keys_b = list(state[b_name]["client_keys"])
+        for a_name, b_name in uniq:
+            keys_a = sorted(state[a_name]["client_keys"], key=lambda ck: cust_info[ck]["amount"], reverse=True)
+            keys_b = sorted(state[b_name]["client_keys"], key=lambda ck: cust_info[ck]["amount"], reverse=True)
             if not keys_a or not keys_b:
                 continue
-            # لتقليل التعقيد: خذ أكبر 12 وأصغر 12 من كل طرف
-            keys_a_s = sorted(keys_a, key=lambda ck: cust_info[ck]["amount"], reverse=True)
-            keys_b_s = sorted(keys_b, key=lambda ck: cust_info[ck]["amount"], reverse=True)
-            cand_a = keys_a_s[:12] + keys_a_s[-12:]
-            cand_b = keys_b_s[:12] + keys_b_s[-12:]
-            cand_a = list(dict.fromkeys(cand_a))
-            cand_b = list(dict.fromkeys(cand_b))
-
+            cand_a = list(dict.fromkeys(keys_a[:15] + keys_a[-15:]))
+            cand_b = list(dict.fromkeys(keys_b[:15] + keys_b[-15:]))
             for ck_a in cand_a:
                 ia = cust_info[ck_a]
                 for ck_b in cand_b:
                     ib = cust_info[ck_b]
-                    # تبادل مؤقت
-                    state[a_name]["amount"] += ib["amount"] - ia["amount"]
-                    state[a_name]["accounts"] += ib["n_accounts"] - ia["n_accounts"]
-                    # clients ثابت في التبادل (1↔1)
-                    state[b_name]["amount"] += ia["amount"] - ib["amount"]
-                    state[b_name]["accounts"] += ia["n_accounts"] - ib["n_accounts"]
-                    new_cost = _cost(state)
-                    state[a_name]["amount"] -= ib["amount"] - ia["amount"]
-                    state[a_name]["accounts"] -= ib["n_accounts"] - ia["n_accounts"]
-                    state[b_name]["amount"] -= ia["amount"] - ib["amount"]
-                    state[b_name]["accounts"] -= ia["n_accounts"] - ib["n_accounts"]
-
-                    if new_cost[0] < cur_cost - 1e-9:
-                        if best_swap is None or new_cost < best_swap[0]:
-                            best_swap = (new_cost, a_name, ck_a, b_name, ck_b)
+                    # فرق المبلغ بعد التبادل على a: +ib -ia
+                    da = ib["amount"] - ia["amount"]
+                    dk = ib["n_accounts"] - ia["n_accounts"]
+                    dr = ib["n_rows"] - ia["n_rows"]
+                    state[a_name]["amount"] += da
+                    state[a_name]["accounts"] += dk
+                    state[a_name]["rows"] += dr
+                    state[b_name]["amount"] -= da
+                    state[b_name]["accounts"] -= dk
+                    state[b_name]["rows"] -= dr
+                    new = _cost(state)
+                    state[a_name]["amount"] -= da
+                    state[a_name]["accounts"] -= dk
+                    state[a_name]["rows"] -= dr
+                    state[b_name]["amount"] += da
+                    state[b_name]["accounts"] += dk
+                    state[b_name]["rows"] += dr
+                    if new[0] < cur_cost - 1e-12:
+                        if best_swap is None or new[0] < best_swap[0][0]:
+                            best_swap = (new, a_name, ck_a, b_name, ck_b)
 
         if best_swap is not None:
             _, a_name, ck_a, b_name, ck_b = best_swap
-            _apply_swap(a_name, ck_a, b_name, ck_b)
+            _transfer(a_name, b_name, ck_a)
+            _transfer(b_name, a_name, ck_b)
             swap_count += 1
             improved = True
             continue
 
         if not improved:
             break
+
+    # ----- 3) مرحلة أخيرة: ركّز على تقليل فرق المبالغ فقط لو لسه فوق الـ tolerance -----
+    # مع السماح بفرق عملاء/حسابات في حدود الـ tolerance
+    if max_diff_amount is not None:
+        for _round in range(max_rounds // 2):
+            a_spread, c_spread, k_spread, _ = _ranges(state)
+            if a_spread <= max_diff_amount:
+                break
+            by_amt_desc = sorted(target_collectors, key=lambda n: state[n]["amount"], reverse=True)
+            by_amt_asc = list(reversed(by_amt_desc))
+            src = by_amt_desc[0]
+            dst = by_amt_asc[0]
+            if src == dst or state[src]["amount"] <= state[dst]["amount"]:
+                break
+
+            best_ck = None
+            best_new_spread = a_spread
+            for ck in list(state[src]["client_keys"]):
+                info = cust_info[ck]
+                # بعد النقل
+                new_src = state[src]["amount"] - info["amount"]
+                new_dst = state[dst]["amount"] + info["amount"]
+                # spread تقريبي
+                others_max = max((state[n]["amount"] for n in target_collectors if n not in (src, dst)), default=0.0)
+                others_min = min((state[n]["amount"] for n in target_collectors if n not in (src, dst)), default=new_src)
+                new_spread = max(others_max, new_src, new_dst) - min(others_min, new_src, new_dst)
+                # قيود العملاء/الحسابات
+                new_c_src = state[src]["clients"] - 1
+                new_c_dst = state[dst]["clients"] + 1
+                new_k_src = state[src]["accounts"] - info["n_accounts"]
+                new_k_dst = state[dst]["accounts"] + info["n_accounts"]
+                all_c = [state[n]["clients"] for n in target_collectors if n not in (src, dst)] + [new_c_src, new_c_dst]
+                all_k = [state[n]["accounts"] for n in target_collectors if n not in (src, dst)] + [new_k_src, new_k_dst]
+                new_c_sp = max(all_c) - min(all_c)
+                new_k_sp = max(all_k) - min(all_k)
+                if max_diff_clients is not None and new_c_sp > max(max_diff_clients, c_spread):
+                    continue
+                if max_diff_accounts is not None and new_k_sp > max(max_diff_accounts, k_spread):
+                    continue
+                if new_spread < best_new_spread - 1e-6:
+                    best_new_spread = new_spread
+                    best_ck = ck
+
+            if best_ck is None:
+                # جرب تبادل لتقليل فرق المبلغ
+                found_swap = False
+                for ck_a in list(state[src]["client_keys"]):
+                    ia = cust_info[ck_a]
+                    for ck_b in list(state[dst]["client_keys"]):
+                        ib = cust_info[ck_b]
+                        if ia["amount"] <= ib["amount"]:
+                            continue  # لازم src يدي أكبر وياخد أصغر
+                        new_src = state[src]["amount"] - ia["amount"] + ib["amount"]
+                        new_dst = state[dst]["amount"] - ib["amount"] + ia["amount"]
+                        others_max = max((state[n]["amount"] for n in target_collectors if n not in (src, dst)), default=0.0)
+                        others_min = min((state[n]["amount"] for n in target_collectors if n not in (src, dst)), default=new_src)
+                        new_spread = max(others_max, new_src, new_dst) - min(others_min, new_src, new_dst)
+                        if new_spread < a_spread - 1e-6:
+                            _transfer(src, dst, ck_a)
+                            _transfer(dst, src, ck_b)
+                            swap_count += 1
+                            found_swap = True
+                            break
+                    if found_swap:
+                        break
+                if not found_swap:
+                    break
+            else:
+                _transfer(src, dst, best_ck)
+                moved_count += 1
 
     assign_map = {}
     for name in target_collectors:
@@ -7596,10 +7663,15 @@ def _greedy_assign_customers(
             "المحصّل": name,
             "عدد العملاء": s["clients"],
             "عدد الحسابات": s["accounts"],
-            "عدد الصفوف": s["rows"],
+            "عدد المطالبات": s["rows"],
             "إجمالي المبلغ": round(s["amount"], 2),
+            "الهدف_مبلغ": round(avg_amount, 2),
+            "الهدف_عملاء": round(avg_clients, 2),
+            "الهدف_حسابات": round(avg_accounts, 2),
         })
     summary = pd.DataFrame(summary_rows)
+    # رتب من الأعلى مبلغ للأقل عشان يتقرأ بسهولة
+    summary = summary.sort_values("إجمالي المبلغ", ascending=False).reset_index(drop=True)
 
     warnings = []
     if len(summary) > 1:
@@ -7611,13 +7683,11 @@ def _greedy_assign_customers(
         account_spread = int(accounts.max() - accounts.min())
         total_moves = moved_count + swap_count
         if total_moves:
-            warnings.append(
-                f"تم تحسين التوزيع: نقل {moved_count} عميل + تبادل {swap_count} زوج."
-            )
+            warnings.append(f"تحسين: نقل {moved_count} + تبادل {swap_count} — المتوسط المستهدف للمبلغ ≈ {avg_amount:,.0f}")
         if max_diff_amount is not None and amount_spread > max_diff_amount:
             warnings.append(
                 f"فرق المبالغ ({amount_spread:,.0f}) أكبر من المسموح ({max_diff_amount:,.0f}) "
-                f"— أقرب توازن ممكن مع الحفاظ على عملاء كاملين"
+                f"— أقرب توازن ممكن بدون تقسيم عميل"
             )
         if max_diff_clients is not None and client_spread > max_diff_clients:
             warnings.append(f"فرق عدد العملاء ({client_spread}) أكبر من المسموح ({max_diff_clients})")
@@ -7630,6 +7700,7 @@ def _greedy_assign_customers(
         }
         summary.attrs["moved_count"] = moved_count
         summary.attrs["swap_count"] = swap_count
+        summary.attrs["avg_amount"] = avg_amount
 
     return assign_map, summary, warnings
 

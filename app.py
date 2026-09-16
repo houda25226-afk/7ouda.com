@@ -7981,26 +7981,108 @@ def page_distribution():
             account_weight=account_weight,
         )
 
-        # بناء النسخة الجديدة من الملف كامل
-        full_df = df.copy()
-        # فقط صفوف المستقيل هتتغير
-        resigned_idx = full_df.index[sales_vals == resigned]
-        client_keys_full = full_df.loc[resigned_idx, client_key_col].astype(str).str.strip()
-        new_sales = client_keys_full.map(assign_map)
-        # لو مفيش مفتاح في الـ map (نادر) نخليه كما هو أو نوزعه عشوائي
-        full_df.loc[resigned_idx, sales_col] = new_sales.fillna(selected_targets[0]).values
+        # --- تطبيق الإسناد على الملف ---
+        # تطبيع المفاتيح عشان الـ map يطابق الصفوف فعلاً
+        def _norm_key(s):
+            return (
+                s.astype(str)
+                .str.strip()
+                .str.replace(r"\.0$", "", regex=True)  # 123.0 -> 123 من إكسيل
+                .str.replace(r"\s+", " ", regex=True)
+            )
 
-        # تفاصيل التوزيع
-        detail = work[["_client_key"]].copy()
-        detail["المحصّل_الجديد"] = detail["_client_key"].map(assign_map)
-        detail = detail.merge(grouped, left_on="_client_key", right_on="client_key", how="left")
-        detail = detail.drop(columns=["client_key"], errors="ignore")
+        assign_map_norm = {_norm_key(pd.Series([k])).iloc[0]: v for k, v in assign_map.items()}
+
+        full_df = df.copy()
+        resigned_mask = full_df[sales_col].astype(str).str.strip() == resigned
+        resigned_idx = full_df.index[resigned_mask]
+        keys_on_rows = _norm_key(full_df.loc[resigned_idx, client_key_col])
+        mapped = keys_on_rows.map(assign_map_norm)
+        unmapped = int(mapped.isna().sum())
+        if unmapped:
+            # محاولة ثانية بالمفتاح الخام
+            mapped2 = full_df.loc[resigned_idx, client_key_col].astype(str).str.strip().map(assign_map)
+            mapped = mapped.fillna(mapped2)
+            unmapped = int(mapped.isna().sum())
+        full_df.loc[resigned_idx, sales_col] = mapped.fillna(selected_targets[0]).values
+
+        # المطالبات الموزّعة فقط (بعد الإسناد) — ده المصدر الحقيقي للتحقق
+        distributed_df = full_df.loc[resigned_idx].copy()
+        # أعمدة المبلغ على مستوى الصف
+        for col in amount_cols:
+            if col in distributed_df.columns:
+                distributed_df[col] = pd.to_numeric(distributed_df[col], errors="coerce").fillna(0)
+        if amount_cols:
+            distributed_df["_amt"] = distributed_df[amount_cols].sum(axis=1)
+        else:
+            distributed_df["_amt"] = 0.0
+        distributed_df["_client"] = _norm_key(distributed_df[client_key_col])
+        distributed_df["_account"] = _norm_key(distributed_df[account_key_col]) if account_key_col in distributed_df.columns else distributed_df["_client"]
+
+        # ملخص فعلي من الشيت بعد الإسناد (مش من الخوارزمية بس)
+        actual_summary = (
+            distributed_df.groupby(sales_col, as_index=False)
+            .agg(
+                **{
+                    "عدد العملاء": ("_client", "nunique"),
+                    "عدد الحسابات": ("_account", "nunique"),
+                    "عدد المطالبات": ("_amt", "count"),
+                    "إجمالي المبلغ": ("_amt", "sum"),
+                }
+            )
+            .sort_values("إجمالي المبلغ", ascending=False)
+            .reset_index(drop=True)
+        )
+        actual_summary = actual_summary.rename(columns={sales_col: "المحصّل"})
+        actual_summary["إجمالي المبلغ"] = actual_summary["إجمالي المبلغ"].round(2)
+
+        # استبدال ملخص الخوارزمية بالملخص الفعلي من البيانات المكتوبة
+        summary = actual_summary
+
+        if len(summary) > 1:
+            amount_spread = float(summary["إجمالي المبلغ"].max() - summary["إجمالي المبلغ"].min())
+            client_spread = int(summary["عدد العملاء"].max() - summary["عدد العملاء"].min())
+            account_spread = int(summary["عدد الحسابات"].max() - summary["عدد الحسابات"].min())
+            warnings = list(warnings or [])
+            # حدّث التحذيرات حسب الواقع
+            warnings = [w for w in warnings if "فرق المبالغ" not in w and "فرق عدد" not in w]
+            if max_diff_amount is not None and amount_spread > max_diff_amount:
+                warnings.append(
+                    f"فرق المبالغ الفعلي في الشيت ({amount_spread:,.0f}) أكبر من المسموح ({max_diff_amount:,.0f})"
+                )
+            if max_diff_clients is not None and client_spread > max_diff_clients:
+                warnings.append(f"فرق عدد العملاء الفعلي ({client_spread}) أكبر من المسموح ({max_diff_clients})")
+            if max_diff_accounts is not None and account_spread > max_diff_accounts:
+                warnings.append(f"فرق عدد الحسابات الفعلي ({account_spread}) أكبر من المسموح ({max_diff_accounts})")
+            if unmapped:
+                warnings.append(f"⚠️ {unmapped} صف لم يُطابق مفتاح العميل وتم إسناده افتراضياً — راجع عمود الهوية")
+
+        # تفاصيل الإسناد: صف واحد لكل عميل
+        detail = grouped.copy()
+        detail["client_key_norm"] = _norm_key(detail["client_key"])
+        detail["المحصّل_الجديد"] = detail["client_key_norm"].map(assign_map_norm).fillna(
+            detail["client_key"].astype(str).str.strip().map(assign_map)
+        )
         detail = detail.rename(columns={
-            "_client_key": "هوية العميل",
+            "client_key": "هوية العميل",
             "amount": "المبلغ",
             "n_accounts": "عدد الحسابات",
-            "n_rows": "عدد الصفوف",
+            "n_rows": "عدد المطالبات",
         })
+        detail = detail[["هوية العميل", "المحصّل_الجديد", "المبلغ", "عدد الحسابات", "عدد المطالبات"]]
+        detail = detail.sort_values(["المحصّل_الجديد", "المبلغ"], ascending=[True, False]).reset_index(drop=True)
+
+        # شيت المطالبات الموزّعة فقط (للتأكد من الأرقام)
+        row_level_export = distributed_df.copy()
+        # ترتيب أعمدة مقروء
+        front = [sales_col, client_key_col]
+        if account_key_col and account_key_col not in front:
+            front.append(account_key_col)
+        for c in amount_cols:
+            if c not in front:
+                front.append(c)
+        rest = [c for c in row_level_export.columns if c not in front and not str(c).startswith("_")]
+        row_level_export = row_level_export[front + rest]
 
         result = {
             "filename": uploaded.name,
@@ -8012,12 +8094,15 @@ def page_distribution():
             "amount_cols": amount_cols,
             "summary": summary,
             "detail": detail,
+            "row_level_export": row_level_export,
+            "distributed_df": distributed_df,
             "full_df": full_df,
             "resigned_df": resigned_df,
             "warnings": warnings,
             "n_clients": len(grouped),
             "total_amount": float(grouped["amount"].sum()),
             "sales_col": sales_col,
+            "unmapped_rows": unmapped,
         }
         st.session_state[DISTRIBUTION_RESULT_KEY] = result
         st.success("✅ تم التوزيع بنجاح!")
@@ -8107,11 +8192,14 @@ def _render_distribution_results(result):
         with d1:
             buf = io.BytesIO()
             with pd.ExcelWriter(buf, engine="openpyxl") as writer:
-                full_df.to_excel(writer, index=False, sheet_name="المحفظة_بعد_التوزيع")
                 if summary is not None:
                     summary.to_excel(writer, index=False, sheet_name="ملخص_التوزيع")
+                row_level = result.get("row_level_export")
+                if row_level is not None and not row_level.empty:
+                    row_level.to_excel(writer, index=False, sheet_name="المطالبات_الموزعة_فقط")
                 if detail is not None:
-                    detail.to_excel(writer, index=False, sheet_name="تفاصيل_الإسناد")
+                    detail.to_excel(writer, index=False, sheet_name="إسناد_العملاء")
+                full_df.to_excel(writer, index=False, sheet_name="المحفظة_الكاملة")
             st.download_button(
                 "📥 تحميل المحفظة الكاملة بعد التوزيع",
                 data=buf.getvalue(),
@@ -8122,26 +8210,23 @@ def _render_distribution_results(result):
                 key="dist_dl_full",
             )
         with d2:
-            # فقط الجزء اللي اتعاد توزيعه
-            sales_col = result.get("sales_col")
-            if sales_col and sales_col in full_df.columns:
-                reassigned = full_df[full_df[sales_col].isin(targets)].copy()
-                # أفضل: الصفوف اللي كانت للمستقيل
-                # لكن للبساطة نعرض الملخص
-                buf2 = io.BytesIO()
-                with pd.ExcelWriter(buf2, engine="openpyxl") as writer:
-                    if detail is not None:
-                        detail.to_excel(writer, index=False, sheet_name="الإسناد")
-                    if summary is not None:
-                        summary.to_excel(writer, index=False, sheet_name="الملخص")
-                st.download_button(
-                    "📥 تحميل تقرير الإسناد فقط",
-                    data=buf2.getvalue(),
-                    file_name=f"تقرير_توزيع_{resigned}_{datetime.now().strftime('%Y%m%d')}.xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                    use_container_width=True,
-                    key="dist_dl_report",
-                )
+            buf2 = io.BytesIO()
+            with pd.ExcelWriter(buf2, engine="openpyxl") as writer:
+                if summary is not None:
+                    summary.to_excel(writer, index=False, sheet_name="الملخص")
+                row_level = result.get("row_level_export")
+                if row_level is not None and not row_level.empty:
+                    row_level.to_excel(writer, index=False, sheet_name="المطالبات_الموزعة_فقط")
+                if detail is not None:
+                    detail.to_excel(writer, index=False, sheet_name="إسناد_العملاء")
+            st.download_button(
+                "📥 تحميل تقرير الإسناد فقط",
+                data=buf2.getvalue(),
+                file_name=f"تقرير_توزيع_{resigned}_{datetime.now().strftime('%Y%m%d')}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                use_container_width=True,
+                key="dist_dl_report",
+            )
 
 
 PAGES = {

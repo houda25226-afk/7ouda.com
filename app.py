@@ -8210,15 +8210,15 @@ def _render_distribution_results(result):
                 key="dist_dl_full",
             )
         with d2:
+            row_level = result.get("row_level_export")
             buf2 = io.BytesIO()
             with pd.ExcelWriter(buf2, engine="openpyxl") as writer:
-                if summary is not None:
-                    summary.to_excel(writer, index=False, sheet_name="الملخص")
-                row_level = result.get("row_level_export")
-                if row_level is not None and not row_level.empty:
+                if row_level is not None and not getattr(row_level, "empty", True):
                     row_level.to_excel(writer, index=False, sheet_name="المطالبات_الموزعة_فقط")
-                if detail is not None:
-                    detail.to_excel(writer, index=False, sheet_name="إسناد_العملاء")
+                else:
+                    pd.DataFrame({"ملاحظة": ["لا توجد مطالبات موزّعة"]}).to_excel(
+                        writer, index=False, sheet_name="المطالبات_الموزعة_فقط"
+                    )
             st.download_button(
                 "📥 تحميل تقرير الإسناد فقط",
                 data=buf2.getvalue(),

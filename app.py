@@ -7341,30 +7341,36 @@ def _greedy_assign_customers(
     account_weight=1.0,
 ):
     """
-    توزيع متعدد الأهداف يقلل فرق المبالغ + عدد العملاء + عدد الحسابات معاً.
+    توزيع متعدد الأهداف + مرحلة تحسين لاحقة:
 
-    الفكرة:
-    - نرتب العملاء من الأكبر (مبلغ ثم حسابات) عشان القطع الكبيرة تتحط الأول.
-    - عند إسناد كل عميل نختار المحصل اللي بعد الإضافة هيقلل الـ imbalance المركب
-      (بعد تطبيع المبلغ/العملاء/الحسابات على متوسط الهدف).
-    - كده مفيش بُعد بيتضحى لصالح التاني.
+    1) إسناد أولي جشع يوازن المبالغ والعملاء والحسابات معاً.
+    2) لو فرق المبالغ لسه أكبر من الـ tolerance: ننقل عملاء كاملين
+       من المحصل الأعلى مبلغاً للأقل، بشرط:
+       - العميل كامل (مفيش تقسيم عميل)
+       - فرق العملاء/الحسابات ميزيدش عن الـ tolerance بتاعهم
+       - النقل يقلل فرق المبالغ فعلياً
     """
     if customers_df.empty or not target_collectors:
         return {}, pd.DataFrame(), []
+
+    # فهرس سريع لبيانات كل عميل
+    cust_info = {}
+    for _, row in customers_df.iterrows():
+        ck = row["client_key"]
+        cust_info[ck] = {
+            "amount": float(row["amount"] or 0),
+            "n_accounts": int(row["n_accounts"] or 0),
+            "n_rows": int(row["n_rows"] or 0),
+        }
 
     n_targets = len(target_collectors)
     total_amount = float(customers_df["amount"].sum())
     total_clients = int(len(customers_df))
     total_accounts = int(customers_df["n_accounts"].sum())
 
-    # متوسط الهدف لكل محصل (للتطبيع)
-    avg_amount = total_amount / n_targets if n_targets else 1.0
-    avg_clients = total_clients / n_targets if n_targets else 1.0
-    avg_accounts = total_accounts / n_targets if n_targets else 1.0
-    # حماية من القسمة على صفر
-    avg_amount = max(avg_amount, 1e-9)
-    avg_clients = max(avg_clients, 1e-9)
-    avg_accounts = max(avg_accounts, 1e-9)
+    avg_amount = max(total_amount / n_targets if n_targets else 1.0, 1e-9)
+    avg_clients = max(total_clients / n_targets if n_targets else 1.0, 1e-9)
+    avg_accounts = max(total_accounts / n_targets if n_targets else 1.0, 1e-9)
 
     state = {
         name: {"amount": 0.0, "clients": 0, "accounts": 0, "rows": 0, "client_keys": []}
@@ -7375,22 +7381,29 @@ def _greedy_assign_customers(
         ["amount", "n_accounts", "n_rows"], ascending=[False, False, False]
     ).reset_index(drop=True)
 
-    assignments = []
+    def _ranges(st):
+        amts = [st[n]["amount"] for n in target_collectors]
+        clis = [st[n]["clients"] for n in target_collectors]
+        accs = [st[n]["accounts"] for n in target_collectors]
+        return (
+            (max(amts) - min(amts)) if amts else 0.0,
+            (max(clis) - min(clis)) if clis else 0,
+            (max(accs) - min(accs)) if accs else 0,
+        )
 
     def _imbalance(st):
-        """أعلى انحراف معياري مُطبّع عبر المحصلين (كلّما أصغر كلّما أفضل)."""
         amts = [st[n]["amount"] / avg_amount for n in target_collectors]
         clis = [st[n]["clients"] / avg_clients for n in target_collectors]
         accs = [st[n]["accounts"] / avg_accounts for n in target_collectors]
-        def _range(vals):
+        def _r(vals):
             return max(vals) - min(vals) if vals else 0.0
-        # وزن مركب: نقلل الـ range على الأبعاد الثلاثة
         return (
-            amount_weight * _range(amts)
-            + client_weight * _range(clis)
-            + account_weight * _range(accs)
+            amount_weight * _r(amts)
+            + client_weight * _r(clis)
+            + account_weight * _r(accs)
         )
 
+    # ---------- المرحلة 1: إسناد أولي ----------
     for _, row in ordered.iterrows():
         ck = row["client_key"]
         amt = float(row["amount"] or 0)
@@ -7400,17 +7413,14 @@ def _greedy_assign_customers(
         best = None
         best_score = None
         for name in target_collectors:
-            # جرب الإضافة مؤقتاً
             state[name]["amount"] += amt
             state[name]["clients"] += 1
             state[name]["accounts"] += nacc
             score = _imbalance(state)
-            # كسر التعادل: الأفضل اللي عنده أقل مبلغ حالي بعد الإضافة، ثم اسم ثابت
             tie = (score, state[name]["amount"], state[name]["clients"], name)
             if best_score is None or tie < best_score:
                 best_score = tie
                 best = name
-            # رجّع الحالة
             state[name]["amount"] -= amt
             state[name]["clients"] -= 1
             state[name]["accounts"] -= nacc
@@ -7420,9 +7430,157 @@ def _greedy_assign_customers(
         state[best]["accounts"] += nacc
         state[best]["rows"] += nrows
         state[best]["client_keys"].append(ck)
-        assignments.append((ck, best))
 
-    assign_map = {ck: coll for ck, coll in assignments}
+    # ---------- المرحلة 2: تحسين فرق المبالغ بنقل عملاء كاملين ----------
+    # نكرر لحد ما فرق المبالغ يدخل الـ tolerance أو مفيش نقل مفيد
+    max_passes = max(50, len(customers_df) * 2)
+    moved_count = 0
+
+    tol_amt = float(max_diff_amount) if max_diff_amount is not None else None
+    tol_cli = int(max_diff_clients) if max_diff_clients is not None else None
+    tol_acc = int(max_diff_accounts) if max_diff_accounts is not None else None
+
+    for _pass in range(max_passes):
+        amt_spread, cli_spread, acc_spread = _ranges(state)
+        # لو فرق المبالغ خلاص مقبول، وقف
+        if tol_amt is not None and amt_spread <= tol_amt:
+            break
+        if tol_amt is None and amt_spread <= 0:
+            break
+
+        # أغنى وأفقر محصل
+        richest = max(target_collectors, key=lambda n: (state[n]["amount"], state[n]["clients"], n))
+        poorest = min(target_collectors, key=lambda n: (state[n]["amount"], state[n]["clients"], n))
+        if richest == poorest:
+            break
+        if state[richest]["amount"] <= state[poorest]["amount"]:
+            break
+
+        gap = state[richest]["amount"] - state[poorest]["amount"]
+        # ندور على أفضل عميل عند الأغنى نقله يقرّب الفرق من غير ما يكسر constraints
+        best_move = None  # (score_improvement, client_key)
+        rich_keys = list(state[richest]["client_keys"])
+
+        for ck in rich_keys:
+            info = cust_info.get(ck)
+            if not info:
+                continue
+            amt = info["amount"]
+            nacc = info["n_accounts"]
+            # النقل لازم يقلل الفجوة (مش ينقل مبلغ أكبر من الفجوة فيخلّي الأفقر أغنى بزيادة كبيرة بلا داعي)
+            # نسمح بأي نقل يقلل |فرق المبالغ|
+            new_rich_amt = state[richest]["amount"] - amt
+            new_poor_amt = state[poorest]["amount"] + amt
+            new_amt_spread_est = max(
+                max(state[n]["amount"] for n in target_collectors if n not in (richest, poorest)),
+                new_rich_amt,
+                new_poor_amt,
+            ) - min(
+                min(state[n]["amount"] for n in target_collectors if n not in (richest, poorest)),
+                new_rich_amt,
+                new_poor_amt,
+            ) if n_targets > 2 else abs(new_rich_amt - new_poor_amt)
+
+            # حساب الـ spread الجديد بدقة بعد النقل المؤقت
+            # نستخدم state مؤقت خفيف
+            state[richest]["amount"] -= amt
+            state[richest]["clients"] -= 1
+            state[richest]["accounts"] -= nacc
+            state[poorest]["amount"] += amt
+            state[poorest]["clients"] += 1
+            state[poorest]["accounts"] += nacc
+
+            new_amt_sp, new_cli_sp, new_acc_sp = _ranges(state)
+
+            # رجّع
+            state[richest]["amount"] += amt
+            state[richest]["clients"] += 1
+            state[richest]["accounts"] += nacc
+            state[poorest]["amount"] -= amt
+            state[poorest]["clients"] -= 1
+            state[poorest]["accounts"] -= nacc
+
+            # شرط: فرق المبالغ لازم يقل
+            if new_amt_sp >= amt_spread - 1e-6:
+                continue
+            # شرط: متكسرش tolerance العملاء/الحسابات (لو محددة)
+            # نسمح بالبقاء جوه الحد؛ لو أصلاً برا الحد منقبلش زيادة أكتر
+            if tol_cli is not None and new_cli_sp > max(tol_cli, cli_spread):
+                continue
+            if tol_acc is not None and new_acc_sp > max(tol_acc, acc_spread):
+                continue
+
+            # نفضّل النقل اللي يقلل فرق المبالغ أكتر، ومع نفس التقليل اللي يخلّي فرق العملاء/الحسابات أصغر
+            improvement = amt_spread - new_amt_sp
+            score = (-improvement, new_cli_sp, new_acc_sp, amt)
+            if best_move is None or score < best_move[0]:
+                best_move = (score, ck, amt, nacc, info["n_rows"])
+
+        if best_move is None:
+            # مفيش نقل مفيد بين الأغنى والأفقر — جرب أزواج تانية
+            # نرتب المحصلين ونحاول أغنى→تاني أفقر إلخ
+            by_amt = sorted(target_collectors, key=lambda n: state[n]["amount"], reverse=True)
+            found = False
+            for r_name in by_amt:
+                for p_name in reversed(by_amt):
+                    if r_name == p_name:
+                        continue
+                    if state[r_name]["amount"] <= state[p_name]["amount"]:
+                        continue
+                    for ck in list(state[r_name]["client_keys"]):
+                        info = cust_info.get(ck)
+                        if not info:
+                            continue
+                        amt = info["amount"]
+                        nacc = info["n_accounts"]
+                        state[r_name]["amount"] -= amt
+                        state[r_name]["clients"] -= 1
+                        state[r_name]["accounts"] -= nacc
+                        state[p_name]["amount"] += amt
+                        state[p_name]["clients"] += 1
+                        state[p_name]["accounts"] += nacc
+                        new_amt_sp, new_cli_sp, new_acc_sp = _ranges(state)
+                        state[r_name]["amount"] += amt
+                        state[r_name]["clients"] += 1
+                        state[r_name]["accounts"] += nacc
+                        state[p_name]["amount"] -= amt
+                        state[p_name]["clients"] -= 1
+                        state[p_name]["accounts"] -= nacc
+                        if new_amt_sp >= amt_spread - 1e-6:
+                            continue
+                        if tol_cli is not None and new_cli_sp > max(tol_cli, cli_spread):
+                            continue
+                        if tol_acc is not None and new_acc_sp > max(tol_acc, acc_spread):
+                            continue
+                        best_move = ((-(amt_spread - new_amt_sp), new_cli_sp, new_acc_sp, amt), ck, amt, nacc, info["n_rows"])
+                        richest, poorest = r_name, p_name
+                        found = True
+                        break
+                    if found:
+                        break
+                if found:
+                    break
+            if best_move is None:
+                break
+
+        # نفّذ أفضل نقل
+        _, ck, amt, nacc, nrows = best_move
+        state[richest]["client_keys"].remove(ck)
+        state[richest]["amount"] -= amt
+        state[richest]["clients"] -= 1
+        state[richest]["accounts"] -= nacc
+        state[richest]["rows"] -= nrows
+        state[poorest]["client_keys"].append(ck)
+        state[poorest]["amount"] += amt
+        state[poorest]["clients"] += 1
+        state[poorest]["accounts"] += nacc
+        state[poorest]["rows"] += nrows
+        moved_count += 1
+
+    assign_map = {}
+    for name in target_collectors:
+        for ck in state[name]["client_keys"]:
+            assign_map[ck] = name
 
     summary_rows = []
     for name in target_collectors:
@@ -7445,19 +7603,25 @@ def _greedy_assign_customers(
         client_spread = int(clients.max() - clients.min())
         account_spread = int(accounts.max() - accounts.min())
         if max_diff_amount is not None and amount_spread > max_diff_amount:
-            warnings.append(f"فرق المبالغ ({amount_spread:,.0f}) أكبر من المسموح ({max_diff_amount:,.0f})")
+            warnings.append(
+                f"فرق المبالغ ({amount_spread:,.0f}) أكبر من المسموح ({max_diff_amount:,.0f})"
+                + (f" — تم نقل {moved_count} عميل للتحسين" if moved_count else " — تعذّر التحسين أكثر دون كسر شروط العملاء/الحسابات")
+            )
+        elif moved_count:
+            warnings.append(f"تم تحسين التوزيع بنقل {moved_count} عميل لتقليل فرق المبالغ.")
         if max_diff_clients is not None and client_spread > max_diff_clients:
             warnings.append(f"فرق عدد العملاء ({client_spread}) أكبر من المسموح ({max_diff_clients})")
         if max_diff_accounts is not None and account_spread > max_diff_accounts:
             warnings.append(f"فرق عدد الحسابات ({account_spread}) أكبر من المسموح ({max_diff_accounts})")
-        # ملخص الفروقات الفعلية للشفافية
         summary.attrs["spreads"] = {
             "amount": amount_spread,
             "clients": client_spread,
             "accounts": account_spread,
         }
+        summary.attrs["moved_count"] = moved_count
 
     return assign_map, summary, warnings
+
 
 
 def page_distribution():

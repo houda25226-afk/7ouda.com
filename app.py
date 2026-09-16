@@ -7312,6 +7312,7 @@ def page_case_errors():
 # ==========================================================
 
 DISTRIBUTION_RESULT_KEY = "distribution_result"
+DISTRIBUTION_ONBOARD_KEY = "distribution_onboard_result"
 DISTRIBUTION_ASSIGNED_COL = "المحصّل_الجديد"
 DISTRIBUTION_SOURCE_COL = "المحصّل_السابق"
 DISTRIBUTION_NO_STATE = "بدون حالة"
@@ -7834,16 +7835,16 @@ def _distribution_balance_accounts(
 
 
 def page_distribution():
-    """توزيع عملاء محصل مستقيل على باقي المحصلين — موازنة على الإجمالي النهائي."""
+    """تبويب التوزيع — سيناريوهان: موظف مشى / موظف جديد."""
     page_header(
         "PORTFOLIO DISTRIBUTION",
         "⚖️ التوزيع",
-        "وحدة التوزيع = العميل + حساباته · الموازنة على الإجمالي النهائي لكل محصل",
+        "وحدة التوزيع = العميل + كل حساباته · لا ينقسم عميل بين محصلين",
     )
 
     upload_key = "distribution_upload"
     cache_scope = "distribution_upload"
-    result_keys = (DISTRIBUTION_RESULT_KEY,)
+    result_keys = (DISTRIBUTION_RESULT_KEY, DISTRIBUTION_ONBOARD_KEY)
 
     uploaded = st.file_uploader(
         "📂 ارفع ملف المحفظة (Excel أو CSV)",
@@ -7855,12 +7856,14 @@ def page_distribution():
 
     if uploaded is None:
         cached = st.session_state.get(DISTRIBUTION_RESULT_KEY)
+        cached_on = st.session_state.get(DISTRIBUTION_ONBOARD_KEY)
         if cached and cached.get("assigned_df") is not None:
-            st.success(
-                f"✅ نتيجة توزيع محفوظة من: {cached.get('filename', '—')}. "
-                "لن تُحذف عند التنقل بين التبويبات."
-            )
+            st.success(f"✅ نتيجة «موظف مشى» محفوظة من: {cached.get('filename', '—')}.")
             _show_distribution_results(cached)
+            return
+        if cached_on and cached_on.get("moved_df") is not None:
+            st.success(f"✅ نتيجة «موظف جديد» محفوظة من: {cached_on.get('filename', '—')}.")
+            _show_onboarding_results(cached_on)
             return
         st.info("📂 ارفع ملف المحفظة لبدء التوزيع.")
         return
@@ -7923,6 +7926,36 @@ def page_distribution():
         f"Account=`{account_col}` · مبلغ=`{net_col}`"
         + (f" · حالة=`{substate_col}`" if substate_col else " · ⚠️ لا يوجد عمود Sub State")
     )
+
+    cols_map = {
+        "sales": sales_col,
+        "net": net_col,
+        "debitor": debitor_col,
+        "account": account_col,
+        "substate": substate_col,
+    }
+
+    scenario = st.radio(
+        "السيناريو",
+        options=["🚪 موظف مشى — توزيع محفظته", "🆕 موظف جديد — تكوين محفظته"],
+        horizontal=True,
+        key="distribution_scenario",
+    )
+
+    if scenario.startswith("🚪"):
+        _dist_leaver_ui(df, filename, skip_first, cols_map, all_sales, sales_vals)
+    else:
+        _dist_new_joiner_ui(df, filename, skip_first, cols_map, all_sales, sales_vals)
+
+
+def _dist_leaver_ui(df, filename, skip_first, cols_map, all_sales, sales_vals):
+    """سيناريو الموظف المستقيل."""
+    sales_col = cols_map["sales"]
+    net_col = cols_map["net"]
+    debitor_col = cols_map["debitor"]
+    account_col = cols_map["account"]
+    substate_col = cols_map["substate"]
+
 
     # ─── 1) المحصل المستقيل ───
     with st.container(border=True):
@@ -8455,6 +8488,836 @@ def _show_distribution_results(cached):
                 use_container_width=True,
                 key="distribution_download_full",
                 disabled=updated_df is None or getattr(updated_df, "empty", True),
+            )
+
+
+
+
+# ==========================================================
+# السيناريو الثاني: موظف جديد — تكوين محفظته من محافظ القدامى
+# ==========================================================
+
+_ONBOARD_METRICS = {
+    "rows": "عدد المطالبات",
+    "customers": "عدد العملاء",
+    "accounts": "عدد الحسابات",
+    "amount": "المديونية (Net Amount)",
+}
+
+
+def _distribution_global_units(work):
+    """ربط كل الصفوف في وحدات (Debitor ↔ Account) على مستوى الملف كله."""
+    uf = _DistUnionFind()
+    for deb, acc in zip(work["_dist_deb_key"].tolist(), work["_dist_acc_key"].tolist()):
+        uf.union(deb, acc)
+    work["_dist_unit"] = [uf.find(d) for d in work["_dist_deb_key"].tolist()]
+    return work
+
+
+def _onboard_unit_info(grp, owners_series):
+    """معلومات وحدة واحدة: المبالغ والعملاء والحسابات والحالات لكل مالك."""
+    per_owner = {}
+    for owner, sub in grp.groupby(owners_series.loc[grp.index], sort=False):
+        o_states = {}
+        for s in sub["_dist_state"].tolist():
+            o_states[s] = o_states.get(s, 0) + 1
+        o_accounts = set(sub["_dist_acc_key"].tolist())
+        per_owner[owner] = {
+            "rows": int(len(sub)),
+            "customers": int(sub["_dist_deb_key"].nunique()),
+            "accounts": o_accounts,
+            "n_accounts": len(o_accounts),
+            "amount": float(sub["_dist_amount"].sum()),
+            "states": o_states,
+        }
+    state_counts = {}
+    for s in grp["_dist_state"].tolist():
+        state_counts[s] = state_counts.get(s, 0) + 1
+    return {
+        "rows": int(len(grp)),
+        "customers": int(grp["_dist_deb_key"].nunique()),
+        "accounts": set(grp["_dist_acc_key"].tolist()),
+        "n_accounts": int(grp["_dist_acc_key"].nunique()),
+        "amount": float(grp["_dist_amount"].sum()),
+        "states": state_counts,
+        "owners": per_owner,
+        "index": list(grp.index),
+    }
+
+
+def _onboard_merge_parts(unit, exclude_owner):
+    """دمج حصص كل المُلّاك ما عدا واحد — عشان نعرف اللي الجديد هيكسبه فعلًا."""
+    merged = {"amount": 0.0, "customers": 0, "rows": 0, "accounts": set(), "states": {}}
+    for owner, part in unit["owners"].items():
+        if owner == exclude_owner:
+            continue
+        merged["amount"] += part["amount"]
+        merged["customers"] += part["customers"]
+        merged["rows"] += part["rows"]
+        merged["accounts"].update(part["accounts"])
+        for s, v in part["states"].items():
+            merged["states"][s] = merged["states"].get(s, 0) + v
+    merged["n_accounts"] = len(merged["accounts"])
+    return merged
+
+
+def _distribution_onboarding(
+    full_df,
+    new_collector,
+    source_collectors,
+    quotas,
+    selected_states,
+    sales_col,
+    amount_col,
+    debitor_col,
+    account_col,
+    substate_col=None,
+    mode="quota",
+    state_match="any",
+    quota_metric="rows",
+    min_keep_ratio=0.0,
+    window=150,
+):
+    """تكوين محفظة موظف جديد.
+
+    - وحدة النقل = العميل + كل حساباته (ولو حساب مشترك، العملاء المرتبطين معاه).
+      يعني مستحيل عميل يفضل عند القديم والجديد في نفس الوقت.
+    - لو الموظف الجديد عنده أصلًا عميل موجود عند محصل قديم → الوحدة كلها
+      بتتسحب له إجباريًا (إصلاح تقسيم قائم).
+    - mode="quota": بياخد من كل محصل العدد اللي إنت حددته (بأقرب وحدة كاملة).
+    - mode="auto": بيسحب لحد ما الجديد يتساوى مع القدامى في المبلغ والعملاء
+      والحسابات وعدد كل Sub State.
+    """
+    fail = {"ok": False, "message": "بيانات غير كافية."}
+    if not new_collector:
+        fail["message"] = "اكتب اسم الموظف الجديد."
+        return pd.DataFrame(), pd.DataFrame(), fail
+    if not source_collectors:
+        fail["message"] = "اختر محصل واحد على الأقل تسحب منه."
+        return pd.DataFrame(), pd.DataFrame(), fail
+
+    work = _distribution_prepare(full_df, amount_col, debitor_col, account_col, substate_col)
+    work = _distribution_global_units(work)
+    owners = work[sales_col].map(_distribution_safe_text)
+
+    participants = [new_collector] + [c for c in source_collectors if c != new_collector]
+    src_set = set(c for c in source_collectors if c != new_collector)
+
+    # ── أرصدة كل المحصلين قبل ──
+    all_names = sorted({o for o in owners.tolist() if o} | {new_collector})
+    loads = {
+        n: {"amount": 0.0, "customers": 0, "rows": 0, "accounts": set(), "states": {}}
+        for n in all_names
+    }
+    for name, grp in work.groupby(owners, sort=False):
+        if not name:
+            continue
+        L = loads[name]
+        L["amount"] = float(grp["_dist_amount"].sum())
+        L["rows"] = int(len(grp))
+        L["customers"] = int(grp["_dist_deb_key"].nunique())
+        L["accounts"] = set(grp["_dist_acc_key"].tolist())
+        for s in grp["_dist_state"].tolist():
+            L["states"][s] = L["states"].get(s, 0) + 1
+    before_loads = {
+        n: {
+            "amount": loads[n]["amount"],
+            "customers": loads[n]["customers"],
+            "rows": loads[n]["rows"],
+            "accounts": len(loads[n]["accounts"]),
+            "states": dict(loads[n]["states"]),
+        }
+        for n in all_names
+    }
+
+    # ── بناء الوحدات ──
+    units = {}
+    for key, grp in work.groupby("_dist_unit", sort=False):
+        units[key] = _onboard_unit_info(grp, owners)
+
+    sel_states = set(selected_states or [])
+
+    forced, eligible, split_old = [], [], []
+    for key, u in units.items():
+        owner_names = set(u["owners"].keys())
+        if new_collector in owner_names and len(owner_names) > 1:
+            forced.append(key)
+            continue
+        if owner_names == {new_collector}:
+            continue
+        if not owner_names.issubset(src_set):
+            if len(owner_names) > 1:
+                split_old.append(key)
+            continue
+        if sel_states:
+            unit_states = set(u["states"].keys())
+            ok_state = (
+                unit_states.issubset(sel_states)
+                if state_match == "all"
+                else bool(unit_states & sel_states)
+            )
+            if not ok_state:
+                continue
+        eligible.append(key)
+
+    # ── دالة التكلفة على المشاركين ──
+    states = sorted({s for n in participants for s in loads[n]["states"]} |
+                    {s for k in eligible + forced for s in units[k]["states"]})
+    for n in participants:
+        for s in states:
+            loads[n]["states"].setdefault(s, 0)
+
+    n_part = max(len(participants), 1)
+    tot_amount = sum(loads[n]["amount"] for n in participants)
+    tot_cust = sum(loads[n]["customers"] for n in participants)
+    tot_acc = sum(len(loads[n]["accounts"]) for n in participants)
+    tot_state = {s: sum(loads[n]["states"].get(s, 0) for n in participants) for s in states}
+    amt_scale = max(abs(tot_amount) / n_part, 1.0)
+    cust_scale = max(tot_cust / n_part, 1.0)
+    acc_scale = max(tot_acc / n_part, 1.0)
+    ka = _DIST_W_AMOUNT / (amt_scale ** 2)
+    kc = _DIST_W_CUSTOMERS / (cust_scale ** 2)
+    kacc = _DIST_W_ACCOUNTS / (acc_scale ** 2)
+    w_each = _DIST_W_STATES / max(len(states), 1)
+    ks = {s: w_each / (max(tot_state[s] / n_part, 1.0) ** 2) for s in states}
+
+    def _delta(name, u, sign):
+        L = loads[name]
+        da, dc, dacc = u["amount"], u["customers"], u["n_accounts"]
+        c = ka * (2.0 * sign * L["amount"] * da + da * da)
+        c += kc * (2.0 * sign * L["customers"] * dc + dc * dc)
+        c += kacc * (2.0 * sign * len(L["accounts"]) * dacc + dacc * dacc)
+        for s, v in u["states"].items():
+            c += ks[s] * (2.0 * sign * L["states"].get(s, 0) * v + v * v)
+        return c
+
+    def _apply(name, u, sign):
+        L = loads[name]
+        L["amount"] += sign * u["amount"]
+        L["customers"] += sign * u["customers"]
+        L["rows"] += sign * u["rows"]
+        if sign > 0:
+            L["accounts"].update(u["accounts"])
+        else:
+            L["accounts"].difference_update(u["accounts"])
+        for s, v in u["states"].items():
+            L["states"][s] = L["states"].get(s, 0) + sign * v
+
+    def _move_cost(key):
+        """تكلفة نقل حصص المُلّاك القدامى في الوحدة للموظف الجديد."""
+        u = units[key]
+        cost = 0.0
+        for owner, part in u["owners"].items():
+            if owner == new_collector or owner not in loads:
+                continue
+            cost += _delta(owner, part, -1)
+            _apply(owner, part, -1)
+        gained = _onboard_merge_parts(u, new_collector)
+        cost += _delta(new_collector, gained, 1)
+        for owner, part in u["owners"].items():
+            if owner == new_collector or owner not in loads:
+                continue
+            _apply(owner, part, 1)
+        return cost
+
+    def _do_move(key):
+        u = units[key]
+        for owner, part in u["owners"].items():
+            if owner == new_collector or owner not in loads:
+                continue
+            _apply(owner, part, -1)
+        _apply(new_collector, _onboard_merge_parts(u, new_collector), 1)
+
+    # ── 1) الوحدات الإجبارية (عميل عند الجديد وعند قديم في نفس الوقت) ──
+    taken = []
+    for key in forced:
+        _do_move(key)
+        taken.append(key)
+
+    # ── 2) الاختيار ──
+    remaining = {s: float(quotas.get(s, 0) or 0) for s in src_set} if mode == "quota" else {}
+    floors = {
+        s: (float(min_keep_ratio) / 100.0) * before_loads[s]["amount"]
+        for s in src_set
+    }
+
+    metric_key = {"accounts": "n_accounts"}.get(quota_metric, quota_metric)
+
+    def _contribution(key, owner):
+        v = units[key]["owners"].get(owner)
+        if not v:
+            return 0.0
+        return float(v.get(metric_key, v.get("rows", 0)))
+
+    pool = sorted(eligible, key=lambda k: units[k]["amount"], reverse=True)
+    pool = [k for k in pool if k not in set(forced)]
+
+    def _floor_ok(key):
+        u = units[key]
+        for owner, v in u["owners"].items():
+            if owner in floors and (loads[owner]["amount"] - v["amount"]) < floors[owner]:
+                return False
+        return True
+
+    if mode == "quota":
+        progress = True
+        while progress:
+            progress = False
+            best_key, best_cost = None, None
+            scanned = 0
+            step = max(1, len(pool) // max(window, 1))
+            for key in pool[::step][:window] if len(pool) > window else pool:
+                if scanned >= window:
+                    break
+                u = units[key]
+                fits = all(
+                    _contribution(key, o) <= remaining.get(o, 0) + 1e-9
+                    for o in u["owners"]
+                )
+                if not fits or not _floor_ok(key):
+                    continue
+                scanned += 1
+                c = _move_cost(key)
+                if best_cost is None or c < best_cost:
+                    best_cost, best_key = c, key
+            if best_key is not None:
+                _do_move(best_key)
+                taken.append(best_key)
+                for o in units[best_key]["owners"]:
+                    if o in remaining:
+                        remaining[o] -= _contribution(best_key, o)
+                pool.remove(best_key)
+                progress = True
+
+        # تقريب: السماح بتجاوز بسيط لو بيقرّبنا من الحصة أكتر من التوقف
+        for owner in list(remaining.keys()):
+            improved = True
+            while improved and remaining[owner] > 0:
+                improved = False
+                cands = [
+                    k for k in pool
+                    if set(units[k]["owners"]) == {owner} and _floor_ok(k)
+                ]
+                if not cands:
+                    break
+                cands.sort(key=lambda k: _contribution(k, owner))
+                k = cands[0]
+                c = _contribution(k, owner)
+                if abs(c - remaining[owner]) < remaining[owner]:
+                    _do_move(k)
+                    taken.append(k)
+                    remaining[owner] -= c
+                    pool.remove(k)
+                    improved = True
+    else:
+        while True:
+            best_key, best_cost = None, -1e-9
+            scanned = 0
+            step = max(1, len(pool) // max(window, 1))
+            for key in (pool[::step][:window] if len(pool) > window else pool):
+                if scanned >= window:
+                    break
+                if not _floor_ok(key):
+                    continue
+                scanned += 1
+                c = _move_cost(key)
+                if c < best_cost:
+                    best_cost, best_key = c, key
+            if best_key is None:
+                break
+            _do_move(best_key)
+            taken.append(best_key)
+            pool.remove(best_key)
+
+        # صقل: رجّع أي وحدة لو رجوعها بيقلل التفاوت (يمنع تجاوز الهدف)
+        forced_set = set(forced)
+        for _ in range(3):
+            changed = False
+            for key in list(taken):
+                if key in forced_set:
+                    continue
+                u = units[key]
+                back = 0.0
+                gained = _onboard_merge_parts(u, new_collector)
+                back += _delta(new_collector, gained, -1)
+                _apply(new_collector, gained, -1)
+                for owner, part in u["owners"].items():
+                    if owner == new_collector or owner not in loads:
+                        continue
+                    back += _delta(owner, part, 1)
+                    _apply(owner, part, 1)
+                if back < -1e-9:
+                    taken.remove(key)
+                    pool.append(key)
+                    changed = True
+                else:
+                    for owner, part in u["owners"].items():
+                        if owner == new_collector or owner not in loads:
+                            continue
+                        _apply(owner, part, -1)
+                    _apply(new_collector, gained, 1)
+            if not changed:
+                break
+
+    # ── 3) النتيجة ──
+    taken_set = list(dict.fromkeys(taken))
+    move_index = []
+    for key in taken_set:
+        u = units[key]
+        for idx in u["index"]:
+            if owners.loc[idx] != new_collector:
+                move_index.append(idx)
+    moved_df = work.loc[move_index].copy() if move_index else work.iloc[0:0].copy()
+    if not moved_df.empty:
+        moved_df[DISTRIBUTION_SOURCE_COL] = owners.loc[move_index].values
+        moved_df[DISTRIBUTION_ASSIGNED_COL] = new_collector
+
+    # ملخص قبل/بعد
+    summary_rows = []
+    for name in participants:
+        b = before_loads[name]
+        L = loads[name]
+        summary_rows.append({
+            "المحصّل": name + (" ⭐ جديد" if name == new_collector else ""),
+            "عملاء — قبل": int(b["customers"]),
+            "عملاء — بعد": int(L["customers"]),
+            "حسابات — قبل": int(b["accounts"]),
+            "حسابات — بعد": int(len(L["accounts"])),
+            "مطالبات — قبل": int(b["rows"]),
+            "مطالبات — بعد": int(L["rows"]),
+            "مديونية — قبل": round(float(b["amount"]), 2),
+            "مديونية — بعد": round(float(L["amount"]), 2),
+        })
+    summary_df = pd.DataFrame(summary_rows)
+
+    quota_rows = []
+    if mode == "quota":
+        for s in sorted(src_set):
+            req = float(quotas.get(s, 0) or 0)
+            got = sum(_contribution(k, s) for k in taken_set if s in units[k]["owners"])
+            quota_rows.append({
+                "المحصّل": s,
+                f"المطلوب ({_ONBOARD_METRICS.get(quota_metric, quota_metric)})": req,
+                "المأخوذ فعليًا": got,
+                "الفرق": got - req,
+            })
+    quota_df = pd.DataFrame(quota_rows)
+
+    state_rows = []
+    for name in participants:
+        row = {"المحصّل": name + (" ⭐" if name == new_collector else "")}
+        for s in states:
+            row[s] = int(loads[name]["states"].get(s, 0))
+        state_rows.append(row)
+    states_df = pd.DataFrame(state_rows)
+
+    def _sp(vals):
+        return (max(vals) - min(vals)) if vals else 0
+
+    stats = {
+        "ok": True,
+        "message": "تم تكوين محفظة الموظف الجديد.",
+        "new_collector": new_collector,
+        "mode": mode,
+        "quota_metric": quota_metric,
+        "units_taken": len(taken_set),
+        "forced_units": len(forced),
+        "split_old_units": len(split_old),
+        "eligible_units": len(eligible),
+        "moved_rows": int(len(moved_df)),
+        "moved_customers": int(moved_df["_dist_deb_key"].nunique()) if not moved_df.empty else 0,
+        "moved_accounts": int(moved_df["_dist_acc_key"].nunique()) if not moved_df.empty else 0,
+        "moved_amount": float(moved_df["_dist_amount"].sum()) if not moved_df.empty else 0.0,
+        "amount_spread_before": _sp([before_loads[n]["amount"] for n in participants]),
+        "amount_spread_after": _sp([loads[n]["amount"] for n in participants]),
+        "customer_spread_before": _sp([before_loads[n]["customers"] for n in participants]),
+        "customer_spread_after": _sp([loads[n]["customers"] for n in participants]),
+        "account_spread_before": _sp([before_loads[n]["accounts"] for n in participants]),
+        "account_spread_after": _sp([len(loads[n]["accounts"]) for n in participants]),
+        "state_spreads": {
+            s: {
+                "قبل": _sp([before_loads[n]["states"].get(s, 0) for n in participants]),
+                "بعد": _sp([loads[n]["states"].get(s, 0) for n in participants]),
+            }
+            for s in states
+        },
+        "states": states,
+        "states_df": states_df,
+        "quota_df": quota_df,
+        "new_after": {
+            "amount": loads[new_collector]["amount"],
+            "customers": loads[new_collector]["customers"],
+            "accounts": len(loads[new_collector]["accounts"]),
+            "rows": loads[new_collector]["rows"],
+        },
+        "peers_avg": {
+            "amount": (sum(loads[n]["amount"] for n in participants if n != new_collector)
+                       / max(len(participants) - 1, 1)),
+            "customers": (sum(loads[n]["customers"] for n in participants if n != new_collector)
+                          / max(len(participants) - 1, 1)),
+            "accounts": (sum(len(loads[n]["accounts"]) for n in participants if n != new_collector)
+                         / max(len(participants) - 1, 1)),
+        },
+    }
+
+    # تحقق: مفيش عميل عند اتنين بعد النقل
+    final_owner = owners.copy()
+    if move_index:
+        final_owner.loc[move_index] = new_collector
+    unit_owner_counts = work.assign(_o=final_owner).groupby("_dist_unit")["_o"].nunique()
+    stats["units_split_after"] = int((unit_owner_counts > 1).sum())
+    deb_owner_counts = work.assign(_o=final_owner).groupby("_dist_deb_key")["_o"].nunique()
+    stats["debitors_split_after"] = int((deb_owner_counts > 1).sum())
+
+    return moved_df, summary_df, stats
+
+
+def _dist_new_joiner_ui(df, filename, skip_first, cols_map, all_sales, sales_vals):
+    """واجهة سيناريو الموظف الجديد."""
+    sales_col = cols_map["sales"]
+    net_col = cols_map["net"]
+    debitor_col = cols_map["debitor"]
+    account_col = cols_map["account"]
+    substate_col = cols_map["substate"]
+
+    # ─── 1) اسم الموظف الجديد ───
+    with st.container(border=True):
+        st.markdown("##### 1️⃣ الموظف الجديد")
+        new_collector = st.text_input(
+            "اسم الموظف الجديد",
+            value="",
+            key="onboard_new_name",
+            placeholder="اكتب الاسم بالظبط زي ما هيتكتب في عمود المحصّل",
+        ).strip()
+        if not new_collector:
+            st.info("اكتب اسم الموظف الجديد للمتابعة.")
+            return
+        if new_collector in all_sales:
+            existing_rows = int((sales_vals == new_collector).sum())
+            st.warning(
+                f"⚠️ الاسم ده موجود في الملف بـ {existing_rows:,} مطالبة. "
+                "هيتعامل كأن عنده محفظة مبدئية، وأي عميل عنده وموجود عند محصل قديم هيتسحب له بالكامل."
+            )
+
+    # ─── 2) الحالات ───
+    with st.container(border=True):
+        st.markdown("##### 2️⃣ الحالات اللي هياخدها")
+        if substate_col and substate_col in df.columns:
+            state_vals = df[substate_col].map(_distribution_safe_text)
+            available_states = sorted({v for v in state_vals.tolist() if v})
+        else:
+            available_states = []
+        if available_states:
+            selected_states = st.multiselect(
+                "اختر الحالات",
+                options=available_states,
+                default=available_states,
+                key="onboard_states",
+            )
+            state_match = st.radio(
+                "لو العميل عنده مطالبات في حالات مختلفة؟",
+                options=[
+                    "ياخده لو **كل** حالاته ضمن المختار (أدق)",
+                    "ياخده لو عنده **أي** حالة من المختار (بياخد باقي حالاته معاه)",
+                ],
+                key="onboard_state_match",
+                help="العميل ما ينفعش ينقسم، فلازم كل مطالباته تتحرك معاه.",
+            )
+            state_mode = "all" if state_match.startswith("ياخده لو **كل**") else "any"
+            if not selected_states:
+                st.warning("اختر حالة واحدة على الأقل.")
+                return
+        else:
+            selected_states, state_mode = [], "any"
+            st.caption("لا يوجد عمود Sub State — كل الحالات مؤهلة.")
+
+    # ─── 3) المحصلون اللي هياخد منهم + الحصص ───
+    with st.container(border=True):
+        st.markdown("##### 3️⃣ المصادر والحصص")
+        source_options = [s for s in all_sales if s != new_collector]
+        if not source_options:
+            st.error("لا يوجد محصلون آخرون.")
+            return
+        sources = st.multiselect(
+            "اسحب من المحصلين دول",
+            options=source_options,
+            default=source_options,
+            key="onboard_sources",
+        )
+        if not sources:
+            st.warning("اختر محصل واحد على الأقل.")
+            return
+
+        mode_label = st.radio(
+            "طريقة تحديد الكمية",
+            options=[
+                "🎯 يدوي — أنا أحدد الكمية من كل محصل",
+                "⚖️ تلقائي — اسحب لحد ما الجديد يتساوى مع القدامى",
+            ],
+            key="onboard_mode",
+        )
+        mode = "quota" if mode_label.startswith("🎯") else "auto"
+
+        quota_metric = "rows"
+        quotas = {}
+        if mode == "quota":
+            quota_metric = st.selectbox(
+                "الكمية محسوبة بـ",
+                options=list(_ONBOARD_METRICS.keys()),
+                format_func=lambda k: _ONBOARD_METRICS[k],
+                key="onboard_quota_metric",
+            )
+            st.caption(
+                "الوحدة = العميل + حساباته، فالعدد الفعلي ممكن يقرب للمطلوب مش يطابقه بالظبط."
+            )
+            avail = {}
+            for s in sources:
+                sub = df.loc[sales_vals == s]
+                if quota_metric == "rows":
+                    avail[s] = int(len(sub))
+                elif quota_metric == "customers":
+                    avail[s] = int(sub[debitor_col].map(_normalize_match_id).replace("", pd.NA).nunique())
+                elif quota_metric == "accounts":
+                    avail[s] = int(sub[account_col].map(_normalize_match_id).replace("", pd.NA).nunique())
+                else:
+                    avail[s] = float(pd.to_numeric(sub[net_col], errors="coerce").fillna(0).sum())
+            cols = st.columns(min(3, len(sources)))
+            for i, s in enumerate(sources):
+                with cols[i % len(cols)]:
+                    quotas[s] = st.number_input(
+                        f"{s} (متاح {avail[s]:,.0f})",
+                        min_value=0.0,
+                        max_value=float(avail[s]),
+                        value=0.0,
+                        step=1.0,
+                        key=f"onboard_quota_{hashlib.md5(s.encode('utf-8')).hexdigest()[:10]}",
+                    )
+            if sum(quotas.values()) <= 0:
+                st.warning("حدد كمية أكبر من صفر من محصل واحد على الأقل.")
+                return
+
+        min_keep_ratio = st.slider(
+            "لا تُنزل أي محصل تحت هذه النسبة من مديونيته الحالية (%)",
+            min_value=0,
+            max_value=95,
+            value=0,
+            step=5,
+            key="onboard_min_keep",
+            help="حماية للمحصلين الصغار من أن تُستنزف محافظهم.",
+        )
+
+    settings_sig = hashlib.md5("|".join([
+        filename, str(skip_first), new_collector, ",".join(sorted(sources)),
+        ",".join(sorted(selected_states)), state_mode, mode, quota_metric,
+        str(sorted(quotas.items())), str(min_keep_ratio),
+    ]).encode("utf-8")).hexdigest()
+
+    run = st.button("🆕 كوّن محفظة الموظف الجديد", type="primary",
+                    use_container_width=True, key="onboard_run_btn")
+    if not run:
+        cached = st.session_state.get(DISTRIBUTION_ONBOARD_KEY)
+        if cached and cached.get("settings_sig") == settings_sig:
+            _show_onboarding_results(cached)
+        elif cached:
+            st.info("⚙️ الإعدادات اتغيّرت — اضغط الزر لتحديث النتيجة.")
+        else:
+            st.info("اضبط الاختيارات واضغط الزر.")
+        return
+
+    with st.spinner("بناء وحدات العملاء واختيار المحفظة..."):
+        moved_df, summary_df, stats = _distribution_onboarding(
+            df, new_collector, sources, quotas, selected_states,
+            sales_col, net_col, debitor_col, account_col,
+            substate_col=substate_col, mode=mode, state_match=state_mode,
+            quota_metric=quota_metric, min_keep_ratio=float(min_keep_ratio),
+        )
+
+    if not stats.get("ok"):
+        st.error(stats.get("message", "فشل التنفيذ."))
+        return
+    if stats.get("debitors_split_after", 0) > 0 or stats.get("units_split_after", 0) > 0:
+        st.error(
+            f"خطأ حرج: بعد النقل فيه {stats.get('debitors_split_after', 0)} عميل "
+            f"و{stats.get('units_split_after', 0)} وحدة عند أكتر من محصل. لم يُحفظ."
+        )
+        return
+    if moved_df is None or moved_df.empty:
+        st.warning("لم يتم اختيار أي عميل — راجع الحالات أو الحصص أو نسبة الحماية.")
+        return
+
+    clean_moved = moved_df.drop(
+        columns=[c for c in moved_df.columns if str(c).startswith("_dist_")], errors="ignore"
+    )
+    updated_full = df.copy()
+    updated_full[DISTRIBUTION_SOURCE_COL] = pd.NA
+    updated_full.loc[moved_df.index, DISTRIBUTION_SOURCE_COL] = moved_df[DISTRIBUTION_SOURCE_COL].values
+    updated_full.loc[moved_df.index, sales_col] = new_collector
+
+    payload = {
+        "filename": filename,
+        "settings_sig": settings_sig,
+        "new_collector": new_collector,
+        "sources": list(sources),
+        "stats": stats,
+        "summary_df": summary_df,
+        "moved_df": clean_moved,
+        "updated_df": updated_full,
+        "sales_col": sales_col,
+        "net_col": net_col,
+        "debitor_col": debitor_col,
+        "account_col": account_col,
+        "substate_col": substate_col,
+    }
+    st.session_state[DISTRIBUTION_ONBOARD_KEY] = payload
+    _show_onboarding_results(payload)
+
+
+def _show_onboarding_results(cached):
+    stats = cached.get("stats") or {}
+    summary_df = cached.get("summary_df")
+    moved_df = cached.get("moved_df")
+    new_collector = cached.get("new_collector", "—")
+
+    st.subheader(f"📊 محفظة الموظف الجديد — {new_collector}")
+
+    k1, k2, k3, k4 = st.columns(4)
+    k1.metric("مطالبات", f"{stats.get('moved_rows', 0):,}")
+    k2.metric("عملاء", f"{stats.get('moved_customers', 0):,}")
+    k3.metric("حسابات", f"{stats.get('moved_accounts', 0):,}")
+    k4.metric("مديونية", f"{stats.get('moved_amount', 0):,.0f}")
+
+    new_after = stats.get("new_after") or {}
+    peers = stats.get("peers_avg") or {}
+    gap_rows = []
+    for label, key, fmt in [
+        ("المديونية", "amount", "{:,.0f}"),
+        ("العملاء", "customers", "{:,.0f}"),
+        ("الحسابات", "accounts", "{:,.0f}"),
+    ]:
+        mine = float(new_after.get(key, 0) or 0)
+        avg = float(peers.get(key, 0) or 0)
+        gap_rows.append({
+            "المقياس": label,
+            "الموظف الجديد": fmt.format(mine),
+            "متوسط القدامى": fmt.format(avg),
+            "نسبة التطابق": f"{(mine / avg * 100) if avg else 0:.1f}%",
+        })
+    st.markdown("#### 🎯 الجديد مقابل متوسط القدامى")
+    st.dataframe(pd.DataFrame(gap_rows), use_container_width=True, hide_index=True)
+
+    if stats.get("forced_units"):
+        st.info(
+            f"🔗 {stats['forced_units']:,} عميل كان موجود عند الجديد وعند محصل قديم في نفس الوقت — "
+            "اتسحب بالكامل للجديد لإصلاح التقسيم."
+        )
+    if stats.get("split_old_units"):
+        st.warning(
+            f"⚠️ {stats['split_old_units']:,} عميل مقسوم أصلًا بين محصلين قدامى مش ضمن المصادر المختارة — "
+            "ما اتعملش فيه حاجة. ضيف المحصلين دول للمصادر عشان يتصلح."
+        )
+
+    quota_df = stats.get("quota_df")
+    if quota_df is not None and not getattr(quota_df, "empty", True):
+        st.markdown("#### 📦 المطلوب مقابل المأخوذ من كل محصل")
+        st.dataframe(quota_df, use_container_width=True, hide_index=True)
+        try:
+            diffs = quota_df["الفرق"].abs().sum()
+            if diffs > 0:
+                st.caption(
+                    f"إجمالي الانحراف عن الحصص المطلوبة: {diffs:,.0f} — "
+                    "السبب إن العميل بيتنقل كوحدة كاملة بكل مطالباته."
+                )
+        except Exception:
+            pass
+
+    if summary_df is not None and not summary_df.empty:
+        st.markdown("#### 📋 كل محصل — قبل وبعد")
+        st.dataframe(summary_df, use_container_width=True, hide_index=True)
+        try:
+            melted = pd.concat([
+                pd.DataFrame({"المحصّل": summary_df["المحصّل"], "المرحلة": "قبل",
+                              "المديونية": summary_df["مديونية — قبل"]}),
+                pd.DataFrame({"المحصّل": summary_df["المحصّل"], "المرحلة": "بعد",
+                              "المديونية": summary_df["مديونية — بعد"]}),
+            ], ignore_index=True)
+            fig = px.bar(melted, x="المديونية", y="المحصّل", color="المرحلة",
+                         orientation="h", barmode="group", template=PLOTLY_TEMPLATE)
+            _apply_ops_chart_style(
+                fig, "المديونية لكل محصل — قبل وبعد دخول الموظف الجديد",
+                height=max(400, 46 * len(summary_df) + 140),
+                xaxis_title="Net Amount",
+                margin=dict(t=70, b=55, l=170, r=60),
+            )
+            with st.container(border=True):
+                st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG,
+                                key="onboard_amount_chart")
+        except Exception:
+            pass
+
+    states_df = stats.get("states_df")
+    if states_df is not None and not getattr(states_df, "empty", True) and stats.get("states"):
+        st.markdown("#### 🏷️ عدد الحالات لكل محصل بعد النقل")
+        st.dataframe(states_df, use_container_width=True, hide_index=True)
+        spread_rows = [
+            {"الحالة": s, "الفرق قبل": v.get("قبل", 0), "الفرق بعد": v.get("بعد", 0)}
+            for s, v in (stats.get("state_spreads") or {}).items()
+        ]
+        if spread_rows:
+            st.dataframe(pd.DataFrame(spread_rows), use_container_width=True, hide_index=True)
+
+    with st.expander("🧾 تقرير التدقيق", expanded=False):
+        checks = [
+            ("لا يوجد عميل عند أكثر من محصل", stats.get("debitors_split_after", 0) == 0,
+             f"{stats.get('debitors_split_after', 0)} حالة"),
+            ("لا توجد وحدة (عميل+حساباته) مقسومة", stats.get("units_split_after", 0) == 0,
+             f"{stats.get('units_split_after', 0)} حالة"),
+            ("وحدات مؤهلة للاختيار", stats.get("eligible_units", 0) > 0,
+             f"{stats.get('eligible_units', 0):,} وحدة"),
+            ("وحدات اتنقلت", stats.get("units_taken", 0) > 0,
+             f"{stats.get('units_taken', 0):,} وحدة"),
+        ]
+        st.dataframe(
+            pd.DataFrame([
+                {"الفحص": n, "النتيجة": "✔️ سليم" if ok else "⚠️ راجع", "التفاصيل": d}
+                for n, ok, d in checks
+            ]),
+            use_container_width=True, hide_index=True,
+        )
+
+    if moved_df is not None and not moved_df.empty:
+        st.markdown("#### تفاصيل العملاء المنقولين")
+        show_cols = []
+        for c in [cached.get("debitor_col"), cached.get("account_col"), cached.get("net_col"),
+                  cached.get("substate_col"), DISTRIBUTION_SOURCE_COL, DISTRIBUTION_ASSIGNED_COL]:
+            if c and c in moved_df.columns and c not in show_cols:
+                show_cols.append(c)
+        st.dataframe(moved_df[show_cols] if show_cols else moved_df,
+                     use_container_width=True, hide_index=True)
+
+        def _xlsx(frame, sheet):
+            buf = io.BytesIO()
+            with pd.ExcelWriter(buf, engine="openpyxl") as writer:
+                frame.to_excel(writer, index=False, sheet_name=sheet)
+            return buf.getvalue()
+
+        d1, d2 = st.columns(2)
+        with d1:
+            st.download_button(
+                "⬇️ محفظة الموظف الجديد",
+                data=_xlsx(moved_df, "محفظة الجديد"),
+                file_name=f"محفظة_{new_collector}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                use_container_width=True, type="primary", key="onboard_dl_new",
+            )
+        with d2:
+            upd = cached.get("updated_df")
+            st.download_button(
+                "⬇️ المحفظة كاملة بعد التعديل",
+                data=_xlsx(upd, "المحفظة") if upd is not None else b"",
+                file_name=f"محفظة_بعد_دخول_{new_collector}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                use_container_width=True, key="onboard_dl_full",
+                disabled=upd is None or getattr(upd, "empty", True),
             )
 PAGES = {
     "🎯 تصنيف المكالمات": page_classification,

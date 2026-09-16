@@ -7341,25 +7341,55 @@ def _greedy_assign_customers(
     account_weight=1.0,
 ):
     """
-    توزيع جشع: نرتب العملاء من الأكبر مبلغًا، ونسند كل عميل للمحصل الأقل حملاً
-    حسب score مركب (عدد عملاء + مبالغ + حسابات).
-    customers_df: أعمدة [client_key, amount, n_accounts, n_rows]
+    توزيع متعدد الأهداف يقلل فرق المبالغ + عدد العملاء + عدد الحسابات معاً.
+
+    الفكرة:
+    - نرتب العملاء من الأكبر (مبلغ ثم حسابات) عشان القطع الكبيرة تتحط الأول.
+    - عند إسناد كل عميل نختار المحصل اللي بعد الإضافة هيقلل الـ imbalance المركب
+      (بعد تطبيع المبلغ/العملاء/الحسابات على متوسط الهدف).
+    - كده مفيش بُعد بيتضحى لصالح التاني.
     """
     if customers_df.empty or not target_collectors:
-        return {}, pd.DataFrame()
+        return {}, pd.DataFrame(), []
 
-    # حالة كل محصل
+    n_targets = len(target_collectors)
+    total_amount = float(customers_df["amount"].sum())
+    total_clients = int(len(customers_df))
+    total_accounts = int(customers_df["n_accounts"].sum())
+
+    # متوسط الهدف لكل محصل (للتطبيع)
+    avg_amount = total_amount / n_targets if n_targets else 1.0
+    avg_clients = total_clients / n_targets if n_targets else 1.0
+    avg_accounts = total_accounts / n_targets if n_targets else 1.0
+    # حماية من القسمة على صفر
+    avg_amount = max(avg_amount, 1e-9)
+    avg_clients = max(avg_clients, 1e-9)
+    avg_accounts = max(avg_accounts, 1e-9)
+
     state = {
         name: {"amount": 0.0, "clients": 0, "accounts": 0, "rows": 0, "client_keys": []}
         for name in target_collectors
     }
 
-    # ترتيب تنازلي حسب المبلغ ثم عدد الحسابات
     ordered = customers_df.sort_values(
         ["amount", "n_accounts", "n_rows"], ascending=[False, False, False]
     ).reset_index(drop=True)
 
-    assignments = []  # (client_key, collector)
+    assignments = []
+
+    def _imbalance(st):
+        """أعلى انحراف معياري مُطبّع عبر المحصلين (كلّما أصغر كلّما أفضل)."""
+        amts = [st[n]["amount"] / avg_amount for n in target_collectors]
+        clis = [st[n]["clients"] / avg_clients for n in target_collectors]
+        accs = [st[n]["accounts"] / avg_accounts for n in target_collectors]
+        def _range(vals):
+            return max(vals) - min(vals) if vals else 0.0
+        # وزن مركب: نقلل الـ range على الأبعاد الثلاثة
+        return (
+            amount_weight * _range(amts)
+            + client_weight * _range(clis)
+            + account_weight * _range(accs)
+        )
 
     for _, row in ordered.iterrows():
         ck = row["client_key"]
@@ -7367,16 +7397,24 @@ def _greedy_assign_customers(
         nacc = int(row["n_accounts"] or 0)
         nrows = int(row["n_rows"] or 0)
 
-        # اختر المحصل الأقل حملاً: أولوية للمبلغ ثم عدد العملاء ثم الحسابات
-        best = min(
-            target_collectors,
-            key=lambda n: (
-                state[n]["amount"],
-                state[n]["clients"],
-                state[n]["accounts"],
-                n,
-            ),
-        )
+        best = None
+        best_score = None
+        for name in target_collectors:
+            # جرب الإضافة مؤقتاً
+            state[name]["amount"] += amt
+            state[name]["clients"] += 1
+            state[name]["accounts"] += nacc
+            score = _imbalance(state)
+            # كسر التعادل: الأفضل اللي عنده أقل مبلغ حالي بعد الإضافة، ثم اسم ثابت
+            tie = (score, state[name]["amount"], state[name]["clients"], name)
+            if best_score is None or tie < best_score:
+                best_score = tie
+                best = name
+            # رجّع الحالة
+            state[name]["amount"] -= amt
+            state[name]["clients"] -= 1
+            state[name]["accounts"] -= nacc
+
         state[best]["amount"] += amt
         state[best]["clients"] += 1
         state[best]["accounts"] += nacc
@@ -7386,7 +7424,6 @@ def _greedy_assign_customers(
 
     assign_map = {ck: coll for ck, coll in assignments}
 
-    # جدول الملخص
     summary_rows = []
     for name in target_collectors:
         s = state[name]
@@ -7399,23 +7436,26 @@ def _greedy_assign_customers(
         })
     summary = pd.DataFrame(summary_rows)
 
-    # تحقق من التolerances (تحذيرات فقط)
+    warnings = []
     if len(summary) > 1:
         amounts = summary["إجمالي المبلغ"]
         clients = summary["عدد العملاء"]
         accounts = summary["عدد الحسابات"]
-        amount_spread = amounts.max() - amounts.min()
-        client_spread = clients.max() - clients.min()
-        account_spread = accounts.max() - accounts.min()
-        warnings = []
+        amount_spread = float(amounts.max() - amounts.min())
+        client_spread = int(clients.max() - clients.min())
+        account_spread = int(accounts.max() - accounts.min())
         if max_diff_amount is not None and amount_spread > max_diff_amount:
             warnings.append(f"فرق المبالغ ({amount_spread:,.0f}) أكبر من المسموح ({max_diff_amount:,.0f})")
         if max_diff_clients is not None and client_spread > max_diff_clients:
             warnings.append(f"فرق عدد العملاء ({client_spread}) أكبر من المسموح ({max_diff_clients})")
         if max_diff_accounts is not None and account_spread > max_diff_accounts:
             warnings.append(f"فرق عدد الحسابات ({account_spread}) أكبر من المسموح ({max_diff_accounts})")
-    else:
-        warnings = []
+        # ملخص الفروقات الفعلية للشفافية
+        summary.attrs["spreads"] = {
+            "amount": amount_spread,
+            "clients": client_spread,
+            "accounts": account_spread,
+        }
 
     return assign_map, summary, warnings
 
@@ -7605,6 +7645,17 @@ def page_distribution():
             key="dist_amount_cols",
         )
 
+    st.markdown("**⚖️ أوزان الموازنة** — كلّما زوّدت وزن بُعد، الخوارزمية هتهتم تقلل فرقه أكتر:")
+    w1, w2, w3 = st.columns(3)
+    with w1:
+        amount_weight = st.slider("وزن المبالغ", 0.0, 3.0, 1.0, 0.1, key="dist_w_amt")
+    with w2:
+        client_weight = st.slider("وزن عدد العملاء", 0.0, 3.0, 1.5, 0.1, key="dist_w_cli",
+                                  help="افتراضي أعلى شوية عشان العملاء متتهملش")
+    with w3:
+        account_weight = st.slider("وزن عدد الحسابات", 0.0, 3.0, 1.5, 0.1, key="dist_w_acc",
+                                   help="افتراضي أعلى شوية عشان الحسابات متتهملش")
+
     st.markdown("**أقصى فرق مسموح بعد التوزيع (Tolerance):**")
     t1, t2, t3 = st.columns(3)
     with t1:
@@ -7679,6 +7730,9 @@ def page_distribution():
             max_diff_amount=max_diff_amount,
             max_diff_clients=max_diff_clients,
             max_diff_accounts=max_diff_accounts,
+            amount_weight=amount_weight,
+            client_weight=client_weight,
+            account_weight=account_weight,
         )
 
         # بناء النسخة الجديدة من الملف كامل
@@ -7747,6 +7801,18 @@ def _render_distribution_results(result):
     k3.metric("💰 إجمالي المبالغ", f"{total_amount:,.0f}")
     k4.metric("🎯 عدد المحصلين المستهدفين", f"{len(targets)}")
 
+    summary = result.get("summary")
+    # حساب وعرض الفروقات الفعلية (أهم مقياس لجودة التوزيع)
+    if summary is not None and not summary.empty and len(summary) > 1:
+        amt_spread = float(summary["إجمالي المبلغ"].max() - summary["إجمالي المبلغ"].min())
+        cli_spread = int(summary["عدد العملاء"].max() - summary["عدد العملاء"].min())
+        acc_spread = int(summary["عدد الحسابات"].max() - summary["عدد الحسابات"].min())
+        st.markdown("#### 📏 الفروقات الفعلية بعد التوزيع (كلّما أصغر كلّما أفضل)")
+        s1, s2, s3 = st.columns(3)
+        s1.metric("فرق المبالغ", f"{amt_spread:,.0f}")
+        s2.metric("فرق عدد العملاء", f"{cli_spread}")
+        s3.metric("فرق عدد الحسابات", f"{acc_spread}")
+
     warnings = result.get("warnings") or []
     if warnings:
         for w in warnings:
@@ -7754,7 +7820,6 @@ def _render_distribution_results(result):
     else:
         st.success("التوزيع ضمن حدود الـ Tolerance المحددة.")
 
-    summary = result.get("summary")
     if summary is not None and not summary.empty:
         st.markdown("#### ملخص التوزيع حسب المحصّل")
         st.dataframe(summary, use_container_width=True, hide_index=True)

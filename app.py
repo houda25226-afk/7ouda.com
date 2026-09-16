@@ -7393,7 +7393,46 @@ class _DistUnionFind:
             self.parent[rb] = ra
 
 
-def _distribution_prepare(frame, amount_col, debitor_col, account_col, substate_col):
+DISTRIBUTION_NOISE_ACCOUNT_THRESHOLD = 8
+
+
+def _distribution_scrub_noise_accounts(work, threshold=DISTRIBUTION_NOISE_ACCOUNT_THRESHOLD):
+    """تحييد قيم Account Number الوهمية (placeholder زي '0' أو فاضي متكرر).
+
+    لو رقم حساب واحد بيظهر تحت عدد Debitor مختلف أكبر من العتبة، فده مش
+    حساب مشترك حقيقي (حساب مشترك واقعي بيتكرر عند 2-3 عملاء غالبًا) —
+    ده أشبه بقيمة افتراضية اتكررت غلط، وربطها بتخلق وحدات عملاقة وهمية
+    بتلزّق عملاء مالهمش علاقة ببعض تحت محصلين مختلفين. بنرجّع كل صف من
+    دول لمفتاحه المستقل، وبنرجّع تقرير بالقيم اللي اتحيّدت.
+    """
+    counts = work.groupby("_dist_acc_key")["_dist_deb_key"].nunique()
+    noisy_keys = set(counts[counts > threshold].index) - {
+        k for k in counts.index if k.startswith("ROW::")
+    }
+    if not noisy_keys:
+        return work, pd.DataFrame(columns=["قيمة Account Number", "عدد العملاء المختلفين"])
+
+    orig_vals = {}
+    for key, val in zip(work["_dist_acc_key"].tolist(), work.get("_dist_acc_raw", work["_dist_acc_key"]).tolist()):
+        if key in noisy_keys and key not in orig_vals:
+            orig_vals[key] = val
+
+    mask = work["_dist_acc_key"].isin(noisy_keys)
+    new_keys = work["_dist_acc_key"].tolist()
+    for i, (idx, is_noisy) in enumerate(zip(work.index, mask.tolist())):
+        if is_noisy:
+            new_keys[i] = f"ROW::ACC::{idx}"
+    work = work.copy()
+    work["_dist_acc_key"] = new_keys
+
+    report = pd.DataFrame([
+        {"قيمة Account Number": orig_vals.get(k, k), "عدد العملاء المختلفين": int(counts[k])}
+        for k in sorted(noisy_keys, key=lambda k: -counts[k])
+    ])
+    return work, report
+
+
+def _distribution_prepare(frame, amount_col, debitor_col, account_col, substate_col, scrub_noise=True):
     """إضافة الأعمدة المساعدة: مبلغ رقمي + مفتاح عميل + مفتاح حساب + حالة."""
     work = frame.copy()
     work["_dist_amount"] = (
@@ -7406,17 +7445,23 @@ def _distribution_prepare(frame, amount_col, debitor_col, account_col, substate_
         for i, v in zip(work.index, work[debitor_col].tolist())
     ]
     if account_col and account_col in work.columns:
+        work["_dist_acc_raw"] = work[account_col]
         work["_dist_acc_key"] = [
             _distribution_id_key(v, "ACC", i)
             for i, v in zip(work.index, work[account_col].tolist())
         ]
     else:
+        work["_dist_acc_raw"] = ""
         work["_dist_acc_key"] = [f"ROW::ACC::{i}" for i in work.index]
     if substate_col and substate_col in work.columns:
         states = work[substate_col].map(_distribution_safe_text)
         work["_dist_state"] = states.replace("", DISTRIBUTION_NO_STATE)
     else:
         work["_dist_state"] = DISTRIBUTION_NO_STATE
+    noise_report = pd.DataFrame(columns=["قيمة Account Number", "عدد العملاء المختلفين"])
+    if scrub_noise:
+        work, noise_report = _distribution_scrub_noise_accounts(work)
+    work.attrs["noise_report"] = noise_report
     return work
 
 
@@ -8635,6 +8680,17 @@ def _distribution_onboarding(
     for key, grp in work.groupby("_dist_unit", sort=False):
         units[key] = _onboard_unit_info(grp, owners)
 
+    # خط الأساس: انقسامات موجودة في الملف الأصلي قبل أي نقل — دي مش
+    # مسؤوليتنا، وأي انقسام يفضل بعدنا بنفس القدر أو أقل مش خطأ.
+    baseline_unit_owners = work.groupby("_dist_unit")[sales_col].apply(
+        lambda s: s.map(_distribution_safe_text).nunique()
+    )
+    baseline_split_units = int((baseline_unit_owners > 1).sum())
+    baseline_deb_owners = work.groupby("_dist_deb_key")[sales_col].apply(
+        lambda s: s.map(_distribution_safe_text).nunique()
+    )
+    baseline_split_debitors = int((baseline_deb_owners > 1).sum())
+
     sel_states = set(selected_states or [])
 
     forced, eligible, split_old = [], [], []
@@ -8968,6 +9024,11 @@ def _distribution_onboarding(
     stats["units_split_after"] = int((unit_owner_counts > 1).sum())
     deb_owner_counts = work.assign(_o=final_owner).groupby("_dist_deb_key")["_o"].nunique()
     stats["debitors_split_after"] = int((deb_owner_counts > 1).sum())
+    stats["baseline_split_units"] = baseline_split_units
+    stats["baseline_split_debitors"] = baseline_split_debitors
+    stats["new_split_units"] = max(0, stats["units_split_after"] - baseline_split_units)
+    stats["new_split_debitors"] = max(0, stats["debitors_split_after"] - baseline_split_debitors)
+    stats["noise_report"] = work.attrs.get("noise_report")
 
     return moved_df, summary_df, stats
 
@@ -9135,12 +9196,20 @@ def _dist_new_joiner_ui(df, filename, skip_first, cols_map, all_sales, sales_val
     if not stats.get("ok"):
         st.error(stats.get("message", "فشل التنفيذ."))
         return
-    if stats.get("debitors_split_after", 0) > 0 or stats.get("units_split_after", 0) > 0:
+    if stats.get("new_split_debitors", 0) > 0 or stats.get("new_split_units", 0) > 0:
         st.error(
-            f"خطأ حرج: بعد النقل فيه {stats.get('debitors_split_after', 0)} عميل "
-            f"و{stats.get('units_split_after', 0)} وحدة عند أكتر من محصل. لم يُحفظ."
+            f"خطأ حرج: عملية النقل نفسها سببت {stats.get('new_split_debitors', 0)} عميل "
+            f"و{stats.get('new_split_units', 0)} وحدة جديدة عند أكتر من محصل (مش موجودين في "
+            "الملف الأصلي). لم يُحفظ."
         )
         return
+    if stats.get("units_split_after", 0) > 0:
+        st.warning(
+            f"⚠️ فيه {stats.get('debitors_split_after', 0):,} عميل و{stats.get('units_split_after', 0):,} "
+            "وحدة مقسومة بين محصلين — لكنها **موجودة في الملف الأصلي من قبل** ومش نتيجة "
+            "هذه العملية (غالبًا نفس رقم الحساب أو المدين مسجّل غلط تحت أكتر من محصل في "
+            "البيانات المصدرية). راجع قسم «التشخيص» تحت لمعرفة التفاصيل."
+        )
     if moved_df is None or moved_df.empty:
         st.warning("لم يتم اختيار أي عميل — راجع الحالات أو الحصص أو نسبة الحماية.")
         return
@@ -9265,12 +9334,13 @@ def _show_onboarding_results(cached):
         if spread_rows:
             st.dataframe(pd.DataFrame(spread_rows), use_container_width=True, hide_index=True)
 
-    with st.expander("🧾 تقرير التدقيق", expanded=False):
+    with st.expander("🧾 تقرير التدقيق والتشخيص", expanded=False):
         checks = [
-            ("لا يوجد عميل عند أكثر من محصل", stats.get("debitors_split_after", 0) == 0,
-             f"{stats.get('debitors_split_after', 0)} حالة"),
-            ("لا توجد وحدة (عميل+حساباته) مقسومة", stats.get("units_split_after", 0) == 0,
-             f"{stats.get('units_split_after', 0)} حالة"),
+            ("العملية نفسها ما سببتش انقسام جديد", stats.get("new_split_debitors", 0) == 0
+             and stats.get("new_split_units", 0) == 0,
+             f"عملاء جدد: {stats.get('new_split_debitors', 0)} · وحدات جديدة: {stats.get('new_split_units', 0)}"),
+            ("انقسامات موجودة أصلًا في الملف (قبل أي نقل)", stats.get("baseline_split_debitors", 0) == 0,
+             f"{stats.get('baseline_split_debitors', 0):,} عميل مسجّل تحت أكتر من محصل في المصدر"),
             ("وحدات مؤهلة للاختيار", stats.get("eligible_units", 0) > 0,
              f"{stats.get('eligible_units', 0):,} وحدة"),
             ("وحدات اتنقلت", stats.get("units_taken", 0) > 0,
@@ -9283,6 +9353,19 @@ def _show_onboarding_results(cached):
             ]),
             use_container_width=True, hide_index=True,
         )
+
+        noise_report = stats.get("noise_report")
+        if noise_report is not None and not getattr(noise_report, "empty", True):
+            st.markdown(
+                f"**⚠️ قيم Account Number اتحيّدت تلقائيًا** (أكتر من "
+                f"{DISTRIBUTION_NOISE_ACCOUNT_THRESHOLD} عميل مختلف تحت نفس الرقم — "
+                "غالبًا placeholder زي '0' أو فاضي مش حساب حقيقي مشترك):"
+            )
+            st.dataframe(noise_report, use_container_width=True, hide_index=True)
+            st.caption(
+                "لو القيم دي أرقام حسابات حقيقية فعلًا مشتركة بين عملاء كتير، قولّي عشان أرفع "
+                "الحد أو أستثنيها بطريقة تانية."
+            )
 
     if moved_df is not None and not moved_df.empty:
         st.markdown("#### تفاصيل العملاء المنقولين")

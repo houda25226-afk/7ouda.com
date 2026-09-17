@@ -53,6 +53,7 @@ WASTED_TIME_COL = "الوقت_المهدر_دقيقة"
 
 ID_CANDIDATES = ["Account ID", "account id", "AccountID", "ID", "id", "رقم الحساب", "الرقم التعريفي", "Account No", "account no", "Account Number"]
 SALES_PERSON_CANDIDATES = ["Create By", "create by", "CreateBy", "Created By", "created by", "Sales Person", "sales person", "المحصّل", "Salesperson", "salesperson", "SalesPerson"]
+SALES_TEAM_CANDIDATES = ["Sales Team", "sales team", "SalesTeam", "Team", "team", "فريق المبيعات", "الفريق", "فريق", "Sales team"]
 COLLECTED_BY_CANDIDATES = ["Collected by", "collected by", "Collected By", "COLLECTED BY", "Created by", "created by", "Created By", "CREATED BY", "المحصل", "المحصّل", "Collector", "collector"]
 ACCOUNT_NUMBER_CANDIDATES = ["Customer Account number", "Customer Account Number", "customer account number", "Customer Account No", "Account Number", "account number", "Account No", "رقم حساب العميل", "رقم الحساب"]
 CREATED_ON_CANDIDATES = ["Created On", "created on", "CreatedOn", "تاريخ الافادة"]
@@ -7710,41 +7711,51 @@ def page_distribution():
     """توزيع عملاء المحصل المستقيل على باقي المحصلين (أو إنشاء محفظة لمحصل جديد)."""
     page_header(
         "DISTRIBUTION",
-        "📦 التوزيع",
+        "⚖️ التوزيع",
         "توزيع عملاء المحصل المستقيل بالتساوي على المحصلين المختارين، مع موازنة المبالغ وعدد العملاء والحسابات",
     )
 
-    # ---- اختيار السيناريو ----
-    scenarios = {
-        "resigned": "محصل استقال — توزيع عملائه على الآخرين",
-        "new_collector": "محصل جديد — بناء محفظة له (قريباً)",
-    }
+    # ---- اختيار السيناريو (بنفس أسلوب اختيار الشركة في الوعود) ----
     st.markdown("#### 🎯 اختر حالة التوزيع")
-    cols = st.columns(2)
+    scen_left, scen_right = st.columns(2)
     current = st.session_state.get(DISTRIBUTION_SCENARIO_KEY, "resigned")
-    with cols[0]:
-        if st.button(
-            ("✅ " if current == "resigned" else "⬜ ") + scenarios["resigned"],
-            use_container_width=True,
-            key="dist_scen_resigned",
-            type="primary" if current == "resigned" else "secondary",
-        ):
-            st.session_state[DISTRIBUTION_SCENARIO_KEY] = "resigned"
-            st.rerun()
-    with cols[1]:
-        if st.button(
-            ("✅ " if current == "new_collector" else "⬜ ") + scenarios["new_collector"],
-            use_container_width=True,
-            key="dist_scen_new",
-            type="primary" if current == "new_collector" else "secondary",
-        ):
-            st.session_state[DISTRIBUTION_SCENARIO_KEY] = "new_collector"
-            st.rerun()
+    with scen_left:
+        with st.container(border=True):
+            st.markdown(
+                "<div style='text-align:center;font-size:3.2rem;line-height:1.1;margin:0.35rem 0'>🚪</div>"
+                "<div style='text-align:center;font-weight:700;font-size:1.05rem'>موظف مستقيل</div>"
+                "<div style='text-align:center;opacity:0.75;font-size:0.85rem;margin-bottom:0.4rem'>توزيع عملائه على المحصلين المختارين</div>",
+                unsafe_allow_html=True,
+            )
+            if st.button(
+                "✅ مختار" if current == "resigned" else "اختيار حالة المستقيل",
+                use_container_width=True,
+                key="dist_scen_resigned",
+                type="primary" if current == "resigned" else "secondary",
+            ):
+                st.session_state[DISTRIBUTION_SCENARIO_KEY] = "resigned"
+                st.rerun()
+    with scen_right:
+        with st.container(border=True):
+            st.markdown(
+                "<div style='text-align:center;font-size:3.2rem;line-height:1.1;margin:0.35rem 0'>🆕</div>"
+                "<div style='text-align:center;font-weight:700;font-size:1.05rem'>محصّل جديد</div>"
+                "<div style='text-align:center;opacity:0.75;font-size:0.85rem;margin-bottom:0.4rem'>بناء محفظة للمحصل الجديد (قريباً)</div>",
+                unsafe_allow_html=True,
+            )
+            if st.button(
+                "✅ مختار" if current == "new_collector" else "اختيار حالة المحصل الجديد",
+                use_container_width=True,
+                key="dist_scen_new",
+                type="primary" if current == "new_collector" else "secondary",
+            ):
+                st.session_state[DISTRIBUTION_SCENARIO_KEY] = "new_collector"
+                st.rerun()
 
     scenario = st.session_state.get(DISTRIBUTION_SCENARIO_KEY, "resigned")
 
     if scenario == "new_collector":
-        st.info("🚧 حالة «محصل جديد — بناء محفظة» هتتضاف في الخطوة الجاية. حالياً ركزنا على حالة المحصل المستقيل.")
+        st.info("🚧 حالة «محصل جديد — بناء محفظة» هتتضاف في الخطوة الجاية. حالياً ركزنا على حالة الموظف المستقيل.")
         st.caption("الفكرة: تختار المحصلين اللي هياخد منهم عملاء، وتحدد نسب أو أعداد، ويتبنى ملف محفظة جديد للمحصل الجديد.")
         return
 
@@ -7779,10 +7790,61 @@ def page_distribution():
     df = raw_df.iloc[1:].copy() if len(raw_df) > 1 else raw_df.copy()
     df = df.reset_index(drop=True)
 
-    sales_col = find_column(df, SALES_PERSON_CANDIDATES)
-    if not sales_col:
+    # اختيار عمود المحصّل وعمود Sales Team من الملف (بدون تغيير باقي منطق التوزيع)
+    col_options = list(df.columns)
+    detected_sales = find_column(df, SALES_PERSON_CANDIDATES)
+    detected_team = find_column(df, SALES_TEAM_CANDIDATES)
+
+    st.markdown("##### 🔧 تحديد الأعمدة")
+    col_pick_1, col_pick_2 = st.columns(2)
+    with col_pick_1:
+        sales_default_idx = col_options.index(detected_sales) if detected_sales in col_options else 0
+        sales_col = st.selectbox(
+            "👤 عمود المحصّل (Sales Person)",
+            options=col_options,
+            index=sales_default_idx,
+            key="dist_sales_col_select",
+            help="العمود اللي فيه اسم المحصل المستقيل وباقي المحصلين",
+        )
+    with col_pick_2:
+        team_options = ["— بدون فلترة بـ Sales Team —"] + col_options
+        team_default_idx = (
+            team_options.index(detected_team)
+            if detected_team and detected_team in team_options
+            else 0
+        )
+        team_col_choice = st.selectbox(
+            "👥 عمود Sales Team (اختياري)",
+            options=team_options,
+            index=team_default_idx,
+            key="dist_team_col_select",
+            help="لو اخترت عمود فريق، تقدر تفلتر المحفظة على فريق معيّن قبل التوزيع",
+        )
+        team_col = None if isinstance(team_col_choice, str) and team_col_choice.startswith("—") else team_col_choice
+
+    if team_col and team_col in df.columns:
+        team_vals = df[team_col].astype(str).str.strip()
+        team_choices = sorted(
+            {
+                v for v in team_vals.tolist()
+                if v and v.lower() not in {"nan", "none", "null", ""}
+            }
+        )
+        if team_choices:
+            selected_teams = st.multiselect(
+                "فلترة حسب Sales Team (اختياري — فاضي = كل الفرق)",
+                options=team_choices,
+                default=[],
+                key="dist_team_filter_values",
+            )
+            if selected_teams:
+                df = df[team_vals.isin(selected_teams)].copy()
+                df = df.reset_index(drop=True)
+                st.caption(f"بعد فلترة الفريق: **{len(df):,}** صف")
+
+    if not sales_col or sales_col not in df.columns:
         st.error(
-            "تعذر العثور على عمود المحصّل (Sales Person). "
+            "تعذر استخدام عمود المحصّل المختار. "
             f"الأعمدة الموجودة: {', '.join(map(str, df.columns))}"
         )
         return
@@ -7797,7 +7859,11 @@ def page_distribution():
     net_col = find_column(df, PROMISE_NET_AMOUNT_CANDIDATES)
     numeric_cols = _distribution_find_numeric_cols(df)
 
-    st.caption(f"الملف: **{uploaded.name}** · عدد الصفوف: **{len(df):,}** · عمود المحصّل: **{sales_col}**")
+    team_label = team_col if team_col else "—"
+    st.caption(
+        f"الملف: **{uploaded.name}** · عدد الصفوف: **{len(df):,}** · "
+        f"عمود المحصّل: **{sales_col}** · Sales Team: **{team_label}**"
+    )
 
     # قائمة المحصلين
     sales_vals = df[sales_col].astype(str).str.strip()
@@ -8235,7 +8301,7 @@ PAGES = {
     "⚠️ الإهمال والمتابعة": page_neglect,
     "📅 الجدولة المتعثرة": page_schedule_stalled,
     "🧾 أخطاء الحالات": page_case_errors,
-    "📦 التوزيع": page_distribution,
+    "⚖️ التوزيع": page_distribution,
     "📊 تحليل نشاط المحصّلين": page_dashboard,
 }
 

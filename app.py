@@ -7715,44 +7715,23 @@ def page_distribution():
         "توزيع عملاء المحصل المستقيل بالتساوي على المحصلين المختارين، مع موازنة المبالغ وعدد العملاء والحسابات",
     )
 
-    # ---- اختيار السيناريو (بنفس أسلوب اختيار الشركة في الوعود) ----
-    st.markdown("#### 🎯 اختر حالة التوزيع")
-    scen_left, scen_right = st.columns(2)
+    # ---- اختيار السيناريو (radio زي الوعود + لوجو جنب كل حالة) ----
+    scenario_labels = {
+        "resigned": "🚪 موظف مستقيل",
+        "new_collector": "🆕 محصّل جديد",
+    }
+    label_to_key = {v: k for k, v in scenario_labels.items()}
     current = st.session_state.get(DISTRIBUTION_SCENARIO_KEY, "resigned")
-    with scen_left:
-        with st.container(border=True):
-            st.markdown(
-                "<div style='text-align:center;font-size:3.2rem;line-height:1.1;margin:0.35rem 0'>🚪</div>"
-                "<div style='text-align:center;font-weight:700;font-size:1.05rem'>موظف مستقيل</div>"
-                "<div style='text-align:center;opacity:0.75;font-size:0.85rem;margin-bottom:0.4rem'>توزيع عملائه على المحصلين المختارين</div>",
-                unsafe_allow_html=True,
-            )
-            if st.button(
-                "✅ مختار" if current == "resigned" else "اختيار حالة المستقيل",
-                use_container_width=True,
-                key="dist_scen_resigned",
-                type="primary" if current == "resigned" else "secondary",
-            ):
-                st.session_state[DISTRIBUTION_SCENARIO_KEY] = "resigned"
-                st.rerun()
-    with scen_right:
-        with st.container(border=True):
-            st.markdown(
-                "<div style='text-align:center;font-size:3.2rem;line-height:1.1;margin:0.35rem 0'>🆕</div>"
-                "<div style='text-align:center;font-weight:700;font-size:1.05rem'>محصّل جديد</div>"
-                "<div style='text-align:center;opacity:0.75;font-size:0.85rem;margin-bottom:0.4rem'>بناء محفظة للمحصل الجديد (قريباً)</div>",
-                unsafe_allow_html=True,
-            )
-            if st.button(
-                "✅ مختار" if current == "new_collector" else "اختيار حالة المحصل الجديد",
-                use_container_width=True,
-                key="dist_scen_new",
-                type="primary" if current == "new_collector" else "secondary",
-            ):
-                st.session_state[DISTRIBUTION_SCENARIO_KEY] = "new_collector"
-                st.rerun()
-
-    scenario = st.session_state.get(DISTRIBUTION_SCENARIO_KEY, "resigned")
+    current_label = scenario_labels.get(current, scenario_labels["resigned"])
+    chosen_label = st.radio(
+        "اختر حالة التوزيع",
+        options=list(scenario_labels.values()),
+        index=list(scenario_labels.values()).index(current_label),
+        horizontal=True,
+        key="dist_scenario_radio",
+    )
+    scenario = label_to_key[chosen_label]
+    st.session_state[DISTRIBUTION_SCENARIO_KEY] = scenario
 
     if scenario == "new_collector":
         st.info("🚧 حالة «محصل جديد — بناء محفظة» هتتضاف في الخطوة الجاية. حالياً ركزنا على حالة الموظف المستقيل.")

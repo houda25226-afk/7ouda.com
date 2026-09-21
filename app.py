@@ -1091,6 +1091,56 @@ div[data-testid="stDecoration"] {{
   background-color: transparent !important;
 }}
 
+
+/* تمييز هيدر الصفحة بهوية الوطنية */
+div[data-testid="stVerticalBlock"] > div:first-child h1,
+div[data-testid="stVerticalBlock"] > div:first-child h2,
+.block-container h1,
+.block-container h2 {{
+  color: {t["accent_strong"]} !important;
+  font-weight: 800 !important;
+}}
+
+/* لون فرعي للهيدر */
+.wq-page-sub {{
+  color: #5a6b5d !important;
+}}
+
+/* شريط علوي خفيف تحت عنوان الصفحة */
+.block-container hr {{
+  border: none !important;
+  border-top: 2px solid {t["accent"]}33 !important;
+  margin: 1rem 0 1.25rem 0 !important;
+}}
+
+/* كبسولة تمييز للهيدر الصغير */
+.wq-page-badge {{
+  display: inline-block;
+  background: linear-gradient(135deg, {t["accent"]}18, {t["accent"]}08);
+  color: {t["accent_strong"]} !important;
+  border: 1px solid {t["accent"]}40;
+  border-radius: 999px;
+  padding: 0.25rem 0.85rem;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  margin-bottom: 0.5rem;
+}}
+
+.wq-page-title {{
+  color: {t["accent_strong"]} !important;
+  font-weight: 800 !important;
+  margin: 0.15rem 0 0.35rem 0 !important;
+}}
+
+.wq-page-sub {{
+  color: #5a6b5d !important;
+  font-size: 0.92rem !important;
+  opacity: 0.9;
+  margin-bottom: 0.75rem !important;
+}}
+
 /* الشريط الجانبي */
 section[data-testid="stSidebar"] {{
   background: {t["sidebar_bg"]} !important;
@@ -1214,10 +1264,21 @@ _inject_wataniya_identity_css()
 # Plotly receives the matching palette below; custom CSS applies Wataniya identity.
 
 def page_header(eyebrow: str, title: str, subtitle: str, centered: bool = False):
+    """هيدر مميز بهوية الوطنية."""
+    align = "center" if centered else "right"
+    badge = ""
     if eyebrow:
-        st.caption(eyebrow.upper())
-    st.title(title)
-    st.caption(subtitle)
+        badge = f"<div class='wq-page-badge' style='text-align:{align}'>{eyebrow.upper()}</div>"
+    st.markdown(
+        f"""
+<div style="text-align:{align}; margin-bottom: 0.35rem;">
+  {badge}
+  <h1 class="wq-page-title" style="text-align:{align}; font-size:1.85rem; margin:0.35rem 0 0.25rem 0;">{title}</h1>
+  <p class="wq-page-sub" style="text-align:{align}; margin:0;">{subtitle}</p>
+</div>
+""",
+        unsafe_allow_html=True,
+    )
     st.divider()
 
 

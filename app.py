@@ -1024,75 +1024,58 @@ THEME = THEMES.get(THEME_NAME, THEMES["dark"])
 
 
 def _inject_wataniya_identity_css():
-    """حقن هوية الوطنية: خلفية كريمية + زخارف Export History كاملة ظاهرة."""
+    """حقن هوية الوطنية: خلفية كريمية + زخرفة رايقة كاملة ظاهرة."""
     t = THEME
     is_light = THEME_NAME == "light"
-    # لون الزخرفة من الصورة الأصلية تقريباً #62BA60
-    deco = "62BA60"
+    deco = "5CB85C"
 
-    # زخرفة شمال كاملة: قباب + مآذن + نجمة — كل الأجزاء جوه الـ viewBox
+    # زخرفة شمال رايقة وكاملة
     corner_deco_left = (
-        f"url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='360' height='400' viewBox='0 0 360 400'%3E"
-        f"%3Cg fill='none' stroke='%23{deco}' stroke-opacity='0.65' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E"
-        # مبنى 1
-        "%3Cpath d='M30 380 L30 240 Q55 175 90 240 L90 380'/%3E"
-        "%3Cpath d='M55 240 Q72 200 90 240'/%3E"
-        "%3Cpath d='M42 280 L42 380 M78 280 L78 380'/%3E"
-        "%3Cpath d='M38 310 L82 310 M38 340 L82 340 M38 365 L82 365'/%3E"
-        # مبنى 2 أطول
-        "%3Cpath d='M105 380 L105 180 Q145 100 190 180 L190 380'/%3E"
-        "%3Cpath d='M145 180 Q167 130 190 180'/%3E"
-        "%3Cpath d='M125 230 L125 380 M170 230 L170 380'/%3E"
-        "%3Cpath d='M120 270 L175 270 M120 310 L175 310 M120 345 L175 345'/%3E"
-        # مبنى 3
-        "%3Cpath d='M205 380 L205 250 Q235 185 275 250 L275 380'/%3E"
-        "%3Cpath d='M235 250 Q255 210 275 250'/%3E"
-        "%3Cpath d='M220 290 L220 380 M260 290 L260 380'/%3E"
-        "%3Cpath d='M215 320 L265 320 M215 350 L265 350'/%3E"
-        # مئذنة
-        "%3Cpath d='M295 380 L295 160 L315 160 L315 380'/%3E"
-        "%3Cpath d='M290 160 Q305 130 320 160'/%3E"
-        "%3Cpath d='M295 200 L315 200 M295 240 L315 240 M295 280 L315 280'/%3E"
-        # خط الأرض
-        "%3Cpath d='M15 380 L340 380'/%3E"
-        # نجمة 8 أطراف كاملة
-        "%3Cpath d='M70 55 L82 90 L120 90 L90 115 L102 150 L70 128 L38 150 L50 115 L20 90 L58 90 Z'/%3E"
-        "%3Cpath d='M70 72 L78 95 L102 95 L86 111 L94 132 L70 118 L46 132 L54 111 L38 95 L62 95 Z'/%3E"
+        f"url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='280' height='360' viewBox='0 0 280 360'%3E"
+        f"%3Cg fill='none' stroke='%23{deco}' stroke-opacity='0.55' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'%3E"
+        "%3Cpath d='M25 340 L25 210 Q48 150 80 210 L80 340'/%3E"
+        "%3Cpath d='M48 210 Q64 175 80 210'/%3E"
+        "%3Cpath d='M38 250 L38 340 M67 250 L67 340'/%3E"
+        "%3Cpath d='M35 280 L70 280 M35 305 L70 305 M35 325 L70 325'/%3E"
+        "%3Cpath d='M95 340 L95 160 Q130 90 170 160 L170 340'/%3E"
+        "%3Cpath d='M130 160 Q150 115 170 160'/%3E"
+        "%3Cpath d='M112 210 L112 340 M153 210 L153 340'/%3E"
+        "%3Cpath d='M108 250 L157 250 M108 285 L157 285 M108 315 L157 315'/%3E"
+        "%3Cpath d='M185 340 L185 230 Q210 170 245 230 L245 340'/%3E"
+        "%3Cpath d='M210 230 Q227 195 245 230'/%3E"
+        "%3Cpath d='M198 265 L198 340 M232 265 L232 340'/%3E"
+        "%3Cpath d='M195 295 L235 295 M195 320 L235 320'/%3E"
+        "%3Cpath d='M15 340 L260 340'/%3E"
+        "%3Cpath d='M55 45 L65 72 L95 72 L72 92 L82 120 L55 102 L28 120 L38 92 L15 72 L45 72 Z'/%3E"
+        "%3Cpath d='M55 60 L62 78 L82 78 L70 90 L76 108 L55 97 L34 108 L40 90 L28 78 L48 78 Z'/%3E"
         "%3C/g%3E%3C/svg%3E\")"
     )
 
-    # زخرفة يمين كاملة: نجوم + قباب + أشكال هندسية
+    # زخرفة يمين رايقة وكاملة
     corner_deco_right = (
-        f"url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='340' height='420' viewBox='0 0 340 420'%3E"
-        f"%3Cg fill='none' stroke='%23{deco}' stroke-opacity='0.65' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E"
-        # نجمة كبيرة كاملة
-        "%3Cpath d='M250 50 L268 95 L318 95 L278 125 L296 172 L250 145 L204 172 L222 125 L182 95 L232 95 Z'/%3E"
-        "%3Cpath d='M250 72 L262 100 L292 100 L272 118 L284 145 L250 128 L216 145 L228 118 L208 100 L238 100 Z'/%3E"
-        # نجمة أصغر
-        "%3Cpath d='M160 120 L172 148 L205 148 L180 168 L192 198 L160 180 L128 198 L140 168 L115 148 L148 148 Z'/%3E"
-        # معين / شكل هندسي
-        "%3Cpath d='M290 180 L310 210 L290 240 L270 210 Z'/%3E"
-        "%3Cpath d='M130 200 L145 222 L130 244 L115 222 Z'/%3E"
-        # قبة يمين
-        "%3Cpath d='M270 400 L270 250 Q240 180 200 250 L200 400'/%3E"
-        "%3Cpath d='M240 250 Q220 205 200 250'/%3E"
-        "%3Cpath d='M215 295 L215 400 M255 295 L255 400'/%3E"
-        "%3Cpath d='M208 330 L262 330 M208 365 L262 365'/%3E"
-        # قبة تانية
-        "%3Cpath d='M175 400 L175 280 Q145 215 110 280 L110 400'/%3E"
-        "%3Cpath d='M145 280 Q127 245 110 280'/%3E"
-        "%3Cpath d='M125 315 L125 400 M160 315 L160 400'/%3E"
-        "%3Cpath d='M118 345 L167 345 M118 375 L167 375'/%3E"
-        # خط الأرض
-        "%3Cpath d='M90 400 L300 400'/%3E"
+        f"url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='280' height='360' viewBox='0 0 280 360'%3E"
+        f"%3Cg fill='none' stroke='%23{deco}' stroke-opacity='0.55' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'%3E"
+        "%3Cpath d='M200 40 L215 75 L255 75 L225 100 L240 138 L200 115 L160 138 L175 100 L145 75 L185 75 Z'/%3E"
+        "%3Cpath d='M200 58 L210 80 L235 80 L218 96 L228 118 L200 105 L172 118 L182 96 L165 80 L190 80 Z'/%3E"
+        "%3Cpath d='M120 95 L130 118 L155 118 L137 135 L147 158 L120 143 L93 158 L103 135 L85 118 L110 118 Z'/%3E"
+        "%3Cpath d='M230 155 L248 178 L230 201 L212 178 Z'/%3E"
+        "%3Cpath d='M100 165 L112 182 L100 199 L88 182 Z'/%3E"
+        "%3Cpath d='M210 340 L210 220 Q185 160 155 220 L155 340'/%3E"
+        "%3Cpath d='M185 220 Q170 185 155 220'/%3E"
+        "%3Cpath d='M168 255 L168 340 M197 255 L197 340'/%3E"
+        "%3Cpath d='M162 285 L203 285 M162 315 L203 315'/%3E"
+        "%3Cpath d='M135 340 L135 250 Q112 195 85 250 L85 340'/%3E"
+        "%3Cpath d='M112 250 Q98 220 85 250'/%3E"
+        "%3Cpath d='M98 280 L98 340 M122 280 L122 340'/%3E"
+        "%3Cpath d='M92 305 L128 305 M92 325 L128 325'/%3E"
+        "%3Cpath d='M70 340 L240 340'/%3E"
         "%3C/g%3E%3C/svg%3E\")"
     )
 
     if is_light:
         bg_image = f"{corner_deco_left}, {corner_deco_right}"
-        # الزخرفة كاملة ظاهرة في الزوايا السفلية بدون قص
         bg_pos = "left bottom, right bottom"
-        bg_size = "360px 400px, 340px 420px"
+        bg_size = "280px 360px, 280px 360px"
         bg_repeat = "no-repeat, no-repeat"
     else:
         bg_image = "none"
@@ -1109,7 +1092,7 @@ html, body, [class*="css"]  {{
   font-family: 'Tajawal', sans-serif !important;
 }}
 
-/* خلفية الصفحة — زخرفة Export History الأصلية */
+/* خلفية الصفحة — زخرفة رايقة كاملة */
 .stApp {{
   background-color: {t["bg"]} !important;
   background-image: {bg_image} !important;
@@ -1119,7 +1102,7 @@ html, body, [class*="css"]  {{
   background-attachment: fixed, fixed !important;
 }}
 
-/* الحاوية الرئيسية — مش لازقة فوق، في النص، استريتش */
+/* الحاوية الرئيسية — نازلة في النص + استريتش */
 .block-container {{
   background: {t["surface"]} !important;
   border: 1px solid {t["border"]} !important;
@@ -1129,11 +1112,11 @@ html, body, [class*="css"]  {{
   padding-bottom: 2.25rem !important;
   padding-left: 2.25rem !important;
   padding-right: 2.25rem !important;
-  max-width: min(1480px, 94vw) !important;
+  max-width: min(1320px, 88vw) !important;
   margin-left: auto !important;
   margin-right: auto !important;
-  margin-top: 1.75rem !important;
-  margin-bottom: 2rem !important;
+  margin-top: 3rem !important;
+  margin-bottom: 3rem !important;
 }}
 
 /* الشريط الجانبي */

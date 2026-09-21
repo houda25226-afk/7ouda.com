@@ -1024,58 +1024,57 @@ THEME = THEMES.get(THEME_NAME, THEMES["dark"])
 
 
 def _inject_wataniya_identity_css():
-    """حقن هوية الوطنية: خلفية كريمية + زخرفة رايقة كاملة ظاهرة."""
+    """حقن هوية الوطنية: خلفية كريمية + زخرفة مباني واضحة."""
     t = THEME
     is_light = THEME_NAME == "light"
-    deco = "5CB85C"
 
-    # زخرفة شمال رايقة وكاملة
+    # زخرفة شمال: صف مباني/قباب جنب بعض
     corner_deco_left = (
-        f"url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='280' height='360' viewBox='0 0 280 360'%3E"
-        f"%3Cg fill='none' stroke='%23{deco}' stroke-opacity='0.55' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'%3E"
-        "%3Cpath d='M25 340 L25 210 Q48 150 80 210 L80 340'/%3E"
-        "%3Cpath d='M48 210 Q64 175 80 210'/%3E"
-        "%3Cpath d='M38 250 L38 340 M67 250 L67 340'/%3E"
-        "%3Cpath d='M35 280 L70 280 M35 305 L70 305 M35 325 L70 325'/%3E"
-        "%3Cpath d='M95 340 L95 160 Q130 90 170 160 L170 340'/%3E"
-        "%3Cpath d='M130 160 Q150 115 170 160'/%3E"
-        "%3Cpath d='M112 210 L112 340 M153 210 L153 340'/%3E"
-        "%3Cpath d='M108 250 L157 250 M108 285 L157 285 M108 315 L157 315'/%3E"
-        "%3Cpath d='M185 340 L185 230 Q210 170 245 230 L245 340'/%3E"
-        "%3Cpath d='M210 230 Q227 195 245 230'/%3E"
-        "%3Cpath d='M198 265 L198 340 M232 265 L232 340'/%3E"
-        "%3Cpath d='M195 295 L235 295 M195 320 L235 320'/%3E"
-        "%3Cpath d='M15 340 L260 340'/%3E"
-        "%3Cpath d='M55 45 L65 72 L95 72 L72 92 L82 120 L55 102 L28 120 L38 92 L15 72 L45 72 Z'/%3E"
-        "%3Cpath d='M55 60 L62 78 L82 78 L70 90 L76 108 L55 97 L34 108 L40 90 L28 78 L48 78 Z'/%3E"
+        "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='300' height='280' viewBox='0 0 300 280'%3E"
+        "%3Cg fill='none' stroke='%235CB85C' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E"
+        "%3Cpath d='M20 260 L20 160 Q40 110 70 160 L70 260'/%3E"
+        "%3Cpath d='M40 160 Q55 130 70 160'/%3E"
+        "%3Cpath d='M32 185 L32 260 M58 185 L58 260'/%3E"
+        "%3Cpath d='M28 210 L62 210 M28 230 L62 230 M28 248 L62 248'/%3E"
+        "%3Cpath d='M85 260 L85 120 Q115 55 155 120 L155 260'/%3E"
+        "%3Cpath d='M115 120 Q135 80 155 120'/%3E"
+        "%3Cpath d='M100 155 L100 260 M140 155 L140 260'/%3E"
+        "%3Cpath d='M95 185 L145 185 M95 210 L145 210 M95 235 L145 235'/%3E"
+        "%3Cpath d='M170 260 L170 150 Q195 100 230 150 L230 260'/%3E"
+        "%3Cpath d='M195 150 Q212 120 230 150'/%3E"
+        "%3Cpath d='M182 180 L182 260 M218 180 L218 260'/%3E"
+        "%3Cpath d='M178 205 L222 205 M178 230 L222 230 M178 250 L222 250'/%3E"
+        "%3Cpath d='M245 260 L245 100 L265 100 L265 260'/%3E"
+        "%3Cpath d='M240 100 Q255 75 270 100'/%3E"
+        "%3Cpath d='M245 130 L265 130 M245 160 L265 160 M245 190 L265 190'/%3E"
+        "%3Cpath d='M10 260 L280 260'/%3E"
+        "%3Cpath d='M50 40 L58 60 L80 60 L62 74 L70 96 L50 84 L30 96 L38 74 L20 60 L42 60 Z'/%3E"
         "%3C/g%3E%3C/svg%3E\")"
     )
 
-    # زخرفة يمين رايقة وكاملة
+    # زخرفة يمين: مباني + نجوم
     corner_deco_right = (
-        f"url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='280' height='360' viewBox='0 0 280 360'%3E"
-        f"%3Cg fill='none' stroke='%23{deco}' stroke-opacity='0.55' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'%3E"
-        "%3Cpath d='M200 40 L215 75 L255 75 L225 100 L240 138 L200 115 L160 138 L175 100 L145 75 L185 75 Z'/%3E"
-        "%3Cpath d='M200 58 L210 80 L235 80 L218 96 L228 118 L200 105 L172 118 L182 96 L165 80 L190 80 Z'/%3E"
-        "%3Cpath d='M120 95 L130 118 L155 118 L137 135 L147 158 L120 143 L93 158 L103 135 L85 118 L110 118 Z'/%3E"
-        "%3Cpath d='M230 155 L248 178 L230 201 L212 178 Z'/%3E"
-        "%3Cpath d='M100 165 L112 182 L100 199 L88 182 Z'/%3E"
-        "%3Cpath d='M210 340 L210 220 Q185 160 155 220 L155 340'/%3E"
-        "%3Cpath d='M185 220 Q170 185 155 220'/%3E"
-        "%3Cpath d='M168 255 L168 340 M197 255 L197 340'/%3E"
-        "%3Cpath d='M162 285 L203 285 M162 315 L203 315'/%3E"
-        "%3Cpath d='M135 340 L135 250 Q112 195 85 250 L85 340'/%3E"
-        "%3Cpath d='M112 250 Q98 220 85 250'/%3E"
-        "%3Cpath d='M98 280 L98 340 M122 280 L122 340'/%3E"
-        "%3Cpath d='M92 305 L128 305 M92 325 L128 325'/%3E"
-        "%3Cpath d='M70 340 L240 340'/%3E"
+        "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='300' height='280' viewBox='0 0 300 280'%3E"
+        "%3Cg fill='none' stroke='%235CB85C' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E"
+        "%3Cpath d='M220 35 L232 65 L265 65 L240 85 L252 118 L220 100 L188 118 L200 85 L175 65 L208 65 Z'/%3E"
+        "%3Cpath d='M140 70 L148 90 L170 90 L154 103 L162 125 L140 113 L118 125 L126 103 L110 90 L132 90 Z'/%3E"
+        "%3Cpath d='M255 130 L275 155 L255 180 L235 155 Z'/%3E"
+        "%3Cpath d='M200 260 L200 155 Q175 105 145 155 L145 260'/%3E"
+        "%3Cpath d='M175 155 Q160 125 145 155'/%3E"
+        "%3Cpath d='M158 185 L158 260 M187 185 L187 260'/%3E"
+        "%3Cpath d='M152 210 L193 210 M152 235 L193 235'/%3E"
+        "%3Cpath d='M125 260 L125 170 Q100 120 70 170 L70 260'/%3E"
+        "%3Cpath d='M100 170 Q85 140 70 170'/%3E"
+        "%3Cpath d='M83 195 L83 260 M112 195 L112 260'/%3E"
+        "%3Cpath d='M78 220 L117 220 M78 245 L117 245'/%3E"
+        "%3Cpath d='M50 260 L280 260'/%3E"
         "%3C/g%3E%3C/svg%3E\")"
     )
 
     if is_light:
         bg_image = f"{corner_deco_left}, {corner_deco_right}"
         bg_pos = "left bottom, right bottom"
-        bg_size = "280px 360px, 280px 360px"
+        bg_size = "300px 280px, 300px 280px"
         bg_repeat = "no-repeat, no-repeat"
     else:
         bg_image = "none"
@@ -1092,7 +1091,7 @@ html, body, [class*="css"]  {{
   font-family: 'Tajawal', sans-serif !important;
 }}
 
-/* خلفية الصفحة — زخرفة رايقة كاملة */
+/* خلفية الصفحة — زخرفة مباني واضحة */
 .stApp {{
   background-color: {t["bg"]} !important;
   background-image: {bg_image} !important;

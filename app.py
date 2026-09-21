@@ -1073,7 +1073,7 @@ html, body, [class*="css"]  {{
   padding-bottom: 2.25rem !important;
   padding-left: 2.25rem !important;
   padding-right: 2.25rem !important;
-  max-width: min(1360px, 92vw) !important;
+  max-width: min(1480px, 95vw) !important;
   margin-left: auto !important;
   margin-right: auto !important;
   margin-top: 4.5rem !important;

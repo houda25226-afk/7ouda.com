@@ -1024,51 +1024,61 @@ THEME = THEMES.get(THEME_NAME, THEMES["dark"])
 
 
 def _inject_wataniya_identity_css():
-    """حقن هوية الوطنية: خلفية كريمية + زخارف هندسية خضراء (نمط الصورة الأولى) + أزرار وأسطح."""
+    """حقن هوية الوطنية: خلفية كريمية + زخارف الصورة الأولى (خطية معمارية) + أزرار وأسطح."""
     t = THEME
     is_light = THEME_NAME == "light"
-    # زخرفة خلفية بنفس روح الصورة الأولى: شبكة ماسية ناعمة + خطوط هندسية خفيفة
+    # نمط خلفية ناعم جداً (مش شبكة كثيفة) — زي الصورة الأولى
     pattern_svg = (
-        "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='80' height='80' viewBox='0 0 80 80'%3E"
-        "%3Cg fill='none' stroke='%23126D3C' stroke-opacity='0.055' stroke-width='1'%3E"
-        "%3Cpath d='M40 0 L80 40 L40 80 L0 40 Z'/%3E"
-        "%3Cpath d='M40 10 L70 40 L40 70 L10 40 Z'/%3E"
-        "%3Cpath d='M0 0 L40 40 L0 80'/%3E"
-        "%3Cpath d='M80 0 L40 40 L80 80'/%3E"
+        "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='100' height='100' viewBox='0 0 100 100'%3E"
+        "%3Cg fill='none' stroke='%23126D3C' stroke-opacity='0.035' stroke-width='0.8'%3E"
+        "%3Cpath d='M50 0 L100 50 L50 100 L0 50 Z'/%3E"
+        "%3Cpath d='M0 0 L50 50 L0 100'/%3E"
+        "%3Cpath d='M100 0 L50 50 L100 100'/%3E"
         "%3C/g%3E%3C/svg%3E\")"
     )
-    # زخارف جانبية أوضح (قباب + أقواس + مباني) على اليسار واليمين زي الصورة الأولى
+    # الزخرفة الجانبية الرئيسية (شمال) — قباب + مباني بتفاصيل أوضح
     corner_deco_left = (
-        "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='320' height='420' viewBox='0 0 320 420'%3E"
-        "%3Cg fill='none' stroke='%23126D3C' stroke-opacity='0.12' stroke-width='1.5'%3E"
-        "%3Cpath d='M30 400 L30 220 Q55 140 90 220 L90 400'/%3E"
-        "%3Cpath d='M55 220 Q72 165 90 220'/%3E"
-        "%3Cpath d='M110 400 L110 200 Q140 110 175 200 L175 400'/%3E"
-        "%3Cpath d='M140 200 Q157 145 175 200'/%3E"
-        "%3Cpath d='M195 400 L195 240 Q220 170 250 240 L250 400'/%3E"
-        "%3Cpath d='M220 240 Q235 195 250 240'/%3E"
-        "%3Cpath d='M15 400 L270 400'/%3E"
-        "%3Cpath d='M40 180 Q70 100 100 180'/%3E"
-        "%3Cpath d='M120 160 Q155 70 190 160'/%3E"
-        "%3Cpath d='M200 200 Q235 120 270 200'/%3E"
+        "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='380' height='520' viewBox='0 0 380 520'%3E"
+        "%3Cg fill='none' stroke='%23126D3C' stroke-opacity='0.15' stroke-width='1.6'%3E"
+        "%3Cpath d='M25 500 L25 260 Q55 160 95 260 L95 500'/%3E"
+        "%3Cpath d='M55 260 Q75 195 95 260'/%3E"
+        "%3Cpath d='M40 320 L40 500 M80 320 L80 500'/%3E"
+        "%3Cpath d='M35 380 L85 380 M35 440 L85 440'/%3E"
+        "%3Cpath d='M115 500 L115 200 Q155 90 200 200 L200 500'/%3E"
+        "%3Cpath d='M150 200 Q175 125 200 200'/%3E"
+        "%3Cpath d='M135 280 L135 500 M180 280 L180 500'/%3E"
+        "%3Cpath d='M130 340 L185 340 M130 400 L185 400 M130 460 L185 460'/%3E"
+        "%3Cpath d='M220 500 L220 280 Q250 180 290 280 L290 500'/%3E"
+        "%3Cpath d='M250 280 Q270 215 290 280'/%3E"
+        "%3Cpath d='M235 340 L235 500 M275 340 L275 500'/%3E"
+        "%3Cpath d='M230 400 L285 400 M230 460 L285 460'/%3E"
+        "%3Cpath d='M310 500 L310 320 Q335 250 360 320 L360 500'/%3E"
+        "%3Cpath d='M332 320 Q347 280 360 320'/%3E"
+        "%3Cpath d='M10 500 L375 500'/%3E"
+        "%3Cpath d='M40 150 Q90 40 150 150'/%3E"
+        "%3Cpath d='M160 120 Q210 20 270 120'/%3E"
+        "%3Cpath d='M280 160 Q320 80 360 160'/%3E"
         "%3C/g%3E%3C/svg%3E\")"
     )
+    # زخرفة يمين أخف
     corner_deco_right = (
-        "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='280' height='380' viewBox='0 0 280 380'%3E"
-        "%3Cg fill='none' stroke='%23126D3C' stroke-opacity='0.10' stroke-width='1.4'%3E"
-        "%3Cpath d='M250 360 L250 200 Q225 130 190 200 L190 360'/%3E"
-        "%3Cpath d='M225 200 Q208 155 190 200'/%3E"
-        "%3Cpath d='M170 360 L170 180 Q140 100 105 180 L105 360'/%3E"
-        "%3Cpath d='M140 180 Q122 130 105 180'/%3E"
-        "%3Cpath d='M85 360 L85 220 Q60 155 30 220 L30 360'/%3E"
-        "%3Cpath d='M60 220 Q45 180 30 220'/%3E"
-        "%3Cpath d='M20 360 L260 360'/%3E"
+        "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='300' height='440' viewBox='0 0 300 440'%3E"
+        "%3Cg fill='none' stroke='%23126D3C' stroke-opacity='0.12' stroke-width='1.5'%3E"
+        "%3Cpath d='M275 420 L275 220 Q245 130 205 220 L205 420'/%3E"
+        "%3Cpath d='M245 220 Q225 165 205 220'/%3E"
+        "%3Cpath d='M185 420 L185 200 Q150 100 110 200 L110 420'/%3E"
+        "%3Cpath d='M150 200 Q130 140 110 200'/%3E"
+        "%3Cpath d='M90 420 L90 250 Q60 170 30 250 L30 420'/%3E"
+        "%3Cpath d='M60 250 Q45 205 30 250'/%3E"
+        "%3Cpath d='M15 420 L290 420'/%3E"
+        "%3Cpath d='M50 140 Q100 40 155 140'/%3E"
+        "%3Cpath d='M165 110 Q210 30 260 110'/%3E"
         "%3C/g%3E%3C/svg%3E\")"
     )
     if is_light:
         bg_image = f"{pattern_svg}, {corner_deco_left}, {corner_deco_right}"
         bg_pos = "center, left bottom, right bottom"
-        bg_size = "80px 80px, 320px 420px, 280px 380px"
+        bg_size = "100px 100px, 380px 520px, 300px 440px"
         bg_repeat = "repeat, no-repeat, no-repeat"
     else:
         bg_image = "none"
@@ -1084,7 +1094,7 @@ html, body, [class*="css"]  {{
   font-family: 'Tajawal', sans-serif !important;
 }}
 
-/* خلفية الصفحة بهوية الوطنية — زخرفة مثل الصورة الأولى */
+/* خلفية الصفحة بهوية الوطنية — زخرفة الصورة الأولى */
 .stApp {{
   background-color: {t["bg"]} !important;
   background-image: {bg_image} !important;
@@ -1094,19 +1104,21 @@ html, body, [class*="css"]  {{
   background-attachment: fixed, fixed, fixed !important;
 }}
 
-/* الحاوية الرئيسية — في النص + استريتش أوسع */
+/* الحاوية الرئيسية — مش لازقة فوق، في النص، استريتش */
 .block-container {{
   background: {t["surface"]} !important;
   border: 1px solid {t["border"]} !important;
   border-radius: 18px !important;
-  box-shadow: 0 6px 28px rgba(18, 109, 60, 0.07) !important;
+  box-shadow: 0 8px 32px rgba(18, 109, 60, 0.08) !important;
   padding-top: 1.75rem !important;
   padding-bottom: 2.25rem !important;
-  padding-left: 2rem !important;
-  padding-right: 2rem !important;
+  padding-left: 2.25rem !important;
+  padding-right: 2.25rem !important;
   max-width: min(1480px, 94vw) !important;
   margin-left: auto !important;
   margin-right: auto !important;
+  margin-top: 1.75rem !important;
+  margin-bottom: 2rem !important;
 }}
 
 /* الشريط الجانبي */

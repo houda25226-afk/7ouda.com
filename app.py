@@ -1024,57 +1024,73 @@ THEME = THEMES.get(THEME_NAME, THEMES["dark"])
 
 
 def _inject_wataniya_identity_css():
-    """حقن هوية الوطنية: خلفية كريمية + زخرفة مباني واضحة."""
+    """حقن هوية الوطنية: خلفية كريمية + skyline مباني رايق."""
     t = THEME
     is_light = THEME_NAME == "light"
 
-    # زخرفة شمال: صف مباني/قباب جنب بعض
+    # skyline شمال — مباني بسيطة رايقة
     corner_deco_left = (
-        "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='300' height='280' viewBox='0 0 300 280'%3E"
-        "%3Cg fill='none' stroke='%235CB85C' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E"
-        "%3Cpath d='M20 260 L20 160 Q40 110 70 160 L70 260'/%3E"
-        "%3Cpath d='M40 160 Q55 130 70 160'/%3E"
-        "%3Cpath d='M32 185 L32 260 M58 185 L58 260'/%3E"
-        "%3Cpath d='M28 210 L62 210 M28 230 L62 230 M28 248 L62 248'/%3E"
-        "%3Cpath d='M85 260 L85 120 Q115 55 155 120 L155 260'/%3E"
-        "%3Cpath d='M115 120 Q135 80 155 120'/%3E"
-        "%3Cpath d='M100 155 L100 260 M140 155 L140 260'/%3E"
-        "%3Cpath d='M95 185 L145 185 M95 210 L145 210 M95 235 L145 235'/%3E"
-        "%3Cpath d='M170 260 L170 150 Q195 100 230 150 L230 260'/%3E"
-        "%3Cpath d='M195 150 Q212 120 230 150'/%3E"
-        "%3Cpath d='M182 180 L182 260 M218 180 L218 260'/%3E"
-        "%3Cpath d='M178 205 L222 205 M178 230 L222 230 M178 250 L222 250'/%3E"
-        "%3Cpath d='M245 260 L245 100 L265 100 L265 260'/%3E"
-        "%3Cpath d='M240 100 Q255 75 270 100'/%3E"
-        "%3Cpath d='M245 130 L265 130 M245 160 L265 160 M245 190 L265 190'/%3E"
-        "%3Cpath d='M10 260 L280 260'/%3E"
-        "%3Cpath d='M50 40 L58 60 L80 60 L62 74 L70 96 L50 84 L30 96 L38 74 L20 60 L42 60 Z'/%3E"
+        "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='420' height='220' viewBox='0 0 420 220'%3E"
+        "%3Cg fill='%23126D3C' fill-opacity='0.12'%3E"
+        "%3Crect x='10' y='90' width='28' height='130'/%3E"
+        "%3Crect x='18' y='100' width='6' height='8' fill='%23126D3C' fill-opacity='0.08'/%3E"
+        "%3Crect x='42' y='50' width='36' height='170'/%3E"
+        "%3Crect x='50' y='60' width='5' height='7' fill='%23126D3C' fill-opacity='0.08'/%3E"
+        "%3Crect x='62' y='60' width='5' height='7' fill='%23126D3C' fill-opacity='0.08'/%3E"
+        "%3Crect x='50' y='80' width='5' height='7' fill='%23126D3C' fill-opacity='0.08'/%3E"
+        "%3Crect x='62' y='80' width='5' height='7' fill='%23126D3C' fill-opacity='0.08'/%3E"
+        "%3Crect x='82' y='110' width='24' height='110'/%3E"
+        "%3Crect x='110' y='35' width='40' height='185'/%3E"
+        "%3Crect x='120' y='45' width='6' height='8' fill='%23126D3C' fill-opacity='0.08'/%3E"
+        "%3Crect x='134' y='45' width='6' height='8' fill='%23126D3C' fill-opacity='0.08'/%3E"
+        "%3Crect x='120' y='65' width='6' height='8' fill='%23126D3C' fill-opacity='0.08'/%3E"
+        "%3Crect x='134' y='65' width='6' height='8' fill='%23126D3C' fill-opacity='0.08'/%3E"
+        "%3Crect x='154' y='75' width='32' height='145'/%3E"
+        "%3Crect x='190' y='100' width='22' height='120'/%3E"
+        "%3Crect x='216' y='55' width='38' height='165'/%3E"
+        "%3Crect x='226' y='65' width='6' height='8' fill='%23126D3C' fill-opacity='0.08'/%3E"
+        "%3Crect x='240' y='65' width='6' height='8' fill='%23126D3C' fill-opacity='0.08'/%3E"
+        "%3Crect x='258' y='120' width='26' height='100'/%3E"
+        "%3Crect x='288' y='40' width='34' height='180'/%3E"
+        "%3Crect x='296' y='50' width='5' height='7' fill='%23126D3C' fill-opacity='0.08'/%3E"
+        "%3Crect x='308' y='50' width='5' height='7' fill='%23126D3C' fill-opacity='0.08'/%3E"
+        "%3Crect x='326' y='85' width='28' height='135'/%3E"
+        "%3Crect x='358' y='105' width='22' height='115'/%3E"
+        "%3Crect x='384' y='70' width='30' height='150'/%3E"
         "%3C/g%3E%3C/svg%3E\")"
     )
 
-    # زخرفة يمين: مباني + نجوم
+    # skyline يمين — مباني بسيطة رايقة
     corner_deco_right = (
-        "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='300' height='280' viewBox='0 0 300 280'%3E"
-        "%3Cg fill='none' stroke='%235CB85C' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E"
-        "%3Cpath d='M220 35 L232 65 L265 65 L240 85 L252 118 L220 100 L188 118 L200 85 L175 65 L208 65 Z'/%3E"
-        "%3Cpath d='M140 70 L148 90 L170 90 L154 103 L162 125 L140 113 L118 125 L126 103 L110 90 L132 90 Z'/%3E"
-        "%3Cpath d='M255 130 L275 155 L255 180 L235 155 Z'/%3E"
-        "%3Cpath d='M200 260 L200 155 Q175 105 145 155 L145 260'/%3E"
-        "%3Cpath d='M175 155 Q160 125 145 155'/%3E"
-        "%3Cpath d='M158 185 L158 260 M187 185 L187 260'/%3E"
-        "%3Cpath d='M152 210 L193 210 M152 235 L193 235'/%3E"
-        "%3Cpath d='M125 260 L125 170 Q100 120 70 170 L70 260'/%3E"
-        "%3Cpath d='M100 170 Q85 140 70 170'/%3E"
-        "%3Cpath d='M83 195 L83 260 M112 195 L112 260'/%3E"
-        "%3Cpath d='M78 220 L117 220 M78 245 L117 245'/%3E"
-        "%3Cpath d='M50 260 L280 260'/%3E"
+        "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='420' height='220' viewBox='0 0 420 220'%3E"
+        "%3Cg fill='%23126D3C' fill-opacity='0.12'%3E"
+        "%3Crect x='10' y='70' width='30' height='150'/%3E"
+        "%3Crect x='44' y='105' width='22' height='115'/%3E"
+        "%3Crect x='70' y='40' width='34' height='180'/%3E"
+        "%3Crect x='78' y='50' width='5' height='7' fill='%23126D3C' fill-opacity='0.08'/%3E"
+        "%3Crect x='90' y='50' width='5' height='7' fill='%23126D3C' fill-opacity='0.08'/%3E"
+        "%3Crect x='108' y='120' width='26' height='100'/%3E"
+        "%3Crect x='138' y='55' width='38' height='165'/%3E"
+        "%3Crect x='148' y='65' width='6' height='8' fill='%23126D3C' fill-opacity='0.08'/%3E"
+        "%3Crect x='162' y='65' width='6' height='8' fill='%23126D3C' fill-opacity='0.08'/%3E"
+        "%3Crect x='180' y='100' width='22' height='120'/%3E"
+        "%3Crect x='206' y='75' width='32' height='145'/%3E"
+        "%3Crect x='242' y='35' width='40' height='185'/%3E"
+        "%3Crect x='252' y='45' width='6' height='8' fill='%23126D3C' fill-opacity='0.08'/%3E"
+        "%3Crect x='266' y='45' width='6' height='8' fill='%23126D3C' fill-opacity='0.08'/%3E"
+        "%3Crect x='286' y='110' width='24' height='110'/%3E"
+        "%3Crect x='314' y='50' width='36' height='170'/%3E"
+        "%3Crect x='322' y='60' width='5' height='7' fill='%23126D3C' fill-opacity='0.08'/%3E"
+        "%3Crect x='334' y='60' width='5' height='7' fill='%23126D3C' fill-opacity='0.08'/%3E"
+        "%3Crect x='354' y='90' width='28' height='130'/%3E"
+        "%3Crect x='386' y='115' width='24' height='105'/%3E"
         "%3C/g%3E%3C/svg%3E\")"
     )
 
     if is_light:
         bg_image = f"{corner_deco_left}, {corner_deco_right}"
         bg_pos = "left bottom, right bottom"
-        bg_size = "300px 280px, 300px 280px"
+        bg_size = "420px 220px, 420px 220px"
         bg_repeat = "no-repeat, no-repeat"
     else:
         bg_image = "none"
@@ -1091,7 +1107,7 @@ html, body, [class*="css"]  {{
   font-family: 'Tajawal', sans-serif !important;
 }}
 
-/* خلفية الصفحة — زخرفة مباني واضحة */
+/* خلفية الصفحة — skyline مباني رايق */
 .stApp {{
   background-color: {t["bg"]} !important;
   background-image: {bg_image} !important;

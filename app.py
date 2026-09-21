@@ -1024,67 +1024,81 @@ THEME = THEMES.get(THEME_NAME, THEMES["dark"])
 
 
 def _inject_wataniya_identity_css():
-    """حقن هوية الوطنية: خلفية كريمية + زخارف الصورة الأولى (خطية معمارية) + أزرار وأسطح."""
+    """حقن هوية الوطنية: خلفية كريمية + زخارف Export History الأصلية بدقة."""
     t = THEME
     is_light = THEME_NAME == "light"
-    # نمط خلفية ناعم جداً (مش شبكة كثيفة) — زي الصورة الأولى
-    pattern_svg = (
-        "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='100' height='100' viewBox='0 0 100 100'%3E"
-        "%3Cg fill='none' stroke='%23126D3C' stroke-opacity='0.035' stroke-width='0.8'%3E"
-        "%3Cpath d='M50 0 L100 50 L50 100 L0 50 Z'/%3E"
-        "%3Cpath d='M0 0 L50 50 L0 100'/%3E"
-        "%3Cpath d='M100 0 L50 50 L100 100'/%3E"
-        "%3C/g%3E%3C/svg%3E\")"
-    )
-    # الزخرفة الجانبية الرئيسية (شمال) — قباب + مباني بتفاصيل أوضح
+    # لون الزخرفة من الصورة الأصلية (أخضر متوسط واضح)
+    deco = "3AA76D"
+
+    # زخرفة شمال: قباب + مآذن + نجمة هندسية — مطابقة للصورة
     corner_deco_left = (
-        "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='380' height='520' viewBox='0 0 380 520'%3E"
-        "%3Cg fill='none' stroke='%23126D3C' stroke-opacity='0.15' stroke-width='1.6'%3E"
-        "%3Cpath d='M25 500 L25 260 Q55 160 95 260 L95 500'/%3E"
-        "%3Cpath d='M55 260 Q75 195 95 260'/%3E"
-        "%3Cpath d='M40 320 L40 500 M80 320 L80 500'/%3E"
-        "%3Cpath d='M35 380 L85 380 M35 440 L85 440'/%3E"
-        "%3Cpath d='M115 500 L115 200 Q155 90 200 200 L200 500'/%3E"
-        "%3Cpath d='M150 200 Q175 125 200 200'/%3E"
-        "%3Cpath d='M135 280 L135 500 M180 280 L180 500'/%3E"
-        "%3Cpath d='M130 340 L185 340 M130 400 L185 400 M130 460 L185 460'/%3E"
-        "%3Cpath d='M220 500 L220 280 Q250 180 290 280 L290 500'/%3E"
-        "%3Cpath d='M250 280 Q270 215 290 280'/%3E"
-        "%3Cpath d='M235 340 L235 500 M275 340 L275 500'/%3E"
-        "%3Cpath d='M230 400 L285 400 M230 460 L285 460'/%3E"
-        "%3Cpath d='M310 500 L310 320 Q335 250 360 320 L360 500'/%3E"
-        "%3Cpath d='M332 320 Q347 280 360 320'/%3E"
-        "%3Cpath d='M10 500 L375 500'/%3E"
-        "%3Cpath d='M40 150 Q90 40 150 150'/%3E"
-        "%3Cpath d='M160 120 Q210 20 270 120'/%3E"
-        "%3Cpath d='M280 160 Q320 80 360 160'/%3E"
+        f"url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='420' height='480' viewBox='0 0 420 480'%3E"
+        f"%3Cg fill='none' stroke='%23{deco}' stroke-opacity='0.55' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E"
+        # قبة + مبنى يسار
+        "%3Cpath d='M40 460 L40 280 Q70 200 110 280 L110 460'/%3E"
+        "%3Cpath d='M70 280 Q90 230 110 280'/%3E"
+        "%3Cpath d='M55 320 L55 460 M95 320 L95 460'/%3E"
+        "%3Cpath d='M48 360 L102 360 M48 400 L102 400 M48 430 L102 430'/%3E"
+        # قبة وسطى أكبر
+        "%3Cpath d='M130 460 L130 220 Q175 120 230 220 L230 460'/%3E"
+        "%3Cpath d='M175 220 Q200 155 230 220'/%3E"
+        "%3Cpath d='M150 280 L150 460 M210 280 L210 460'/%3E"
+        "%3Cpath d='M145 330 L215 330 M145 380 L215 380 M145 420 L215 420'/%3E"
+        # قبة يمين صغيرة
+        "%3Cpath d='M250 460 L250 300 Q280 230 320 300 L320 460'/%3E"
+        "%3Cpath d='M280 300 Q300 255 320 300'/%3E"
+        "%3Cpath d='M265 340 L265 460 M305 340 L305 460'/%3E"
+        "%3Cpath d='M258 380 L312 380 M258 420 L312 420'/%3E"
+        # مئذنة رفيعة
+        "%3Cpath d='M340 460 L340 200 L355 200 L355 460'/%3E"
+        "%3Cpath d='M335 200 Q347 170 360 200'/%3E"
+        "%3Cpath d='M340 240 L355 240 M340 280 L355 280'/%3E"
+        # خط الأرض
+        "%3Cpath d='M20 460 L380 460'/%3E"
+        # نجمة هندسية 8 أطراف (زي الصورة)
+        "%3Cpath d='M90 80 L100 110 L130 110 L108 130 L118 160 L90 142 L62 160 L72 130 L50 110 L80 110 Z'/%3E"
+        "%3Cpath d='M90 95 L97 115 L115 115 L101 127 L107 145 L90 135 L73 145 L79 127 L65 115 L83 115 Z'/%3E"
         "%3C/g%3E%3C/svg%3E\")"
     )
-    # زخرفة يمين أخف
+
+    # زخرفة يمين: نجوم هندسية + أجزاء معمارية — مطابقة للصورة
     corner_deco_right = (
-        "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='300' height='440' viewBox='0 0 300 440'%3E"
-        "%3Cg fill='none' stroke='%23126D3C' stroke-opacity='0.12' stroke-width='1.5'%3E"
-        "%3Cpath d='M275 420 L275 220 Q245 130 205 220 L205 420'/%3E"
-        "%3Cpath d='M245 220 Q225 165 205 220'/%3E"
-        "%3Cpath d='M185 420 L185 200 Q150 100 110 200 L110 420'/%3E"
-        "%3Cpath d='M150 200 Q130 140 110 200'/%3E"
-        "%3Cpath d='M90 420 L90 250 Q60 170 30 250 L30 420'/%3E"
-        "%3Cpath d='M60 250 Q45 205 30 250'/%3E"
-        "%3Cpath d='M15 420 L290 420'/%3E"
-        "%3Cpath d='M50 140 Q100 40 155 140'/%3E"
-        "%3Cpath d='M165 110 Q210 30 260 110'/%3E"
+        f"url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='360' height='500' viewBox='0 0 360 500'%3E"
+        f"%3Cg fill='none' stroke='%23{deco}' stroke-opacity='0.50' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E"
+        # نجمة كبيرة
+        "%3Cpath d='M280 80 L295 120 L340 120 L305 148 L320 190 L280 165 L240 190 L255 148 L220 120 L265 120 Z'/%3E"
+        "%3Cpath d='M280 100 L290 125 L315 125 L297 142 L307 165 L280 150 L253 165 L263 142 L245 125 L270 125 Z'/%3E"
+        # نجمة أصغر
+        "%3Cpath d='M200 160 L210 185 L238 185 L216 202 L226 228 L200 212 L174 228 L184 202 L162 185 L190 185 Z'/%3E"
+        # جزء معماري يمين سفلي
+        "%3Cpath d='M300 480 L300 280 Q270 200 230 280 L230 480'/%3E"
+        "%3Cpath d='M270 280 Q250 235 230 280'/%3E"
+        "%3Cpath d='M245 330 L245 480 M285 330 L285 480'/%3E"
+        "%3Cpath d='M238 380 L292 380 M238 430 L292 430'/%3E"
+        # جزء معماري تاني
+        "%3Cpath d='M200 480 L200 320 Q170 250 130 320 L130 480'/%3E"
+        "%3Cpath d='M170 320 Q150 280 130 320'/%3E"
+        "%3Cpath d='M145 360 L145 480 M185 360 L185 480'/%3E"
+        "%3Cpath d='M138 400 L192 400 M138 440 L192 440'/%3E"
+        # خط الأرض
+        "%3Cpath d='M100 480 L340 480'/%3E"
+        # أشكال هندسية إضافية
+        "%3Cpath d='M320 220 L340 250 L320 280 L300 250 Z'/%3E"
+        "%3Cpath d='M150 200 L165 220 L150 240 L135 220 Z'/%3E"
         "%3C/g%3E%3C/svg%3E\")"
     )
+
     if is_light:
-        bg_image = f"{pattern_svg}, {corner_deco_left}, {corner_deco_right}"
-        bg_pos = "center, left bottom, right bottom"
-        bg_size = "100px 100px, 380px 520px, 300px 440px"
-        bg_repeat = "repeat, no-repeat, no-repeat"
+        bg_image = f"{corner_deco_left}, {corner_deco_right}"
+        bg_pos = "left bottom, right bottom"
+        bg_size = "420px 480px, 360px 500px"
+        bg_repeat = "no-repeat, no-repeat"
     else:
         bg_image = "none"
         bg_pos = "center"
         bg_size = "auto"
         bg_repeat = "no-repeat"
+
     st.markdown(
         f"""
 <style>
@@ -1094,14 +1108,14 @@ html, body, [class*="css"]  {{
   font-family: 'Tajawal', sans-serif !important;
 }}
 
-/* خلفية الصفحة بهوية الوطنية — زخرفة الصورة الأولى */
+/* خلفية الصفحة — زخرفة Export History الأصلية */
 .stApp {{
   background-color: {t["bg"]} !important;
   background-image: {bg_image} !important;
   background-position: {bg_pos} !important;
   background-size: {bg_size} !important;
   background-repeat: {bg_repeat} !important;
-  background-attachment: fixed, fixed, fixed !important;
+  background-attachment: fixed, fixed !important;
 }}
 
 /* الحاوية الرئيسية — مش لازقة فوق، في النص، استريتش */

@@ -1090,8 +1090,9 @@ def _inject_wataniya_identity_css():
 
     if is_light:
         bg_image = f"{corner_deco_left}, {corner_deco_right}"
-        bg_pos = "left bottom, right bottom"
-        bg_size = "420px 480px, 360px 500px"
+        # قرّب الزخارف من بعض — شمال ويمين داخلين عشان مفيش فراغ كبير في النص
+        bg_pos = "left 5% bottom -20px, right 5% bottom -20px"
+        bg_size = "520px 560px, 460px 580px"
         bg_repeat = "no-repeat, no-repeat"
     else:
         bg_image = "none"

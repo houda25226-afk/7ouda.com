@@ -1024,38 +1024,57 @@ THEME = THEMES.get(THEME_NAME, THEMES["dark"])
 
 
 def _inject_wataniya_identity_css():
-    """حقن هوية الوطنية: خلفية كريمية + زخارف هندسية خضراء + أزرار وأسطح."""
+    """حقن هوية الوطنية: خلفية كريمية + زخارف هندسية خضراء (نمط الصورة الأولى) + أزرار وأسطح."""
     t = THEME
     is_light = THEME_NAME == "light"
-    # خلفية زخرفية مستوحاة من واجهة الوطنية (مثلثات هندسية خفيفة)
+    # زخرفة خلفية بنفس روح الصورة الأولى: شبكة ماسية ناعمة + خطوط هندسية خفيفة
     pattern_svg = (
-        "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120' viewBox='0 0 120 120'%3E"
-        "%3Cg fill='none' stroke='%23126D3C' stroke-opacity='0.07' stroke-width='1'%3E"
-        "%3Cpath d='M0 60 L30 30 L60 60 L30 90 Z'/%3E"
-        "%3Cpath d='M60 60 L90 30 L120 60 L90 90 Z'/%3E"
-        "%3Cpath d='M30 0 L60 30 L30 60 L0 30 Z'/%3E"
-        "%3Cpath d='M90 0 L120 30 L90 60 L60 30 Z'/%3E"
-        "%3Cpath d='M30 60 L60 90 L30 120 L0 90 Z'/%3E"
-        "%3Cpath d='M90 60 L120 90 L90 120 L60 90 Z'/%3E"
+        "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='80' height='80' viewBox='0 0 80 80'%3E"
+        "%3Cg fill='none' stroke='%23126D3C' stroke-opacity='0.055' stroke-width='1'%3E"
+        "%3Cpath d='M40 0 L80 40 L40 80 L0 40 Z'/%3E"
+        "%3Cpath d='M40 10 L70 40 L40 70 L10 40 Z'/%3E"
+        "%3Cpath d='M0 0 L40 40 L0 80'/%3E"
+        "%3Cpath d='M80 0 L40 40 L80 80'/%3E"
         "%3C/g%3E%3C/svg%3E\")"
     )
-    # زخارف جانبية (قباب/مباني خفيفة)
-    corner_deco = (
-        "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='280' height='200' viewBox='0 0 280 200'%3E"
+    # زخارف جانبية أوضح (قباب + أقواس + مباني) على اليسار واليمين زي الصورة الأولى
+    corner_deco_left = (
+        "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='320' height='420' viewBox='0 0 320 420'%3E"
+        "%3Cg fill='none' stroke='%23126D3C' stroke-opacity='0.12' stroke-width='1.5'%3E"
+        "%3Cpath d='M30 400 L30 220 Q55 140 90 220 L90 400'/%3E"
+        "%3Cpath d='M55 220 Q72 165 90 220'/%3E"
+        "%3Cpath d='M110 400 L110 200 Q140 110 175 200 L175 400'/%3E"
+        "%3Cpath d='M140 200 Q157 145 175 200'/%3E"
+        "%3Cpath d='M195 400 L195 240 Q220 170 250 240 L250 400'/%3E"
+        "%3Cpath d='M220 240 Q235 195 250 240'/%3E"
+        "%3Cpath d='M15 400 L270 400'/%3E"
+        "%3Cpath d='M40 180 Q70 100 100 180'/%3E"
+        "%3Cpath d='M120 160 Q155 70 190 160'/%3E"
+        "%3Cpath d='M200 200 Q235 120 270 200'/%3E"
+        "%3C/g%3E%3C/svg%3E\")"
+    )
+    corner_deco_right = (
+        "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='280' height='380' viewBox='0 0 280 380'%3E"
         "%3Cg fill='none' stroke='%23126D3C' stroke-opacity='0.10' stroke-width='1.4'%3E"
-        "%3Cpath d='M20 180 L20 100 Q40 60 60 100 L60 180'/%3E"
-        "%3Cpath d='M40 100 Q50 70 60 100'/%3E"
-        "%3Cpath d='M80 180 L80 90 Q100 50 120 90 L120 180'/%3E"
-        "%3Cpath d='M100 90 Q110 55 120 90'/%3E"
-        "%3Cpath d='M140 180 L140 110 Q155 80 170 110 L170 180'/%3E"
-        "%3Cpath d='M190 180 L190 95 Q210 55 230 95 L230 180'/%3E"
-        "%3Cpath d='M210 95 Q220 60 230 95'/%3E"
-        "%3Cpath d='M10 180 L250 180'/%3E"
+        "%3Cpath d='M250 360 L250 200 Q225 130 190 200 L190 360'/%3E"
+        "%3Cpath d='M225 200 Q208 155 190 200'/%3E"
+        "%3Cpath d='M170 360 L170 180 Q140 100 105 180 L105 360'/%3E"
+        "%3Cpath d='M140 180 Q122 130 105 180'/%3E"
+        "%3Cpath d='M85 360 L85 220 Q60 155 30 220 L30 360'/%3E"
+        "%3Cpath d='M60 220 Q45 180 30 220'/%3E"
+        "%3Cpath d='M20 360 L260 360'/%3E"
         "%3C/g%3E%3C/svg%3E\")"
     )
-    bg_image = f"{pattern_svg}, {corner_deco}" if is_light else "none"
-    bg_pos = "center, left bottom" if is_light else "center"
-    bg_size = "120px 120px, 280px 200px" if is_light else "auto"
+    if is_light:
+        bg_image = f"{pattern_svg}, {corner_deco_left}, {corner_deco_right}"
+        bg_pos = "center, left bottom, right bottom"
+        bg_size = "80px 80px, 320px 420px, 280px 380px"
+        bg_repeat = "repeat, no-repeat, no-repeat"
+    else:
+        bg_image = "none"
+        bg_pos = "center"
+        bg_size = "auto"
+        bg_repeat = "no-repeat"
     st.markdown(
         f"""
 <style>
@@ -1065,25 +1084,29 @@ html, body, [class*="css"]  {{
   font-family: 'Tajawal', sans-serif !important;
 }}
 
-/* خلفية الصفحة بهوية الوطنية */
+/* خلفية الصفحة بهوية الوطنية — زخرفة مثل الصورة الأولى */
 .stApp {{
   background-color: {t["bg"]} !important;
   background-image: {bg_image} !important;
   background-position: {bg_pos} !important;
   background-size: {bg_size} !important;
-  background-repeat: repeat, no-repeat !important;
-  background-attachment: fixed, fixed !important;
+  background-repeat: {bg_repeat} !important;
+  background-attachment: fixed, fixed, fixed !important;
 }}
 
-/* الحاوية الرئيسية — بطاقة بيضاء نظيفة مثل Export History */
+/* الحاوية الرئيسية — في النص + استريتش أوسع */
 .block-container {{
   background: {t["surface"]} !important;
   border: 1px solid {t["border"]} !important;
-  border-radius: 16px !important;
-  box-shadow: 0 4px 24px rgba(18, 109, 60, 0.06) !important;
-  padding-top: 1.5rem !important;
-  padding-bottom: 2rem !important;
-  max-width: 1200px !important;
+  border-radius: 18px !important;
+  box-shadow: 0 6px 28px rgba(18, 109, 60, 0.07) !important;
+  padding-top: 1.75rem !important;
+  padding-bottom: 2.25rem !important;
+  padding-left: 2rem !important;
+  padding-right: 2rem !important;
+  max-width: min(1480px, 94vw) !important;
+  margin-left: auto !important;
+  margin-right: auto !important;
 }}
 
 /* الشريط الجانبي */

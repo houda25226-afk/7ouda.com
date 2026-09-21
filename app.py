@@ -1073,11 +1073,22 @@ html, body, [class*="css"]  {{
   padding-bottom: 2.25rem !important;
   padding-left: 2.25rem !important;
   padding-right: 2.25rem !important;
-  max-width: min(1320px, 88vw) !important;
+  max-width: min(1200px, 86vw) !important;
   margin-left: auto !important;
   margin-right: auto !important;
-  margin-top: 3rem !important;
-  margin-bottom: 3rem !important;
+  margin-top: 4.5rem !important;
+  margin-bottom: 4rem !important;
+}}
+
+/* فصل عن الهيدر العلوي */
+header[data-testid="stHeader"] {{
+  background: transparent !important;
+}}
+div[data-testid="stDecoration"] {{
+  display: none !important;
+}}
+.stApp > header {{
+  background-color: transparent !important;
 }}
 
 /* الشريط الجانبي */

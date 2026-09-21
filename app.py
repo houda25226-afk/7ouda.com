@@ -922,8 +922,8 @@ def page_promises():
 
 
 st.set_page_config(
-    page_title="لوحة تحليل المكالمات",
-    page_icon="🎙️",
+    page_title="الوطنية — لوحة تحليل المكالمات",
+    page_icon="🟢",
     layout="wide",
     initial_sidebar_state="expanded",
 )
@@ -941,59 +941,60 @@ st.set_page_config(
 # إعدادات المظهر (Light / Dark Mode)
 # ==========================================================
 THEMES = {
+    # هوية الوطنية للتأمين (Wataniya) — ألوان مستخرجة من واجهة Export History
     "dark": {
-        "bg": "#0E1420",
-        "bg_glow": "#10192C",
-        "surface": "#151F30",
-        "surface_2": "#1B2A42",
-        "surface_3": "#111B2C",
-        "surface_hover": "#1D304C",
-        "sidebar_bg": "#0B111C",
-        "accent_surface": "#122B2A",
-        "accent": "#4F8C8D",
-        "accent_strong": "#3D7375",
+        "bg": "#0A1F14",
+        "bg_glow": "#0D2818",
+        "surface": "#122A1C",
+        "surface_2": "#183524",
+        "surface_3": "#0E2318",
+        "surface_hover": "#1C3F2A",
+        "sidebar_bg": "#081A10",
+        "accent_surface": "#143528",
+        "accent": "#1A8A4A",
+        "accent_strong": "#126D3C",
         "on_accent": "#FFFFFF",
-        "success": "#4F927D",
-        "danger": "#B96578",
-        "warn": "#B39A5A",
-        "text": "#F3F6FA",
-        "text_dim": "#B9C6D6",
-        "text_muted": "#9FB0C6",
-        "placeholder": "#8FA3B8",
-        "border": "rgba(15, 157, 138, 0.20)",
-        "border_soft": "rgba(148, 163, 184, 0.18)",
-        "input_bg": "#1B2A42",
-        "chart_marker": "#0E1420",
+        "success": "#1A8A4A",
+        "danger": "#C45C5C",
+        "warn": "#F19F29",
+        "text": "#F3F9F5",
+        "text_dim": "#B8D4C4",
+        "text_muted": "#8FB8A0",
+        "placeholder": "#7AA890",
+        "border": "rgba(26, 138, 74, 0.28)",
+        "border_soft": "rgba(148, 180, 160, 0.18)",
+        "input_bg": "#183524",
+        "chart_marker": "#0A1F14",
         "chart_text": "#FFFFFF",
-        "danger_soft": "#3B1420", "danger_text": "#FECDD3",
+        "danger_soft": "#3B1A1A", "danger_text": "#FECDD3",
         "warn_soft": "#3A2A08", "warn_text": "#FDE68A",
     },
     "light": {
-        "bg": "#F4F7FB",
-        "bg_glow": "#EAF1F8",
+        "bg": "#F7F9EF",
+        "bg_glow": "#EEF3E4",
         "surface": "#FFFFFF",
-        "surface_2": "#EEF4F8",
-        "surface_3": "#F7FAFC",
-        "surface_hover": "#E2ECF3",
+        "surface_2": "#F0F4E8",
+        "surface_3": "#F9FBF4",
+        "surface_hover": "#E6EDD8",
         "sidebar_bg": "#FFFFFF",
-        "accent_surface": "#E6F7F4",
-        "accent": "#397B7D",
-        "accent_strong": "#2F6668",
+        "accent_surface": "#E8F5EC",
+        "accent": "#126D3C",
+        "accent_strong": "#0E5A32",
         "on_accent": "#FFFFFF",
-        "success": "#397D69",
-        "danger": "#A65367",
-        "warn": "#977D42",
-        "text": "#172033",
-        "text_dim": "#526174",
-        "text_muted": "#6B7A8C",
-        "placeholder": "#718096",
-        "border": "rgba(8, 127, 112, 0.22)",
-        "border_soft": "rgba(71, 85, 105, 0.18)",
+        "success": "#126D3C",
+        "danger": "#C45C5C",
+        "warn": "#F19F29",
+        "text": "#1A2E22",
+        "text_dim": "#4A6354",
+        "text_muted": "#6B8574",
+        "placeholder": "#7A9484",
+        "border": "rgba(18, 109, 60, 0.22)",
+        "border_soft": "rgba(71, 100, 80, 0.14)",
         "input_bg": "#FFFFFF",
-        "chart_marker": "#CBD5E1",
-        "chart_text": "#172033",
-        "danger_soft": "#FDE2E7", "danger_text": "#7F1D35",
-        "warn_soft": "#FEF3C7", "warn_text": "#78350F",
+        "chart_marker": "#D4DEC8",
+        "chart_text": "#1A2E22",
+        "danger_soft": "#FDE8E8", "danger_text": "#8B2E2E",
+        "warn_soft": "#FEF3C7", "warn_text": "#92400E",
     },
 }
 
@@ -1022,8 +1023,190 @@ st.session_state["theme_mode"] = THEME_NAME
 THEME = THEMES.get(THEME_NAME, THEMES["dark"])
 
 
+def _inject_wataniya_identity_css():
+    """حقن هوية الوطنية: خلفية كريمية + زخارف هندسية خضراء + أزرار وأسطح."""
+    t = THEME
+    is_light = THEME_NAME == "light"
+    # خلفية زخرفية مستوحاة من واجهة الوطنية (مثلثات هندسية خفيفة)
+    pattern_svg = (
+        "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120' viewBox='0 0 120 120'%3E"
+        "%3Cg fill='none' stroke='%23126D3C' stroke-opacity='0.07' stroke-width='1'%3E"
+        "%3Cpath d='M0 60 L30 30 L60 60 L30 90 Z'/%3E"
+        "%3Cpath d='M60 60 L90 30 L120 60 L90 90 Z'/%3E"
+        "%3Cpath d='M30 0 L60 30 L30 60 L0 30 Z'/%3E"
+        "%3Cpath d='M90 0 L120 30 L90 60 L60 30 Z'/%3E"
+        "%3Cpath d='M30 60 L60 90 L30 120 L0 90 Z'/%3E"
+        "%3Cpath d='M90 60 L120 90 L90 120 L60 90 Z'/%3E"
+        "%3C/g%3E%3C/svg%3E\")"
+    )
+    # زخارف جانبية (قباب/مباني خفيفة)
+    corner_deco = (
+        "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='280' height='200' viewBox='0 0 280 200'%3E"
+        "%3Cg fill='none' stroke='%23126D3C' stroke-opacity='0.10' stroke-width='1.4'%3E"
+        "%3Cpath d='M20 180 L20 100 Q40 60 60 100 L60 180'/%3E"
+        "%3Cpath d='M40 100 Q50 70 60 100'/%3E"
+        "%3Cpath d='M80 180 L80 90 Q100 50 120 90 L120 180'/%3E"
+        "%3Cpath d='M100 90 Q110 55 120 90'/%3E"
+        "%3Cpath d='M140 180 L140 110 Q155 80 170 110 L170 180'/%3E"
+        "%3Cpath d='M190 180 L190 95 Q210 55 230 95 L230 180'/%3E"
+        "%3Cpath d='M210 95 Q220 60 230 95'/%3E"
+        "%3Cpath d='M10 180 L250 180'/%3E"
+        "%3C/g%3E%3C/svg%3E\")"
+    )
+    bg_image = f"{pattern_svg}, {corner_deco}" if is_light else "none"
+    bg_pos = "center, left bottom" if is_light else "center"
+    bg_size = "120px 120px, 280px 200px" if is_light else "auto"
+    st.markdown(
+        f"""
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Tajawal:wght@400;500;700;800&display=swap');
+
+html, body, [class*="css"]  {{
+  font-family: 'Tajawal', sans-serif !important;
+}}
+
+/* خلفية الصفحة بهوية الوطنية */
+.stApp {{
+  background-color: {t["bg"]} !important;
+  background-image: {bg_image} !important;
+  background-position: {bg_pos} !important;
+  background-size: {bg_size} !important;
+  background-repeat: repeat, no-repeat !important;
+  background-attachment: fixed, fixed !important;
+}}
+
+/* الحاوية الرئيسية — بطاقة بيضاء نظيفة مثل Export History */
+.block-container {{
+  background: {t["surface"]} !important;
+  border: 1px solid {t["border"]} !important;
+  border-radius: 16px !important;
+  box-shadow: 0 4px 24px rgba(18, 109, 60, 0.06) !important;
+  padding-top: 1.5rem !important;
+  padding-bottom: 2rem !important;
+  max-width: 1200px !important;
+}}
+
+/* الشريط الجانبي */
+section[data-testid="stSidebar"] {{
+  background: {t["sidebar_bg"]} !important;
+  border-left: 1px solid {t["border_soft"]} !important;
+}}
+section[data-testid="stSidebar"] .block-container {{
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+}}
+
+/* أزرار Primary — أخضر الوطنية */
+div.stButton > button[kind="primary"],
+div.stButton > button[data-testid="baseButton-primary"],
+button[kind="primary"] {{
+  background: {t["accent_strong"]} !important;
+  background-image: linear-gradient(180deg, {t["accent"]} 0%, {t["accent_strong"]} 100%) !important;
+  color: {t["on_accent"]} !important;
+  border: none !important;
+  border-radius: 999px !important;
+  font-weight: 700 !important;
+  box-shadow: 0 2px 8px rgba(18, 109, 60, 0.25) !important;
+}}
+div.stButton > button[kind="primary"]:hover,
+button[kind="primary"]:hover {{
+  filter: brightness(1.06);
+  box-shadow: 0 4px 14px rgba(18, 109, 60, 0.35) !important;
+}}
+
+/* أزرار Secondary */
+div.stButton > button[kind="secondary"],
+button[kind="secondary"] {{
+  background: {t["surface"]} !important;
+  color: {t["accent_strong"]} !important;
+  border: 1.5px solid {t["accent"]} !important;
+  border-radius: 999px !important;
+  font-weight: 600 !important;
+}}
+div.stButton > button[kind="secondary"]:hover {{
+  background: {t["accent_surface"]} !important;
+}}
+
+/* حقول الإدخال */
+div[data-baseweb="select"] > div,
+div[data-baseweb="input"] > div,
+.stTextInput input, .stNumberInput input, .stDateInput input {{
+  border-radius: 10px !important;
+  border-color: {t["border"]} !important;
+  background: {t["input_bg"]} !important;
+}}
+
+/* تبويبات / شرائح */
+.stTabs [data-baseweb="tab-list"] {{
+  gap: 0.25rem;
+  background: {t["surface_2"]};
+  border-radius: 999px;
+  padding: 4px;
+}}
+.stTabs [data-baseweb="tab"] {{
+  border-radius: 999px !important;
+  color: {t["text_dim"]} !important;
+}}
+.stTabs [aria-selected="true"] {{
+  background: {t["accent_strong"]} !important;
+  color: {t["on_accent"]} !important;
+}}
+
+/* بطاقات الحاويات */
+div[data-testid="stVerticalBlockBorderWrapper"] {{
+  border-radius: 14px !important;
+  border-color: {t["border"]} !important;
+  background: {t["surface"]} !important;
+}}
+
+/* Metrics */
+div[data-testid="stMetric"] {{
+  background: {t["surface_2"]};
+  border: 1px solid {t["border_soft"]};
+  border-radius: 14px;
+  padding: 0.75rem 1rem;
+}}
+div[data-testid="stMetricValue"] {{
+  color: {t["accent_strong"]} !important;
+}}
+
+/* جداول */
+div[data-testid="stDataFrame"] {{
+  border-radius: 12px !important;
+  overflow: hidden;
+  border: 1px solid {t["border_soft"]};
+}}
+
+/* عناوين */
+h1, h2, h3 {{
+  color: {t["text"]} !important;
+  font-weight: 800 !important;
+}}
+p, span, label {{
+  color: {t["text"]};
+}}
+
+/* شريط التحميل / Progress */
+.stProgress > div > div > div > div {{
+  background-color: {t["accent_strong"]} !important;
+}}
+
+/* Download buttons */
+div.stDownloadButton > button {{
+  border-radius: 999px !important;
+  font-weight: 700 !important;
+}}
+</style>
+""",
+        unsafe_allow_html=True,
+    )
+
+
+_inject_wataniya_identity_css()
+
 # Streamlit native theme is the source of truth for the app UI.
-# Plotly receives the matching palette below; no custom CSS is injected.
+# Plotly receives the matching palette below; custom CSS applies Wataniya identity.
 
 def page_header(eyebrow: str, title: str, subtitle: str, centered: bool = False):
     if eyebrow:
@@ -1238,9 +1421,9 @@ CLASSIFICATION_SCALE = [CLASSIFICATION_SECONDARY, CLASSIFICATION_PRIMARY, CLASSI
 # لوحة موحّدة لتويبات: الوعود + الإهمال + الجدولة + أخطاء الحالات
 # لونان أساسيان (تيل) + درجة ثالثة أقرب (أفتح) فقط — بدون أحمر/أصفر منفصل
 # ==========================================================
-OPS_DARK = "#2F6F73"      # غامق
-OPS_MID = "#5A9093"       # متوسط
-OPS_LIGHT = "#8FB4B7"     # فاتح
+OPS_DARK = "#126D3C"      # أخضر الوطنية الغامق
+OPS_MID = "#3A9B5C"       # متوسط
+OPS_LIGHT = "#8BC49A"     # فاتح
 OPS_SCALE = [OPS_DARK, OPS_MID, OPS_LIGHT]
 OPS_POSITIVE = OPS_DARK   # قائمة / تم التغطية / منتظمة
 OPS_NEGATIVE = OPS_MID    # مكسورة / لم يتم / متعثرة
@@ -1250,8 +1433,8 @@ OPS_NEUTRAL = OPS_LIGHT   # محايد / بدون سداد / أخرى
 ACTIVITY_PRIMARY = OPS_DARK
 ACTIVITY_SECONDARY = OPS_MID
 ACTIVITY_MUTED = OPS_LIGHT
-ACTIVITY_AGENT_PALETTE = [OPS_DARK, "#3D7E82", OPS_MID, "#7EABAE", OPS_LIGHT, "#B8C5C8", "#4A888C", "#8FB4B7", "#C5D0D3"]
-ACTIVITY_STATE_PALETTE = [OPS_DARK, OPS_MID, OPS_LIGHT, "#C5D0D3"]
+ACTIVITY_AGENT_PALETTE = [OPS_DARK, "#1A8A4A", OPS_MID, "#5BB37A", OPS_LIGHT, "#B8D9C4", "#0E5A32", "#8BC49A", "#D4EBD9"]
+ACTIVITY_STATE_PALETTE = [OPS_DARK, OPS_MID, OPS_LIGHT, "#D4EBD9"]
 ACTIVITY_OUTCOME_COLORS = {"ناجحة": OPS_DARK, "غير ناجحة": OPS_LIGHT}
 ACTIVITY_TIME_CHART_HEIGHT = 460
 ACTIVITY_PAIR_CHART_HEIGHT = 420
@@ -8293,7 +8476,7 @@ with st.sidebar:
     with c2:
         st.image(BytesIO(base64.b64decode(_AHLY_LOGO_B64)), width=110)
     st.markdown(
-        "<h2 style='text-align:center;margin:0.25rem 0 0.1rem'>🎙️ 𝔖𝔢𝔱𝔱𝔦𝔫𝔤𝔰</h2>"
+        "<h2 style='text-align:center;margin:0.25rem 0 0.1rem;color:#126D3C;font-weight:800'>الوطنية</h2>"
         "<p style='text-align:center;opacity:0.75;margin:0 0 0.5rem;font-size:0.9rem'>اختر القسم من القائمة</p>",
         unsafe_allow_html=True,
     )

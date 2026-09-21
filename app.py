@@ -1034,7 +1034,7 @@ def _inject_wataniya_identity_css():
     if is_light:
         bg_image = skyline
         bg_pos = "center bottom"
-        bg_size = "100% auto"
+        bg_size = "72% auto"
         bg_repeat = "no-repeat"
     else:
         bg_image = "none"

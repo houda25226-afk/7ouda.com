@@ -1050,22 +1050,22 @@ def _inject_wataniya_identity_css():
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Tajawal:wght@400;500;700;800&display=swap');
 
-html, body, [class*="css"]  {
+html, body, [class*="css"]  {{
   font-family: 'Tajawal', sans-serif !important;
-}
+}}
 
 /* خلفية الصفحة — زخرفة Export History الأصلية */
-.stApp {
+.stApp {{
   background-color: {t["bg"]} !important;
   background-image: {bg_image} !important;
   background-position: {bg_pos} !important;
   background-size: {bg_size} !important;
   background-repeat: {bg_repeat} !important;
   background-attachment: fixed, fixed !important;
-}
+}}
 
 /* الحاوية الرئيسية — نازلة في النص + استريتش */
-.block-container {
+.block-container {{
   background: {t["surface"]} !important;
   border: 1px solid {t["border"]} !important;
   border-radius: 18px !important;
@@ -1079,7 +1079,7 @@ html, body, [class*="css"]  {
   margin-right: auto !important;
   margin-top: 3rem !important;
   margin-bottom: 3rem !important;
-}
+}}
 
 /* الشريط الجانبي */
 section[data-testid="stSidebar"] {{

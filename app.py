@@ -1128,17 +1128,27 @@ div[data-testid="stVerticalBlock"] > div:first-child h2,
   margin-bottom: 0.5rem;
 }}
 
+.wq-page-header {{
+  background: linear-gradient(135deg, {t["accent"]}12 0%, {t["accent"]}06 50%, transparent 100%);
+  border: 1px solid {t["accent"]}22;
+  border-right: 4px solid {t["accent_strong"]};
+  border-radius: 14px;
+  padding: 1rem 1.25rem 1.1rem 1.25rem;
+  margin-bottom: 1.1rem;
+}}
+
 .wq-page-title {{
   color: {t["accent_strong"]} !important;
   font-weight: 800 !important;
-  margin: 0.15rem 0 0.35rem 0 !important;
+  font-size: 1.85rem !important;
+  margin: 0.35rem 0 0.3rem 0 !important;
 }}
 
 .wq-page-sub {{
   color: #5a6b5d !important;
   font-size: 0.92rem !important;
   opacity: 0.9;
-  margin-bottom: 0.75rem !important;
+  margin: 0 !important;
 }}
 
 /* الشريط الجانبي */
@@ -1264,22 +1274,21 @@ _inject_wataniya_identity_css()
 # Plotly receives the matching palette below; custom CSS applies Wataniya identity.
 
 def page_header(eyebrow: str, title: str, subtitle: str, centered: bool = False):
-    """هيدر مميز بهوية الوطنية."""
+    """هيدر مميز بهوية الوطنية + خلفية خفيفة."""
     align = "center" if centered else "right"
     badge = ""
     if eyebrow:
-        badge = f"<div class='wq-page-badge' style='text-align:{align}'>{eyebrow.upper()}</div>"
+        badge = f"<div class='wq-page-badge'>{eyebrow.upper()}</div>"
     st.markdown(
         f"""
-<div style="text-align:{align}; margin-bottom: 0.35rem;">
+<div class="wq-page-header" style="text-align:{align};">
   {badge}
-  <h1 class="wq-page-title" style="text-align:{align}; font-size:1.85rem; margin:0.35rem 0 0.25rem 0;">{title}</h1>
-  <p class="wq-page-sub" style="text-align:{align}; margin:0;">{subtitle}</p>
+  <h1 class="wq-page-title" style="text-align:{align};">{title}</h1>
+  <p class="wq-page-sub" style="text-align:{align};">{subtitle}</p>
 </div>
 """,
         unsafe_allow_html=True,
     )
-    st.divider()
 
 
 def find_column(df: pd.DataFrame, candidates: list):

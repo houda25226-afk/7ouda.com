@@ -1167,36 +1167,47 @@ section[data-testid="stSidebar"] h3 {{
 /* ===== هيدر الصفحة ===== */
 .wq-page-badge {{
   display: inline-block;
-  background: linear-gradient(135deg, {t["accent"]}18, {t["accent"]}08);
-  color: {t["accent_strong"]} !important;
-  border: 1px solid {t["accent"]}40;
+  background: linear-gradient(135deg, #1B5E45, #0D3D2E);
+  color: #F5E6C8 !important;
+  border: none;
   border-radius: 999px;
-  padding: 0.25rem 0.85rem;
-  font-size: 0.72rem;
+  padding: 0.28rem 0.95rem;
+  font-size: 0.70rem;
   font-weight: 700;
-  letter-spacing: 0.06em;
+  letter-spacing: 0.07em;
   text-transform: uppercase;
-  margin-bottom: 0.5rem;
+  margin-bottom: 0.55rem;
+  box-shadow: 0 2px 8px rgba(13, 61, 46, 0.20);
 }}
 .wq-page-header {{
-  background: linear-gradient(135deg, {t["accent"]}10 0%, rgba(201,168,76,0.08) 50%, transparent 100%);
+  background: linear-gradient(145deg, #FFFFFF 0%, #F7F4EC 55%, rgba(230,240,234,0.55) 100%);
   border: 1px solid {t["border"]};
-  border-right: 4px solid {t["accent_strong"]};
-  border-radius: 14px;
-  padding: 1rem 1.25rem 1.1rem 1.25rem;
-  margin-bottom: 1.1rem;
+  border-radius: 18px;
+  padding: 1.15rem 1.4rem 1.25rem 1.4rem;
+  margin-bottom: 1.25rem;
+  box-shadow: 0 6px 22px rgba(13, 61, 46, 0.07);
+  position: relative;
+}}
+.wq-page-header::after {{
+  content: "";
+  position: absolute;
+  top: 0; left: 0; right: 0;
+  height: 3px;
+  border-radius: 18px 18px 0 0;
+  background: linear-gradient(90deg, #0D3D2E, #1B5E45 40%, #C9A84C 100%);
 }}
 .wq-page-title {{
   color: {t["accent_strong"]} !important;
   font-weight: 800 !important;
-  font-size: 1.85rem !important;
-  margin: 0.35rem 0 0.3rem 0 !important;
+  font-size: 1.75rem !important;
+  margin: 0.3rem 0 0.35rem 0 !important;
 }}
 .wq-page-sub {{
   color: {t["text_muted"]} !important;
-  font-size: 0.92rem !important;
+  font-size: 0.90rem !important;
   opacity: 0.95;
   margin: 0 !important;
+  line-height: 1.5;
 }}
 
 .block-container hr {{
@@ -1300,16 +1311,22 @@ div.stDownloadButton > button {{
   font-weight: 700 !important;
 }}
 
-/* ===== تنقل الشريط الجانبي — مثل الصورة المرجعية ===== */
+/* ===== تنقل الشريط الجانبي — مطابق للـ mockup المرجعي ===== */
+section[data-testid="stSidebar"] {{
+  border-right: 1px solid {t["border_soft"]} !important;
+  border-left: none !important;
+}}
 section[data-testid="stSidebar"] div.stButton > button {{
-  border-radius: 12px !important;
+  border-radius: 14px !important;
   font-weight: 700 !important;
-  font-size: 0.92rem !important;
-  padding: 0.65rem 0.9rem !important;
-  margin-bottom: 0.35rem !important;
+  font-size: 0.90rem !important;
+  padding: 0.72rem 1rem !important;
+  margin-bottom: 0.28rem !important;
   justify-content: flex-start !important;
   text-align: right !important;
-  transition: all 0.18s ease !important;
+  transition: all 0.2s ease !important;
+  min-height: 46px !important;
+  letter-spacing: 0.01em !important;
 }}
 section[data-testid="stSidebar"] div.stButton > button[kind="secondary"] {{
   background: transparent !important;
@@ -1323,13 +1340,37 @@ section[data-testid="stSidebar"] div.stButton > button[kind="secondary"]:hover {
   border-color: {t["border_soft"]} !important;
 }}
 section[data-testid="stSidebar"] div.stButton > button[kind="primary"] {{
-  background: linear-gradient(135deg, {t["accent"]} 0%, {t["accent_strong"]} 100%) !important;
-  color: {t["on_accent"]} !important;
+  background: linear-gradient(135deg, #1B5E45 0%, #0D3D2E 100%) !important;
+  color: #F5E6C8 !important;
   border: none !important;
-  box-shadow: 0 3px 12px rgba(13, 61, 46, 0.22) !important;
+  box-shadow: 0 4px 14px rgba(13, 61, 46, 0.28) !important;
 }}
 section[data-testid="stSidebar"] [data-testid="stVerticalBlock"] {{
-  gap: 0.15rem !important;
+  gap: 0.12rem !important;
+}}
+
+/* أزرار اختيار الشركة — شكل pill نظيف زي الـ mockup */
+div[data-testid="stHorizontalBlock"] div.stButton > button {{
+  border-radius: 999px !important;
+  font-weight: 700 !important;
+  min-height: 48px !important;
+  transition: all 0.18s ease !important;
+}}
+div[data-testid="stHorizontalBlock"] div.stButton > button[kind="secondary"] {{
+  background: #FFFFFF !important;
+  color: {t["accent_strong"]} !important;
+  border: 1.5px solid {t["border"]} !important;
+  box-shadow: 0 1px 4px rgba(13, 61, 46, 0.06) !important;
+}}
+div[data-testid="stHorizontalBlock"] div.stButton > button[kind="secondary"]:hover {{
+  background: {t["accent_surface"]} !important;
+  border-color: {t["accent"]} !important;
+}}
+div[data-testid="stHorizontalBlock"] div.stButton > button[kind="primary"] {{
+  background: linear-gradient(135deg, #1B5E45 0%, #0D3D2E 100%) !important;
+  color: #F5E6C8 !important;
+  border: none !important;
+  box-shadow: 0 3px 12px rgba(13, 61, 46, 0.22) !important;
 }}
 </style>
 """,
@@ -1337,7 +1378,7 @@ section[data-testid="stSidebar"] [data-testid="stVerticalBlock"] {{
         unsafe_allow_html=True,
     )
 
-    # شريط علوي بهوية إيجادة (زي الصورة المرجعية)
+    # شريط علوي بهوية إيجادة — مطابق للـ mockup
     st.markdown(
         """
 <div class="ejada-topbar">
@@ -3652,12 +3693,28 @@ def init_activity_state():
 
 
 def render_company_selector():
-    st.subheader("🏢 اختر شركة التصنيف")
+    st.markdown(
+        """
+<div style="
+  display:flex;align-items:center;gap:0.5rem;
+  margin:0.25rem 0 0.85rem 0;
+">
+  <span style="
+    width:28px;height:28px;border-radius:8px;
+    background:linear-gradient(135deg,#1B5E45,#0D3D2E);
+    display:inline-flex;align-items:center;justify-content:center;
+    color:#F5E6C8;font-size:0.85rem;
+  ">🏢</span>
+  <span style="font-weight:800;font-size:1.1rem;color:#0D3D2E;">اختر شركة التصنيف</span>
+</div>
+""",
+        unsafe_allow_html=True,
+    )
     c1, c2 = st.columns(2)
     for col, company_name in zip((c1, c2), COMPANIES):
         with col:
             selected = st.session_state.get("selected_company") == company_name
-            button_label = f"✓ {company_name}" if selected else company_name
+            button_label = f"✓  {company_name}" if selected else company_name
             if st.button(
                 button_label,
                 key=f"company_{company_name}",
@@ -4621,7 +4678,11 @@ def _show_aggregate_results_from_cache(period_key, period_title):
         _render_aggregate_results(stored, period_title, period_key)
 def page_classification():
     init_activity_state()
-    page_header("CALL QUALITY CLASSIFIER", "🎯 تصنيف المكالمات", "اختر الشركة → اختر الفترة → حدّد الميعاد والاستراحة → ارفع الملف → ابدأ التصنيف")
+    page_header(
+        "CALL QUALITY CLASSIFIER",
+        "🎯 تصنيف المكالمات",
+        "تصنيف المكالمة إيجادة — اختر الشركة والفترة ثم ارفع الملف لبدء التصنيف",
+    )
     render_company_selector()
     render_period_selector()
 
@@ -8630,37 +8691,40 @@ PAGES = {
 
 DEFAULT_PAGE = next(iter(PAGES))
 with st.sidebar:
-    # شريط تنقل بهوية إيجادة — مطابق لتصميم الصورة المرجعية (بدون لوجو كبير)
+    # شريط تنقل بهوية إيجادة — مطابق للـ mockup (لوجو + قائمة نظيفة)
     st.markdown(
         """
 <div style="
   text-align:center;
-  padding: 0.6rem 0.4rem 0.85rem;
-  border-bottom: 1px solid rgba(13,61,46,0.12);
-  margin-bottom: 0.75rem;
+  padding: 0.85rem 0.5rem 1rem;
+  margin: -0.5rem -0.5rem 0.9rem -0.5rem;
+  background: linear-gradient(180deg, #0D3D2E 0%, #134D3A 100%);
+  border-bottom: 2px solid rgba(201,168,76,0.35);
 ">
   <div style="
     display:inline-flex;
     align-items:center;
-    gap:0.4rem;
-    color:#0D3D2E;
+    gap:0.45rem;
+    color:#F5E6C8;
     font-weight:800;
-    font-size:1.05rem;
+    font-size:1.08rem;
     letter-spacing:0.02em;
   ">
     <span style="
-      width:28px;height:28px;border-radius:8px;
-      background:linear-gradient(135deg,#1B5E45,#0D3D2E);
+      width:32px;height:32px;border-radius:10px;
+      background:linear-gradient(135deg,#C9A84C,#E8D5A3);
       display:inline-flex;align-items:center;justify-content:center;
-      color:#F5E6C8;font-size:0.85rem;font-weight:800;
+      color:#0D3D2E;font-size:0.95rem;font-weight:900;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.2);
     ">إ</span>
     <span>إيجادة</span>
   </div>
   <div style="
-    color:#6B8578;
-    font-size:0.72rem;
+    color:rgba(245,230,200,0.75);
+    font-size:0.70rem;
     font-weight:600;
-    margin-top:0.25rem;
+    margin-top:0.3rem;
+    letter-spacing:0.03em;
   ">EJADA Strategic Insights</div>
 </div>
 """,
@@ -8682,14 +8746,14 @@ with st.sidebar:
     st.markdown(
         """
 <div style="
-  margin-top:1.5rem;
-  padding-top:0.75rem;
+  margin-top:1.6rem;
+  padding-top:0.85rem;
   border-top:1px solid rgba(13,61,46,0.10);
   text-align:center;
   color:#8A9E94;
-  font-size:0.68rem;
+  font-size:0.66rem;
   font-weight:500;
-  line-height:1.4;
+  line-height:1.45;
 ">
   2024 — تم التصميم بواسطة<br/>Ejada Strategic Consulting
 </div>

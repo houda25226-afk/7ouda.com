@@ -954,6 +954,7 @@ THEMES = {
         "accent_surface": "#143528",
         "accent": "#1A8A4A",
         "accent_strong": "#126D3C",
+        "accent_gold": "#C9A84C",
         "on_accent": "#FFFFFF",
         "success": "#1A8A4A",
         "danger": "#C45C5C",
@@ -971,29 +972,31 @@ THEMES = {
         "warn_soft": "#3A2A08", "warn_text": "#FDE68A",
     },
     "light": {
-        "bg": "#F7F9EF",
-        "bg_glow": "#EEF3E4",
+        # هوية إيجادة Strategic Insights — من واجهة رؤى الأداء
+        "bg": "#F4F1E8",
+        "bg_glow": "#EDE9DE",
         "surface": "#FFFFFF",
-        "surface_2": "#F0F4E8",
-        "surface_3": "#F9FBF4",
-        "surface_hover": "#E6EDD8",
+        "surface_2": "#F7F4EC",
+        "surface_3": "#FBFAF6",
+        "surface_hover": "#E8F0E8",
         "sidebar_bg": "#FFFFFF",
-        "accent_surface": "#E8F5EC",
-        "accent": "#126D3C",
-        "accent_strong": "#0E5A32",
+        "accent_surface": "#E6F0EA",
+        "accent": "#1B5E45",
+        "accent_strong": "#0D3D2E",
+        "accent_gold": "#C9A84C",
         "on_accent": "#FFFFFF",
-        "success": "#126D3C",
+        "success": "#1B5E45",
         "danger": "#C45C5C",
-        "warn": "#F19F29",
-        "text": "#1A2E22",
-        "text_dim": "#4A6354",
-        "text_muted": "#6B8574",
-        "placeholder": "#7A9484",
-        "border": "rgba(18, 109, 60, 0.22)",
-        "border_soft": "rgba(71, 100, 80, 0.14)",
+        "warn": "#D4A017",
+        "text": "#0D3D2E",
+        "text_dim": "#3D5C4E",
+        "text_muted": "#6B8578",
+        "placeholder": "#8A9E94",
+        "border": "rgba(13, 61, 46, 0.18)",
+        "border_soft": "rgba(13, 61, 46, 0.10)",
         "input_bg": "#FFFFFF",
-        "chart_marker": "#D4DEC8",
-        "chart_text": "#1A2E22",
+        "chart_marker": "#D5DFD4",
+        "chart_text": "#0D3D2E",
         "danger_soft": "#FDE8E8", "danger_text": "#8B2E2E",
         "warn_soft": "#FEF3C7", "warn_text": "#92400E",
     },
@@ -1025,7 +1028,7 @@ THEME = THEMES.get(THEME_NAME, THEMES["dark"])
 
 
 def _inject_wataniya_identity_css():
-    """حقن هوية الوطنية: نفس سكايلاين الصورة بالظبط."""
+    """حقن هوية إيجادة Strategic Insights: سكايلاين + ألوان النظام."""
     t = THEME
     is_light = THEME_NAME == "light"
 
@@ -1052,7 +1055,7 @@ html, body, [class*="css"]  {{
   font-family: 'Tajawal', sans-serif !important;
 }}
 
-/* خلفية الصفحة — نفس زخرفة الوطنية بالظبط */
+/* ===== خلفية إيجادة: كريمي + سكايلاين ===== */
 .stApp {{
   background-color: {t["bg"]} !important;
   background-image: {bg_image} !important;
@@ -1060,61 +1063,60 @@ html, body, [class*="css"]  {{
   background-size: {bg_size} !important;
   background-repeat: {bg_repeat} !important;
   background-attachment: fixed !important;
-  image-rendering: -webkit-optimize-contrast !important;
   image-rendering: high-quality !important;
 }}
 
-/* الحاوية الرئيسية — نازلة في النص + استريتش */
-.block-container {{
-  background: {t["surface"]} !important;
-  border: 1px solid {t["border"]} !important;
-  border-radius: 18px !important;
-  box-shadow: 0 8px 32px rgba(18, 109, 60, 0.08) !important;
-  padding-top: 1.75rem !important;
-  padding-bottom: 2.25rem !important;
-  padding-left: 2.25rem !important;
-  padding-right: 2.25rem !important;
-  max-width: min(1480px, 95vw) !important;
-  margin-left: auto !important;
-  margin-right: auto !important;
-  margin-top: 4.5rem !important;
-  margin-bottom: 4rem !important;
-}}
-
-/* فصل عن الهيدر العلوي */
+/* شريط علوي داكن بهوية إيجادة */
 header[data-testid="stHeader"] {{
-  background: transparent !important;
+  background: linear-gradient(90deg, #0D3D2E 0%, #134D3A 50%, #0D3D2E 100%) !important;
+  border-bottom: 1px solid rgba(201, 168, 76, 0.35) !important;
+  height: 3rem !important;
+}}
+header[data-testid="stHeader"] * {{
+  color: #F5E6C8 !important;
 }}
 div[data-testid="stDecoration"] {{
   display: none !important;
 }}
-.stApp > header {{
-  background-color: transparent !important;
+
+/* ===== الحاوية الرئيسية (بطاقة بيضاء) ===== */
+.block-container {{
+  background: {t["surface"]} !important;
+  border: 1px solid {t["border"]} !important;
+  border-top: 4px solid {t["accent_strong"]} !important;
+  border-radius: 16px !important;
+  box-shadow: 0 10px 36px rgba(13, 61, 46, 0.10) !important;
+  padding-top: 1.5rem !important;
+  padding-bottom: 2rem !important;
+  padding-left: 2rem !important;
+  padding-right: 2rem !important;
+  max-width: min(1480px, 94vw) !important;
+  margin-left: auto !important;
+  margin-right: auto !important;
+  margin-top: 2.5rem !important;
+  margin-bottom: 3.5rem !important;
 }}
 
-
-/* تمييز هيدر الصفحة بهوية الوطنية */
-div[data-testid="stVerticalBlock"] > div:first-child h1,
-div[data-testid="stVerticalBlock"] > div:first-child h2,
-.block-container h1,
-.block-container h2 {{
-  color: {t["accent_strong"]} !important;
-  font-weight: 800 !important;
+/* ===== الشريط الجانبي ===== */
+section[data-testid="stSidebar"] {{
+  background: {t["sidebar_bg"]} !important;
+  border-left: 1px solid {t["border_soft"]} !important;
+  box-shadow: -4px 0 24px rgba(13, 61, 46, 0.06) !important;
 }}
-
-/* لون فرعي للهيدر */
-.wq-page-sub {{
-  color: #5a6b5d !important;
-}}
-
-/* شريط علوي خفيف تحت عنوان الصفحة */
-.block-container hr {{
+section[data-testid="stSidebar"] .block-container {{
+  background: transparent !important;
   border: none !important;
-  border-top: 2px solid {t["accent"]}33 !important;
-  margin: 1rem 0 1.25rem 0 !important;
+  box-shadow: none !important;
+  margin-top: 0.5rem !important;
+  padding-top: 0.75rem !important;
+}}
+section[data-testid="stSidebar"] h1,
+section[data-testid="stSidebar"] h2,
+section[data-testid="stSidebar"] h3 {{
+  color: {t["accent_strong"]} !important;
 }}
 
-/* كبسولة تمييز للهيدر الصغير */
+/* ===== هيدر الصفحة ===== */
 .wq-page-badge {{
   display: inline-block;
   background: linear-gradient(135deg, {t["accent"]}18, {t["accent"]}08);
@@ -1128,42 +1130,34 @@ div[data-testid="stVerticalBlock"] > div:first-child h2,
   text-transform: uppercase;
   margin-bottom: 0.5rem;
 }}
-
 .wq-page-header {{
-  background: linear-gradient(135deg, {t["accent"]}12 0%, {t["accent"]}06 50%, transparent 100%);
-  border: 1px solid {t["accent"]}22;
+  background: linear-gradient(135deg, {t["accent"]}10 0%, rgba(201,168,76,0.08) 50%, transparent 100%);
+  border: 1px solid {t["border"]};
   border-right: 4px solid {t["accent_strong"]};
   border-radius: 14px;
   padding: 1rem 1.25rem 1.1rem 1.25rem;
   margin-bottom: 1.1rem;
 }}
-
 .wq-page-title {{
   color: {t["accent_strong"]} !important;
   font-weight: 800 !important;
   font-size: 1.85rem !important;
   margin: 0.35rem 0 0.3rem 0 !important;
 }}
-
 .wq-page-sub {{
-  color: #5a6b5d !important;
+  color: {t["text_muted"]} !important;
   font-size: 0.92rem !important;
-  opacity: 0.9;
+  opacity: 0.95;
   margin: 0 !important;
 }}
 
-/* الشريط الجانبي */
-section[data-testid="stSidebar"] {{
-  background: {t["sidebar_bg"]} !important;
-  border-left: 1px solid {t["border_soft"]} !important;
-}}
-section[data-testid="stSidebar"] .block-container {{
-  background: transparent !important;
+.block-container hr {{
   border: none !important;
-  box-shadow: none !important;
+  border-top: 2px solid {t["accent"]}28 !important;
+  margin: 1rem 0 1.25rem 0 !important;
 }}
 
-/* أزرار Primary — أخضر الوطنية */
+/* ===== أزرار Primary ===== */
 div.stButton > button[kind="primary"],
 div.stButton > button[data-testid="baseButton-primary"],
 button[kind="primary"] {{
@@ -1173,12 +1167,12 @@ button[kind="primary"] {{
   border: none !important;
   border-radius: 999px !important;
   font-weight: 700 !important;
-  box-shadow: 0 2px 8px rgba(18, 109, 60, 0.25) !important;
+  box-shadow: 0 2px 10px rgba(13, 61, 46, 0.28) !important;
 }}
 div.stButton > button[kind="primary"]:hover,
 button[kind="primary"]:hover {{
-  filter: brightness(1.06);
-  box-shadow: 0 4px 14px rgba(18, 109, 60, 0.35) !important;
+  filter: brightness(1.08);
+  box-shadow: 0 4px 16px rgba(13, 61, 46, 0.35) !important;
 }}
 
 /* أزرار Secondary */
@@ -1203,7 +1197,7 @@ div[data-baseweb="input"] > div,
   background: {t["input_bg"]} !important;
 }}
 
-/* تبويبات / شرائح */
+/* تبويبات */
 .stTabs [data-baseweb="tab-list"] {{
   gap: 0.25rem;
   background: {t["surface_2"]};
@@ -1219,7 +1213,7 @@ div[data-baseweb="input"] > div,
   color: {t["on_accent"]} !important;
 }}
 
-/* بطاقات الحاويات */
+/* بطاقات */
 div[data-testid="stVerticalBlockBorderWrapper"] {{
   border-radius: 14px !important;
   border-color: {t["border"]} !important;
@@ -1244,27 +1238,22 @@ div[data-testid="stDataFrame"] {{
   border: 1px solid {t["border_soft"]};
 }}
 
-/* عناوين */
 h1, h2, h3 {{
   color: {t["text"]} !important;
   font-weight: 800 !important;
 }}
-p, span, label {{
-  color: {t["text"]};
-}}
 
-/* شريط التحميل / Progress */
 .stProgress > div > div > div > div {{
   background-color: {t["accent_strong"]} !important;
 }}
 
-/* Download buttons */
 div.stDownloadButton > button {{
   border-radius: 999px !important;
   font-weight: 700 !important;
 }}
 </style>
 """,
+
         unsafe_allow_html=True,
     )
 
@@ -8553,10 +8542,14 @@ with st.sidebar:
     with c2:
         st.image(BytesIO(base64.b64decode(_IJADA_LOGO_B64)), width=150)
     st.markdown(
-        "<h2 style='text-align:center;margin:0.15rem 0 0.1rem;color:#173F73;font-weight:800;line-height:1.25'>شركة إيجادة</h2>"
-        "<div style='text-align:center;color:#173F73;font-size:0.92rem;font-weight:700;margin-bottom:0.15rem'>لتحصيل الديون</div>"
-        "<div style='text-align:center;color:#173F73;font-size:1.05rem;font-weight:800;margin:0.4rem 0 0.15rem;border-top:1px solid rgba(23,63,115,.2);padding-top:0.45rem'>إدارة المحفظة</div>"
-        "<div style='text-align:center;color:#4B6685;font-size:0.92rem;font-weight:700;margin:0'>ونشاط المحصلين</div>",
+        "<div style='text-align:center;padding:0.25rem 0.5rem 0.75rem;'>"
+        "<h2 style='text-align:center;margin:0.1rem 0 0.05rem;color:#0D3D2E;font-weight:800;line-height:1.25;font-size:1.35rem'>شركة إيجادة</h2>"
+        "<div style='text-align:center;color:#1B5E45;font-size:0.88rem;font-weight:700;margin-bottom:0.2rem'>لتحصيل الديون</div>"
+        "<div style='text-align:center;margin:0.55rem 0 0.35rem;border-top:1px solid rgba(13,61,46,.18);padding-top:0.5rem'>"
+        "<div style='color:#0D3D2E;font-size:1.02rem;font-weight:800;letter-spacing:0.02em'>إدارة المحفظة</div>"
+        "<div style='color:#C9A84C;font-size:0.9rem;font-weight:700;margin-top:0.15rem'>ونشاط المحصلين</div>"
+        "</div>"
+        "</div>",
         unsafe_allow_html=True,
     )
     st.divider()

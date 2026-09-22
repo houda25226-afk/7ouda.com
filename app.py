@@ -1066,17 +1066,65 @@ html, body, [class*="css"]  {{
   image-rendering: high-quality !important;
 }}
 
-/* شريط علوي داكن بهوية إيجادة */
+/* شريط Streamlit الأصلي — شفاف */
 header[data-testid="stHeader"] {{
-  background: linear-gradient(90deg, #0D3D2E 0%, #134D3A 50%, #0D3D2E 100%) !important;
-  border-bottom: 1px solid rgba(201, 168, 76, 0.35) !important;
-  height: 3rem !important;
-}}
-header[data-testid="stHeader"] * {{
-  color: #F5E6C8 !important;
+  background: transparent !important;
 }}
 div[data-testid="stDecoration"] {{
   display: none !important;
+}}
+
+/* شريط إيجادة العلوي */
+.ejada-topbar {{
+  background: linear-gradient(90deg, #0A3326 0%, #0D3D2E 40%, #134D3A 70%, #0D3D2E 100%);
+  border-bottom: 2px solid rgba(201, 168, 76, 0.45);
+  padding: 0.85rem 1.5rem 0.95rem;
+  margin: 0 0 0.75rem 0; border-radius: 0;
+  text-align: center;
+  box-shadow: 0 4px 18px rgba(13, 61, 46, 0.25);
+  position: relative;
+  overflow: hidden;
+}}
+.ejada-topbar::before {{
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: repeating-linear-gradient(
+    135deg,
+    transparent,
+    transparent 12px,
+    rgba(201, 168, 76, 0.04) 12px,
+    rgba(201, 168, 76, 0.04) 24px
+  );
+  pointer-events: none;
+}}
+.ejada-topbar-inner {{
+  position: relative;
+  z-index: 1;
+}}
+.ejada-topbar-title {{
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.15rem;
+}}
+.ejada-ar {{
+  color: #F5E6C8;
+  font-size: 1.15rem;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+}}
+.ejada-en {{
+  color: #C9A84C;
+  font-size: 0.95rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}}
+.ejada-topbar-sub {{
+  color: rgba(245, 230, 200, 0.75);
+  font-size: 0.82rem;
+  font-weight: 600;
+  margin-top: 0.25rem;
 }}
 
 /* ===== الحاوية الرئيسية (بطاقة بيضاء) ===== */
@@ -1093,7 +1141,7 @@ div[data-testid="stDecoration"] {{
   max-width: min(1480px, 94vw) !important;
   margin-left: auto !important;
   margin-right: auto !important;
-  margin-top: 2.5rem !important;
+  margin-top: 1.25rem !important;
   margin-bottom: 3.5rem !important;
 }}
 
@@ -1254,6 +1302,22 @@ div.stDownloadButton > button {{
 </style>
 """,
 
+        unsafe_allow_html=True,
+    )
+
+    # شريط علوي بهوية إيجادة (زي الصورة المرجعية)
+    st.markdown(
+        """
+<div class="ejada-topbar">
+  <div class="ejada-topbar-inner">
+    <div class="ejada-topbar-title">
+      <span class="ejada-ar">رؤى الأداء الاستراتيجي — إيجادة</span>
+      <span class="ejada-en">EJADA Strategic Insights</span>
+    </div>
+    <div class="ejada-topbar-sub">نظام تحليل وإدارة متقدم</div>
+  </div>
+</div>
+""",
         unsafe_allow_html=True,
     )
 

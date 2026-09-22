@@ -923,8 +923,8 @@ def page_promises():
 
 
 st.set_page_config(
-    page_title="إيجادة — إدارة المحفظة ونشاط المحصلين",
-    page_icon="💼",
+    page_title="إيجادة — رؤى الأداء الاستراتيجي | EJADA Strategic Insights",
+    page_icon="🟢",
     layout="wide",
     initial_sidebar_state="expanded",
 )
@@ -1019,7 +1019,7 @@ def _detect_native_streamlit_theme() -> str:
             return theme_type
     except Exception:
         pass
-    return st.session_state.get("theme_mode", "dark")
+    return st.session_state.get("theme_mode", "light")
 
 
 THEME_NAME = _detect_native_streamlit_theme()
@@ -1102,15 +1102,68 @@ div[data-testid="stDecoration"] {{
   position: relative;
   z-index: 1;
 }}
+.ejada-topbar-grid {{
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+  gap: 1rem;
+  width: 100%;
+}}
 .ejada-topbar-title {{
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 0.15rem;
+  gap: 0.12rem;
+  text-align: center;
+}}
+.ejada-logo-left {{
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  justify-content: flex-start;
+}}
+.ejada-logo-right {{
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  justify-content: center;
+  gap: 0.05rem;
+}}
+.ejada-mark {{
+  width: 42px;
+  height: 42px;
+  border-radius: 12px;
+  background: linear-gradient(145deg, #C9A84C 0%, #A8872E 100%);
+  color: #0D3D2E;
+  font-weight: 900;
+  font-size: 1.15rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 2px 10px rgba(0,0,0,0.25);
+  border: 1px solid rgba(245,230,200,0.35);
+}}
+.ejada-mark-text {{
+  color: #F5E6C8;
+  font-weight: 800;
+  font-size: 1.05rem;
+  letter-spacing: 0.02em;
+}}
+.ejada-mark-en {{
+  color: #F5E6C8;
+  font-weight: 800;
+  font-size: 0.95rem;
+  letter-spacing: 0.06em;
+}}
+.ejada-mark-sub {{
+  color: #C9A84C;
+  font-weight: 600;
+  font-size: 0.72rem;
+  letter-spacing: 0.04em;
 }}
 .ejada-ar {{
   color: #F5E6C8;
-  font-size: 1.15rem;
+  font-size: 1.2rem;
   font-weight: 800;
   letter-spacing: 0.02em;
 }}
@@ -1118,24 +1171,38 @@ div[data-testid="stDecoration"] {{
   color: #C9A84C;
   font-size: 0.95rem;
   font-weight: 700;
-  letter-spacing: 0.04em;
+  letter-spacing: 0.05em;
 }}
 .ejada-topbar-sub {{
-  color: rgba(245, 230, 200, 0.75);
-  font-size: 0.82rem;
+  color: rgba(245, 230, 200, 0.78);
+  font-size: 0.8rem;
   font-weight: 600;
-  margin-top: 0.25rem;
+  margin-top: 0.15rem;
+}}
+@media (max-width: 900px) {{
+  .ejada-topbar-grid {{
+    grid-template-columns: 1fr;
+    text-align: center;
+  }}
+  .ejada-logo-left, .ejada-logo-right {{
+    justify-content: center;
+    align-items: center;
+  }}
 }}
 
-/* ===== الحاوية الرئيسية (بطاقة بيضاء) ===== */
+/* ===== الحاوية الرئيسية (بطاقة بيضاء + نقش هندسي خفيف) ===== */
 .block-container {{
-  background: {t["surface"]} !important;
+  background:
+    linear-gradient(180deg, rgba(255,255,255,0.92) 0%, rgba(255,255,255,0.97) 40%, rgba(247,244,236,0.9) 100%),
+    radial-gradient(circle at 12% 8%, rgba(27,94,69,0.04) 0%, transparent 42%),
+    radial-gradient(circle at 88% 18%, rgba(201,168,76,0.05) 0%, transparent 38%),
+    {t["surface"]} !important;
   border: 1px solid {t["border"]} !important;
   border-top: 4px solid {t["accent_strong"]} !important;
-  border-radius: 16px !important;
-  box-shadow: 0 10px 36px rgba(13, 61, 46, 0.10) !important;
+  border-radius: 18px !important;
+  box-shadow: 0 12px 40px rgba(13, 61, 46, 0.10) !important;
   padding-top: 1.5rem !important;
-  padding-bottom: 2rem !important;
+  padding-bottom: 2.25rem !important;
   padding-left: 2rem !important;
   padding-right: 2rem !important;
   max-width: min(1480px, 94vw) !important;
@@ -1143,6 +1210,24 @@ div[data-testid="stDecoration"] {{
   margin-right: auto !important;
   margin-top: 1.25rem !important;
   margin-bottom: 3.5rem !important;
+  position: relative;
+  overflow: hidden;
+}}
+.block-container::before {{
+  content: "";
+  position: absolute;
+  inset: 0;
+  background-image:
+    linear-gradient(135deg, rgba(13,61,46,0.03) 1px, transparent 1px),
+    linear-gradient(45deg, rgba(13,61,46,0.02) 1px, transparent 1px);
+  background-size: 28px 28px, 42px 42px;
+  pointer-events: none;
+  opacity: 0.55;
+  z-index: 0;
+}}
+.block-container > * {{
+  position: relative;
+  z-index: 1;
 }}
 
 /* ===== الشريط الجانبي ===== */
@@ -1167,47 +1252,36 @@ section[data-testid="stSidebar"] h3 {{
 /* ===== هيدر الصفحة ===== */
 .wq-page-badge {{
   display: inline-block;
-  background: linear-gradient(135deg, #1B5E45, #0D3D2E);
-  color: #F5E6C8 !important;
-  border: none;
+  background: linear-gradient(135deg, {t["accent"]}18, {t["accent"]}08);
+  color: {t["accent_strong"]} !important;
+  border: 1px solid {t["accent"]}40;
   border-radius: 999px;
-  padding: 0.28rem 0.95rem;
-  font-size: 0.70rem;
+  padding: 0.25rem 0.85rem;
+  font-size: 0.72rem;
   font-weight: 700;
-  letter-spacing: 0.07em;
+  letter-spacing: 0.06em;
   text-transform: uppercase;
-  margin-bottom: 0.55rem;
-  box-shadow: 0 2px 8px rgba(13, 61, 46, 0.20);
+  margin-bottom: 0.5rem;
 }}
 .wq-page-header {{
-  background: linear-gradient(145deg, #FFFFFF 0%, #F7F4EC 55%, rgba(230,240,234,0.55) 100%);
+  background: linear-gradient(135deg, {t["accent"]}10 0%, rgba(201,168,76,0.08) 50%, transparent 100%);
   border: 1px solid {t["border"]};
-  border-radius: 18px;
-  padding: 1.15rem 1.4rem 1.25rem 1.4rem;
-  margin-bottom: 1.25rem;
-  box-shadow: 0 6px 22px rgba(13, 61, 46, 0.07);
-  position: relative;
-}}
-.wq-page-header::after {{
-  content: "";
-  position: absolute;
-  top: 0; left: 0; right: 0;
-  height: 3px;
-  border-radius: 18px 18px 0 0;
-  background: linear-gradient(90deg, #0D3D2E, #1B5E45 40%, #C9A84C 100%);
+  border-right: 4px solid {t["accent_strong"]};
+  border-radius: 14px;
+  padding: 1rem 1.25rem 1.1rem 1.25rem;
+  margin-bottom: 1.1rem;
 }}
 .wq-page-title {{
   color: {t["accent_strong"]} !important;
   font-weight: 800 !important;
-  font-size: 1.75rem !important;
-  margin: 0.3rem 0 0.35rem 0 !important;
+  font-size: 1.85rem !important;
+  margin: 0.35rem 0 0.3rem 0 !important;
 }}
 .wq-page-sub {{
   color: {t["text_muted"]} !important;
-  font-size: 0.90rem !important;
+  font-size: 0.92rem !important;
   opacity: 0.95;
   margin: 0 !important;
-  line-height: 1.5;
 }}
 
 .block-container hr {{
@@ -1311,22 +1385,66 @@ div.stDownloadButton > button {{
   font-weight: 700 !important;
 }}
 
-/* ===== تنقل الشريط الجانبي — مطابق للـ mockup المرجعي ===== */
-section[data-testid="stSidebar"] {{
-  border-right: 1px solid {t["border_soft"]} !important;
-  border-left: none !important;
+/* ===== علامة السايدبار ===== */
+.ejada-side-brand {{
+  text-align: right;
+  padding: 0.35rem 0.25rem 0.95rem;
+  border-bottom: 1px solid rgba(13,61,46,0.12);
+  margin-bottom: 0.85rem;
 }}
+.ejada-side-logo-row {{
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  direction: rtl;
+}}
+.ejada-side-mark {{
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  background: linear-gradient(135deg, #1B5E45, #0D3D2E);
+  color: #F5E6C8;
+  font-weight: 900;
+  font-size: 1rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  box-shadow: 0 3px 10px rgba(13,61,46,0.18);
+}}
+.ejada-side-name {{
+  color: #0D3D2E;
+  font-weight: 800;
+  font-size: 1.05rem;
+  line-height: 1.15;
+}}
+.ejada-side-sub {{
+  color: #6B8578;
+  font-size: 0.68rem;
+  font-weight: 600;
+  margin-top: 0.1rem;
+}}
+.ejada-side-footer {{
+  margin-top: 1.75rem;
+  padding-top: 0.85rem;
+  border-top: 1px solid rgba(13,61,46,0.10);
+  text-align: center;
+  color: #8A9E94;
+  font-size: 0.68rem;
+  font-weight: 500;
+  line-height: 1.45;
+}}
+
+/* ===== تنقل الشريط الجانبي — مثل الصورة المرجعية ===== */
 section[data-testid="stSidebar"] div.stButton > button {{
-  border-radius: 14px !important;
+  border-radius: 12px !important;
   font-weight: 700 !important;
-  font-size: 0.90rem !important;
-  padding: 0.72rem 1rem !important;
-  margin-bottom: 0.28rem !important;
+  font-size: 0.92rem !important;
+  padding: 0.65rem 0.9rem !important;
+  margin-bottom: 0.35rem !important;
   justify-content: flex-start !important;
   text-align: right !important;
-  transition: all 0.2s ease !important;
-  min-height: 46px !important;
-  letter-spacing: 0.01em !important;
+  transition: all 0.18s ease !important;
 }}
 section[data-testid="stSidebar"] div.stButton > button[kind="secondary"] {{
   background: transparent !important;
@@ -1340,37 +1458,13 @@ section[data-testid="stSidebar"] div.stButton > button[kind="secondary"]:hover {
   border-color: {t["border_soft"]} !important;
 }}
 section[data-testid="stSidebar"] div.stButton > button[kind="primary"] {{
-  background: linear-gradient(135deg, #1B5E45 0%, #0D3D2E 100%) !important;
-  color: #F5E6C8 !important;
-  border: none !important;
-  box-shadow: 0 4px 14px rgba(13, 61, 46, 0.28) !important;
-}}
-section[data-testid="stSidebar"] [data-testid="stVerticalBlock"] {{
-  gap: 0.12rem !important;
-}}
-
-/* أزرار اختيار الشركة — شكل pill نظيف زي الـ mockup */
-div[data-testid="stHorizontalBlock"] div.stButton > button {{
-  border-radius: 999px !important;
-  font-weight: 700 !important;
-  min-height: 48px !important;
-  transition: all 0.18s ease !important;
-}}
-div[data-testid="stHorizontalBlock"] div.stButton > button[kind="secondary"] {{
-  background: #FFFFFF !important;
-  color: {t["accent_strong"]} !important;
-  border: 1.5px solid {t["border"]} !important;
-  box-shadow: 0 1px 4px rgba(13, 61, 46, 0.06) !important;
-}}
-div[data-testid="stHorizontalBlock"] div.stButton > button[kind="secondary"]:hover {{
-  background: {t["accent_surface"]} !important;
-  border-color: {t["accent"]} !important;
-}}
-div[data-testid="stHorizontalBlock"] div.stButton > button[kind="primary"] {{
-  background: linear-gradient(135deg, #1B5E45 0%, #0D3D2E 100%) !important;
-  color: #F5E6C8 !important;
+  background: linear-gradient(135deg, {t["accent"]} 0%, {t["accent_strong"]} 100%) !important;
+  color: {t["on_accent"]} !important;
   border: none !important;
   box-shadow: 0 3px 12px rgba(13, 61, 46, 0.22) !important;
+}}
+section[data-testid="stSidebar"] [data-testid="stVerticalBlock"] {{
+  gap: 0.15rem !important;
 }}
 </style>
 """,
@@ -1378,16 +1472,24 @@ div[data-testid="stHorizontalBlock"] div.stButton > button[kind="primary"] {{
         unsafe_allow_html=True,
     )
 
-    # شريط علوي بهوية إيجادة — مطابق للـ mockup
+    # شريط علوي بهوية إيجادة — مطابق للصورة المرجعية (لوجوهين + عنوان مركزي)
     st.markdown(
         """
 <div class="ejada-topbar">
-  <div class="ejada-topbar-inner">
+  <div class="ejada-topbar-inner ejada-topbar-grid">
+    <div class="ejada-logo-left" aria-hidden="true">
+      <div class="ejada-mark">إ</div>
+      <div class="ejada-mark-text">إيجادة</div>
+    </div>
     <div class="ejada-topbar-title">
       <span class="ejada-ar">رؤى الأداء الاستراتيجي — إيجادة</span>
       <span class="ejada-en">EJADA Strategic Insights</span>
+      <span class="ejada-topbar-sub">نظام تحليل وإدارة متقدم</span>
     </div>
-    <div class="ejada-topbar-sub">نظام تحليل وإدارة متقدم</div>
+    <div class="ejada-logo-right" aria-hidden="true">
+      <div class="ejada-mark-en">EJADA</div>
+      <div class="ejada-mark-sub">Strategic Insights</div>
+    </div>
   </div>
 </div>
 """,
@@ -3693,28 +3795,12 @@ def init_activity_state():
 
 
 def render_company_selector():
-    st.markdown(
-        """
-<div style="
-  display:flex;align-items:center;gap:0.5rem;
-  margin:0.25rem 0 0.85rem 0;
-">
-  <span style="
-    width:28px;height:28px;border-radius:8px;
-    background:linear-gradient(135deg,#1B5E45,#0D3D2E);
-    display:inline-flex;align-items:center;justify-content:center;
-    color:#F5E6C8;font-size:0.85rem;
-  ">🏢</span>
-  <span style="font-weight:800;font-size:1.1rem;color:#0D3D2E;">اختر شركة التصنيف</span>
-</div>
-""",
-        unsafe_allow_html=True,
-    )
+    st.subheader("🏢 اختر شركة التصنيف")
     c1, c2 = st.columns(2)
     for col, company_name in zip((c1, c2), COMPANIES):
         with col:
             selected = st.session_state.get("selected_company") == company_name
-            button_label = f"✓  {company_name}" if selected else company_name
+            button_label = f"✓ {company_name}" if selected else company_name
             if st.button(
                 button_label,
                 key=f"company_{company_name}",
@@ -4678,11 +4764,7 @@ def _show_aggregate_results_from_cache(period_key, period_title):
         _render_aggregate_results(stored, period_title, period_key)
 def page_classification():
     init_activity_state()
-    page_header(
-        "CALL QUALITY CLASSIFIER",
-        "🎯 تصنيف المكالمات",
-        "تصنيف المكالمة إيجادة — اختر الشركة والفترة ثم ارفع الملف لبدء التصنيف",
-    )
+    page_header("CALL QUALITY CLASSIFIER", "🎯 تصنيف المكالمات", "اختر الشركة → اختر الفترة → حدّد الميعاد والاستراحة → ارفع الملف → ابدأ التصنيف")
     render_company_selector()
     render_period_selector()
 
@@ -8691,41 +8773,17 @@ PAGES = {
 
 DEFAULT_PAGE = next(iter(PAGES))
 with st.sidebar:
-    # شريط تنقل بهوية إيجادة — مطابق للـ mockup (لوجو + قائمة نظيفة)
+    # شريط تنقل بهوية إيجادة — مطابق للصورة المرجعية
     st.markdown(
         """
-<div style="
-  text-align:center;
-  padding: 0.85rem 0.5rem 1rem;
-  margin: -0.5rem -0.5rem 0.9rem -0.5rem;
-  background: linear-gradient(180deg, #0D3D2E 0%, #134D3A 100%);
-  border-bottom: 2px solid rgba(201,168,76,0.35);
-">
-  <div style="
-    display:inline-flex;
-    align-items:center;
-    gap:0.45rem;
-    color:#F5E6C8;
-    font-weight:800;
-    font-size:1.08rem;
-    letter-spacing:0.02em;
-  ">
-    <span style="
-      width:32px;height:32px;border-radius:10px;
-      background:linear-gradient(135deg,#C9A84C,#E8D5A3);
-      display:inline-flex;align-items:center;justify-content:center;
-      color:#0D3D2E;font-size:0.95rem;font-weight:900;
-      box-shadow: 0 2px 8px rgba(0,0,0,0.2);
-    ">إ</span>
-    <span>إيجادة</span>
+<div class="ejada-side-brand">
+  <div class="ejada-side-logo-row">
+    <span class="ejada-side-mark">إ</span>
+    <div>
+      <div class="ejada-side-name">إيجادة</div>
+      <div class="ejada-side-sub">EJADA Strategic Insights</div>
+    </div>
   </div>
-  <div style="
-    color:rgba(245,230,200,0.75);
-    font-size:0.70rem;
-    font-weight:600;
-    margin-top:0.3rem;
-    letter-spacing:0.03em;
-  ">EJADA Strategic Insights</div>
 </div>
 """,
         unsafe_allow_html=True,
@@ -8745,17 +8803,10 @@ with st.sidebar:
 
     st.markdown(
         """
-<div style="
-  margin-top:1.6rem;
-  padding-top:0.85rem;
-  border-top:1px solid rgba(13,61,46,0.10);
-  text-align:center;
-  color:#8A9E94;
-  font-size:0.66rem;
-  font-weight:500;
-  line-height:1.45;
-">
-  2024 — تم التصميم بواسطة<br/>Ejada Strategic Consulting
+<div class="ejada-side-footer">
+  تم التصميم بواسطة<br/>
+  <strong>Ejada Strategic Consulting</strong><br/>
+  <span style="opacity:0.85">2024</span>
 </div>
 """,
         unsafe_allow_html=True,

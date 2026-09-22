@@ -922,7 +922,7 @@ def page_promises():
 
 
 st.set_page_config(
-    page_title="إيجادة — إدارة المحافظ ونشاط المحصلين",
+    page_title="إجادة — إدارة المحافظ ونشاط المحصلين",
     page_icon="🟢",
     layout="wide",
     initial_sidebar_state="expanded",
@@ -8672,7 +8672,7 @@ with st.sidebar:
   <div class="ejada-side-logo-wrap">
     <img src="data:image/png;base64,{_EJADA_SEAL_B64}" alt="إيجادة" class="ejada-side-logo-img" />
   </div>
-  <div class="ejada-side-name">إيجادة</div>
+  <div class="ejada-side-name">إجادة</div>
   <div class="ejada-side-tag">EJADA · لتحصيل الديون</div>
   <div class="ejada-side-line"></div>
 </div>

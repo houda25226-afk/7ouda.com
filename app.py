@@ -953,6 +953,7 @@ THEMES = {
         "accent_surface": "#143528",
         "accent": "#1A8A4A",
         "accent_strong": "#126D3C",
+        "accent_gold": "#C9A84C",
         "on_accent": "#FFFFFF",
         "success": "#1A8A4A",
         "danger": "#C45C5C",
@@ -980,6 +981,7 @@ THEMES = {
         "accent_surface": "#E8F5EC",
         "accent": "#126D3C",
         "accent_strong": "#0E5A32",
+        "accent_gold": "#C9A84C",
         "on_accent": "#FFFFFF",
         "success": "#126D3C",
         "danger": "#C45C5C",
@@ -1129,7 +1131,11 @@ div[data-testid="stVerticalBlock"] > div:first-child h2,
 }}
 
 .wq-page-header {{
-  background: linear-gradient(225deg, {t["accent"]}12 0%, {t["accent"]}06 50%, transparent 100%);
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  background:
+    linear-gradient(225deg, {t["accent"]}14 0%, {t["accent"]}07 45%, rgba(255,255,255,0.55) 100%);
   border: 1px solid {t["accent"]}22;
   border-left: 4px solid {t["accent_strong"]};
   border-right: 1px solid {t["accent"]}22;
@@ -1139,9 +1145,61 @@ div[data-testid="stVerticalBlock"] > div:first-child h2,
   direction: ltr;
   text-align: left;
 }}
+/* زخرفة هندسية خفيفة في خلفية عنوان التبويب */
+.wq-page-header::before {{
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  opacity: 0.55;
+  background-image:
+    /* نجوم / معينات */
+    radial-gradient(circle at 12% 28%, {t["accent"]}22 0 1.5px, transparent 2px),
+    radial-gradient(circle at 28% 72%, {t["accent"]}18 0 1.2px, transparent 2px),
+    radial-gradient(circle at 48% 22%, {t["accent_gold"]}33 0 1.4px, transparent 2px),
+    radial-gradient(circle at 68% 68%, {t["accent"]}16 0 1.3px, transparent 2px),
+    radial-gradient(circle at 86% 32%, {t["accent_gold"]}28 0 1.5px, transparent 2px),
+    radial-gradient(circle at 92% 78%, {t["accent"]}14 0 1.1px, transparent 2px),
+    /* شبكة معينات ناعمة */
+    linear-gradient(135deg, {t["accent"]}10 1px, transparent 1px),
+    linear-gradient(45deg, {t["accent"]}08 1px, transparent 1px),
+    /* أقواس هندسية خفيفة على اليمين */
+    radial-gradient(ellipse 55% 90% at 100% 0%, {t["accent"]}12, transparent 55%),
+    radial-gradient(ellipse 40% 70% at 100% 100%, {t["accent_gold"]}10, transparent 50%);
+  background-size:
+    100% 100%,
+    100% 100%,
+    100% 100%,
+    100% 100%,
+    100% 100%,
+    100% 100%,
+    22px 22px,
+    22px 22px,
+    100% 100%,
+    100% 100%;
+  background-repeat: no-repeat, no-repeat, no-repeat, no-repeat, no-repeat, no-repeat, repeat, repeat, no-repeat, no-repeat;
+}}
+.wq-page-header::after {{
+  content: "";
+  position: absolute;
+  right: -18px;
+  top: -24px;
+  width: 120px;
+  height: 120px;
+  z-index: 0;
+  pointer-events: none;
+  opacity: 0.12;
+  background:
+    radial-gradient(circle at center, transparent 38%, {t["accent_strong"]} 39%, {t["accent_strong"]} 41%, transparent 42%),
+    radial-gradient(circle at center, transparent 58%, {t["accent_gold"]} 59%, {t["accent_gold"]} 61%, transparent 62%);
+  border-radius: 50%;
+}}
 .wq-page-header .wq-page-badge,
 .wq-page-header .wq-page-title,
 .wq-page-header .wq-page-sub {{
+  position: relative;
+  z-index: 1;
   text-align: left !important;
 }}
 

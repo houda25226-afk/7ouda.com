@@ -7727,6 +7727,11 @@ DISTRIBUTION_RESULT_KEY = "distribution_result"
 DISTRIBUTION_SCENARIO_KEY = "distribution_scenario"
 DISTRIBUTION_UPLOAD_KEY = "distribution_upload"
 DISTRIBUTION_CACHE_SCOPE = "distribution_upload"
+DISTRIBUTION_NEW_RESULT_KEY = "distribution_new_result"
+DISTRIBUTION_NEW_PORTFOLIO_KEY = "distribution_new_portfolio_upload"
+DISTRIBUTION_NEW_NEGLECT_KEY = "distribution_new_neglect_upload"
+DISTRIBUTION_NEW_PORTFOLIO_SCOPE = "distribution_new_portfolio"
+DISTRIBUTION_NEW_NEGLECT_SCOPE = "distribution_new_neglect"
 
 
 def _distribution_find_numeric_cols(df):
@@ -8120,6 +8125,568 @@ def _greedy_assign_customers(
 
 
 
+
+def _parse_new_collector_names(raw_text: str):
+    """استخراج أسماء المحصلين الجدد من نص متعدد الأسطر / فواصل."""
+    if not raw_text:
+        return []
+    parts = []
+    for line in str(raw_text).replace(",", "\n").replace("،", "\n").splitlines():
+        name = line.strip()
+        if name:
+            parts.append(name)
+    # unique preserve order
+    seen = set()
+    out = []
+    for n in parts:
+        key = n.lower()
+        if key not in seen:
+            seen.add(key)
+            out.append(n)
+    return out
+
+
+def _portfolio_collector_stats(df, sales_col, client_key_col, account_key_col, amount_cols):
+    """ملخص المحفظة الحالية لكل محصل: عملاء / حسابات / مبلغ."""
+    work = df.copy()
+    work["_sales"] = work[sales_col].astype(str).str.strip()
+    work = work[~work["_sales"].str.lower().isin({"nan", "none", "null", ""})]
+    work["_client"] = work[client_key_col].astype(str).str.strip()
+    work["_account"] = work[account_key_col].astype(str).str.strip() if account_key_col else work["_client"]
+    if amount_cols:
+        amt = None
+        for c in amount_cols:
+            if c in work.columns:
+                colv = pd.to_numeric(work[c], errors="coerce").fillna(0)
+                amt = colv if amt is None else amt + colv
+        work["_amount"] = amt if amt is not None else 0.0
+    else:
+        work["_amount"] = 0.0
+
+    rows = []
+    for name, g in work.groupby("_sales", dropna=False):
+        rows.append({
+            "المحصّل": name,
+            "عدد العملاء": int(g["_client"].nunique()),
+            "عدد الحسابات": int(g["_account"].nunique()),
+            "عدد المطالبات": int(len(g)),
+            "إجمالي المبلغ": float(g["_amount"].sum()),
+        })
+    summary = pd.DataFrame(rows)
+    if not summary.empty:
+        summary = summary.sort_values("إجمالي المبلغ", ascending=False).reset_index(drop=True)
+    return summary, work
+
+
+def _page_distribution_new_collector():
+    """بناء محافظ لمحصلين جدد من شيت الإهمال + دمجها في المحفظة الكاملة."""
+    st.markdown("---")
+    st.subheader("🆕 محصل جديد — بناء محفظة من شيت الإهمال")
+    st.caption(
+        "1) ارفع المحفظة الكاملة للشركة → 2) اكتب أسماء المحصلين الجدد → "
+        "3) ارفع شيت الإهمال واختر الأعمدة والحالات → 4) التوزيع المتساوي بدون تكرار عميل → تحميل النتائج."
+    )
+
+    # ========== 1) المحفظة الكاملة ==========
+    st.markdown("#### 1️⃣ المحفظة الكاملة للشركة")
+    portfolio_up = st.file_uploader(
+        "📂 ارفع ملف المحفظة (Excel أو CSV)",
+        type=["xlsx", "xls", "csv"],
+        key=DISTRIBUTION_NEW_PORTFOLIO_KEY,
+        on_change=sync_file_cache,
+        args=(DISTRIBUTION_NEW_PORTFOLIO_KEY, DISTRIBUTION_NEW_PORTFOLIO_SCOPE, [DISTRIBUTION_NEW_RESULT_KEY]),
+    )
+
+    cached = st.session_state.get(DISTRIBUTION_NEW_RESULT_KEY)
+    if portfolio_up is None:
+        if cached:
+            st.success(f"✅ نتيجة محفوظة من: {cached.get('filename', '—')}")
+            _render_new_collector_results(cached)
+        else:
+            st.info("📂 ارفع المحفظة الكاملة أولاً.")
+        return
+
+    try:
+        raw_port = read_uploaded_dataframe(portfolio_up)
+    except Exception as e:
+        st.error(f"تعذر قراءة المحفظة: {e}")
+        return
+
+    port_df = raw_port.iloc[1:].copy() if len(raw_port) > 1 else raw_port.copy()
+    port_df = port_df.reset_index(drop=True)
+    col_options = list(port_df.columns)
+
+    detected_sales = find_column(port_df, SALES_PERSON_CANDIDATES)
+    detected_net = find_column(port_df, PROMISE_NET_AMOUNT_CANDIDATES)
+    detected_cid = (
+        find_column(port_df, WALLET_CUSTOMER_ID_CANDIDATES)
+        or find_column(port_df, ACCOUNT_NUMBER_CANDIDATES)
+        or find_column(port_df, ID_CANDIDATES)
+    )
+    detected_acc = find_column(port_df, ACCOUNT_NUMBER_CANDIDATES) or detected_cid
+
+    st.markdown("##### 🔧 أعمدة المحفظة")
+    p1, p2 = st.columns(2)
+    with p1:
+        sales_col = st.selectbox(
+            "👤 عمود المحصّل في المحفظة",
+            options=col_options,
+            index=col_options.index(detected_sales) if detected_sales in col_options else 0,
+            key="newc_port_sales",
+        )
+        client_key_col = st.selectbox(
+            "🔑 عمود هوية العميل في المحفظة",
+            options=col_options,
+            index=col_options.index(detected_cid) if detected_cid in col_options else 0,
+            key="newc_port_client",
+        )
+    with p2:
+        account_key_col = st.selectbox(
+            "📋 عمود الحساب في المحفظة",
+            options=col_options,
+            index=col_options.index(detected_acc) if detected_acc in col_options else 0,
+            key="newc_port_account",
+        )
+        numeric_cols = _distribution_find_numeric_cols(port_df)
+        amount_options = list(dict.fromkeys(
+            ([detected_net] if detected_net else []) + numeric_cols + col_options
+        ))
+        default_amt = [detected_net] if detected_net and detected_net in amount_options else (amount_options[:1] if amount_options else [])
+        amount_cols = st.multiselect(
+            "💰 أعمدة المبالغ في المحفظة",
+            options=amount_options,
+            default=[c for c in default_amt if c in amount_options],
+            key="newc_port_amounts",
+        )
+
+    port_summary, port_work = _portfolio_collector_stats(
+        port_df, sales_col, client_key_col, account_key_col, amount_cols
+    )
+    existing_collectors = port_summary["المحصّل"].tolist() if not port_summary.empty else []
+    avg_clients = float(port_summary["عدد العملاء"].mean()) if not port_summary.empty else 0.0
+    avg_accounts = float(port_summary["عدد الحسابات"].mean()) if not port_summary.empty else 0.0
+    avg_amount = float(port_summary["إجمالي المبلغ"].mean()) if not port_summary.empty else 0.0
+
+    k1, k2, k3, k4 = st.columns(4)
+    k1.metric("👥 محصلين حاليين", f"{len(existing_collectors):,}")
+    k2.metric("📊 متوسط العملاء/محصل", f"{avg_clients:,.1f}")
+    k3.metric("📋 متوسط الحسابات/محصل", f"{avg_accounts:,.1f}")
+    k4.metric("💰 متوسط المبلغ/محصل", f"{avg_amount:,.0f}")
+
+    with st.expander("عرض ملخص محفظة المحصلين الحاليين", expanded=False):
+        if not port_summary.empty:
+            st.dataframe(port_summary, use_container_width=True, hide_index=True)
+        else:
+            st.info("لا توجد بيانات ملخص.")
+
+    existing_client_keys = set(port_work["_client"].astype(str).str.strip().tolist()) if not port_work.empty else set()
+
+    # ========== 2) أسماء المحصلين الجدد ==========
+    st.markdown("---")
+    st.markdown("#### 2️⃣ أسماء المحصلين الجدد")
+    names_raw = st.text_area(
+        "اكتب اسم كل محصل جديد في سطر (أو افصل بفاصلة)",
+        height=120,
+        key="newc_names_text",
+        placeholder="مثال:\nأحمد محمد\nسارة علي\nمحمود حسن",
+    )
+    new_names = _parse_new_collector_names(names_raw)
+    # استبعاد أسماء موجودة بالفعل في المحفظة
+    clash = [n for n in new_names if n in existing_collectors]
+    if clash:
+        st.warning(f"الأسماء التالية موجودة بالفعل في المحفظة وهتتعمل كمحصلين جدد فوقهم: {', '.join(clash)}")
+    if new_names:
+        st.success(f"محصلين جدد ({len(new_names)}): " + " · ".join(new_names))
+    else:
+        st.info("اكتب أسماء المحصلين الجدد للمتابعة.")
+        return
+
+    # ========== 3) شيت الإهمال ==========
+    st.markdown("---")
+    st.markdown("#### 3️⃣ شيت الإهمال (مصدر محفظة الجدد)")
+    neglect_up = st.file_uploader(
+        "📂 ارفع شيت الإهمال (Excel أو CSV)",
+        type=["xlsx", "xls", "csv"],
+        key=DISTRIBUTION_NEW_NEGLECT_KEY,
+        on_change=sync_file_cache,
+        args=(DISTRIBUTION_NEW_NEGLECT_KEY, DISTRIBUTION_NEW_NEGLECT_SCOPE, [DISTRIBUTION_NEW_RESULT_KEY]),
+    )
+    if neglect_up is None:
+        if cached and cached.get("portfolio_hash") == uploaded_file_hash(portfolio_up):
+            _render_new_collector_results(cached)
+        else:
+            st.info("📂 ارفع شيت الإهمال بعد تحديد أسماء المحصلين الجدد.")
+        return
+
+    try:
+        raw_neg = read_uploaded_dataframe(neglect_up)
+    except Exception as e:
+        st.error(f"تعذر قراءة شيت الإهمال: {e}")
+        return
+
+    neg_df = raw_neg.iloc[1:].copy() if len(raw_neg) > 1 else raw_neg.copy()
+    neg_df = neg_df.reset_index(drop=True)
+    neg_cols = list(neg_df.columns)
+
+    det_neg_sales = find_column(neg_df, SALES_PERSON_CANDIDATES) or find_column(neg_df, COLLECTED_BY_CANDIDATES)
+    det_neg_state = find_column(neg_df, PROMISE_SUB_STATE_CANDIDATES) or find_column(neg_df, WALLET_CUSTOMER_STATE_CANDIDATES)
+    det_neg_amt = find_column(neg_df, PROMISE_NET_AMOUNT_CANDIDATES)
+    det_neg_cid = (
+        find_column(neg_df, WALLET_CUSTOMER_ID_CANDIDATES)
+        or find_column(neg_df, ACCOUNT_NUMBER_CANDIDATES)
+        or find_column(neg_df, ID_CANDIDATES)
+    )
+    det_neg_acc = find_column(neg_df, ACCOUNT_NUMBER_CANDIDATES) or det_neg_cid
+
+    st.markdown("##### 🔧 أعمدة شيت الإهمال")
+    n1, n2 = st.columns(2)
+    with n1:
+        neg_sales_col = st.selectbox(
+            "👤 عمود المحصل (القديم) في الإهمال",
+            options=neg_cols,
+            index=neg_cols.index(det_neg_sales) if det_neg_sales in neg_cols else 0,
+            key="newc_neg_sales",
+            help="هيتحفظ في عمود «المحصل_القديم» عشان تعرف المطالبة اتنقلت من مين",
+        )
+        neg_amount_col = st.selectbox(
+            "💰 عمود مبلغ المديونية",
+            options=neg_cols,
+            index=neg_cols.index(det_neg_amt) if det_neg_amt in neg_cols else 0,
+            key="newc_neg_amount",
+        )
+        neg_state_col = st.selectbox(
+            "🏷️ عمود الحالة",
+            options=neg_cols,
+            index=neg_cols.index(det_neg_state) if det_neg_state in neg_cols else 0,
+            key="newc_neg_state",
+        )
+    with n2:
+        neg_client_col = st.selectbox(
+            "🔑 عمود هوية العملاء",
+            options=neg_cols,
+            index=neg_cols.index(det_neg_cid) if det_neg_cid in neg_cols else 0,
+            key="newc_neg_client",
+        )
+        neg_account_col = st.selectbox(
+            "📋 عمود الحسابات",
+            options=neg_cols,
+            index=neg_cols.index(det_neg_acc) if det_neg_acc in neg_cols else 0,
+            key="newc_neg_account",
+        )
+
+    # الحالات
+    state_vals = neg_df[neg_state_col].astype(str).str.strip()
+    all_states = sorted({v for v in state_vals.tolist() if v and v.lower() not in {"nan", "none", "null", ""}})
+    # افتراضي: حالات الإهمال الشائعة إن وُجدت
+    default_states = [s for s in NEGLECT_SUB_STATES_DEFAULT if s in all_states]
+    if not default_states:
+        default_states = all_states[: min(5, len(all_states))]
+    selected_states = st.multiselect(
+        "📌 الحالات اللي هتتبني منها محفظة الجدد",
+        options=all_states,
+        default=default_states,
+        key="newc_selected_states",
+    )
+    if not selected_states:
+        st.warning("اختار حالة واحدة على الأقل.")
+        return
+
+    pool = neg_df[state_vals.isin(selected_states)].copy().reset_index(drop=True)
+    st.caption(f"صفوف الإهمال بعد فلترة الحالات: **{len(pool):,}** من أصل {len(neg_df):,}")
+
+    exclude_existing = st.checkbox(
+        "استبعاد العملاء الموجودين بالفعل في المحفظة الكاملة (تفادي تكرار العميل على محصلين)",
+        value=True,
+        key="newc_exclude_existing",
+    )
+
+    # ========== 4) أوزان و tolerance ==========
+    st.markdown("---")
+    st.markdown("#### 4️⃣ موازنة التوزيع بين المحصلين الجدد")
+    st.caption(
+        f"الهدف التقريبي لكل محصل جديد ≈ متوسط المحفظة الحالية "
+        f"(عملاء {avg_clients:,.1f} · حسابات {avg_accounts:,.1f} · مبلغ {avg_amount:,.0f}). "
+        "التوزيع هيساوي بين الجدد قدر الإمكان من شيت الإهمال."
+    )
+    w1, w2, w3 = st.columns(3)
+    with w1:
+        amount_weight = st.slider("وزن المبالغ", 0.0, 3.0, 1.0, 0.1, key="newc_w_amt")
+    with w2:
+        client_weight = st.slider("وزن عدد العملاء", 0.0, 3.0, 1.5, 0.1, key="newc_w_cli")
+    with w3:
+        account_weight = st.slider("وزن عدد الحسابات", 0.0, 3.0, 1.5, 0.1, key="newc_w_acc")
+
+    t1, t2, t3 = st.columns(3)
+    with t1:
+        max_diff_amount = st.number_input("أقصى فرق مبالغ", min_value=0.0, value=5000.0, step=500.0, key="newc_max_amt")
+    with t2:
+        max_diff_clients = st.number_input("أقصى فرق عملاء", min_value=0, value=2, step=1, key="newc_max_cli")
+    with t3:
+        max_diff_accounts = st.number_input("أقصى فرق حسابات", min_value=0, value=3, step=1, key="newc_max_acc")
+
+    match_existing_avg = st.checkbox(
+        "حاول تقرّب حجم محفظة كل محصل جديد من متوسط المحصلين الحاليين (مش هتقسّم عميل)",
+        value=True,
+        key="newc_match_avg",
+        help="لو شيت الإهمال أكبر من اللازم، هيتوزع بالتساوي بين الجدد مع محاولة الاقتراب من المتوسط.",
+    )
+
+    run = st.button("🚀 إنشاء محافظ المحصلين الجدد", type="primary", use_container_width=True, key="newc_run")
+
+    if not run and DISTRIBUTION_NEW_RESULT_KEY not in st.session_state:
+        st.info("اضغط الزر بعد ضبط كل الاختيارات.")
+        return
+
+    if run:
+        work = pool.copy()
+        work["_old_collector"] = work[neg_sales_col].astype(str).str.strip()
+        work["_client"] = work[neg_client_col].astype(str).str.strip()
+        work["_account"] = work[neg_account_col].astype(str).str.strip()
+        work["_amount"] = pd.to_numeric(work[neg_amount_col], errors="coerce").fillna(0.0)
+        work = work[~work["_client"].str.lower().isin({"nan", "none", "null", ""})]
+
+        skipped_existing = 0
+        if exclude_existing and existing_client_keys:
+            before = len(work)
+            work = work[~work["_client"].isin(existing_client_keys)].copy()
+            skipped_existing = before - len(work)
+
+        if work.empty:
+            st.error("لا توجد صفوف صالحة للتوزيع بعد الفلترة.")
+            return
+
+        # تجميع على مستوى العميل (عميل واحد → محصل واحد)
+        grouped = (
+            work.groupby("_client", as_index=False)
+            .agg(
+                amount=("_amount", "sum"),
+                n_accounts=("_account", "nunique"),
+                n_rows=("_amount", "count"),
+            )
+            .rename(columns={"_client": "client_key"})
+        )
+
+        # إسناد
+        assign_map, summary, warnings = _greedy_assign_customers(
+            grouped,
+            new_names,
+            amount_col="amount",
+            max_diff_amount=max_diff_amount,
+            max_diff_clients=max_diff_clients,
+            max_diff_accounts=max_diff_accounts,
+            client_weight=client_weight,
+            amount_weight=amount_weight,
+            account_weight=account_weight,
+        )
+
+        if not assign_map:
+            st.error("تعذر إنشاء التوزيع.")
+            return
+
+        # صفوف المطالبات مع المحصل الجديد + القديم
+        assigned_rows = work.copy()
+        assigned_rows["المحصل_الجديد"] = assigned_rows["_client"].map(assign_map)
+        assigned_rows["المحصل_القديم"] = assigned_rows["_old_collector"]
+        # إسقاط من لم يُسند (نظريًا لا يحدث)
+        assigned_rows = assigned_rows[assigned_rows["المحصل_الجديد"].notna()].copy()
+
+        # بناء صفوف المحفظة المُضافة: نفس أعمدة الإهمال + تعديل عمود المحصل إن أمكن
+        add_df = assigned_rows.drop(columns=[c for c in assigned_rows.columns if str(c).startswith("_")], errors="ignore").copy()
+        # لو فيه عمود محصل مطابق لاسم عمود المحفظة نحدّثه
+        if neg_sales_col in add_df.columns:
+            add_df[neg_sales_col] = add_df["المحصل_الجديد"]
+        # عمود محصل باسم عمود المحفظة للتوحيد
+        if sales_col not in add_df.columns:
+            add_df[sales_col] = add_df["المحصل_الجديد"]
+        else:
+            add_df[sales_col] = add_df["المحصل_الجديد"]
+
+        # المحفظة الكاملة = الأصلية + المضافة
+        full_df = pd.concat([port_df.copy(), add_df], ignore_index=True, sort=False)
+
+        # ملخص مقارنة مع المتوسط الحالي
+        new_summary = summary.copy()
+        if not new_summary.empty:
+            new_summary["متوسط_الحالي_عملاء"] = round(avg_clients, 2)
+            new_summary["متوسط_الحالي_حسابات"] = round(avg_accounts, 2)
+            new_summary["متوسط_الحالي_مبلغ"] = round(avg_amount, 2)
+
+        # تفاصيل إسناد
+        detail = grouped.copy()
+        detail["المحصّل_الجديد"] = detail["client_key"].map(assign_map)
+        # المحصل القديم الأشهر لهذا العميل
+        old_mode = (
+            work.groupby("_client")["_old_collector"]
+            .agg(lambda s: s.value_counts().index[0] if len(s) else "")
+            .to_dict()
+        )
+        detail["المحصل_القديم"] = detail["client_key"].map(old_mode)
+        detail = detail.rename(columns={
+            "client_key": "هوية العميل",
+            "amount": "المبلغ",
+            "n_accounts": "عدد الحسابات",
+            "n_rows": "عدد المطالبات",
+        })
+        detail = detail[["هوية العميل", "المحصل_القديم", "المحصّل_الجديد", "المبلغ", "عدد الحسابات", "عدد المطالبات"]]
+        detail = detail.sort_values(["المحصّل_الجديد", "المبلغ"], ascending=[True, False]).reset_index(drop=True)
+
+        # تصدير مطالبات الجدد فقط
+        export_cols_front = ["المحصل_الجديد", "المحصل_القديم", neg_client_col, neg_account_col, neg_amount_col, neg_state_col]
+        export_cols_front = [c for c in export_cols_front if c in assigned_rows.columns]
+        rest = [c for c in assigned_rows.columns if c not in export_cols_front and not str(c).startswith("_")]
+        row_level_export = assigned_rows[export_cols_front + rest].copy()
+
+        if skipped_existing:
+            warnings = list(warnings or [])
+            warnings.append(f"تم استبعاد {skipped_existing:,} صف لعملاء موجودين بالفعل في المحفظة")
+
+        if match_existing_avg and not new_summary.empty:
+            warnings = list(warnings or [])
+            warnings.append(
+                f"متوسط المحفظة الحالية: عملاء {avg_clients:,.1f} · حسابات {avg_accounts:,.1f} · مبلغ {avg_amount:,.0f} — "
+                "قارن مع صفوف المحصلين الجدد في الملخص"
+            )
+
+        result = {
+            "scenario": "new_collector",
+            "filename": neglect_up.name,
+            "portfolio_name": portfolio_up.name,
+            "file_hash": uploaded_file_hash(neglect_up),
+            "portfolio_hash": uploaded_file_hash(portfolio_up),
+            "new_names": new_names,
+            "selected_states": selected_states,
+            "summary": new_summary,
+            "detail": detail,
+            "row_level_export": row_level_export,
+            "full_df": full_df,
+            "port_summary": port_summary,
+            "warnings": warnings,
+            "n_clients": int(grouped.shape[0]),
+            "total_amount": float(grouped["amount"].sum()),
+            "sales_col": sales_col,
+            "skipped_existing": skipped_existing,
+            "avg_clients": avg_clients,
+            "avg_accounts": avg_accounts,
+            "avg_amount": avg_amount,
+        }
+        st.session_state[DISTRIBUTION_NEW_RESULT_KEY] = result
+        st.success("✅ تم إنشاء محافظ المحصلين الجدد ودمجها في المحفظة!")
+        st.rerun()
+
+    cached = st.session_state.get(DISTRIBUTION_NEW_RESULT_KEY)
+    if cached and cached.get("portfolio_hash") == uploaded_file_hash(portfolio_up):
+        _render_new_collector_results(cached)
+    elif cached:
+        st.warning("يوجد نتيجة قديمة لملفات مختلفة. نفّذ الإنشاء من جديد.")
+
+
+def _render_new_collector_results(result):
+    """عرض نتائج محصل جديد + التحميل."""
+    st.markdown("---")
+    st.subheader("📊 نتائج محافظ المحصلين الجدد")
+
+    new_names = result.get("new_names") or []
+    n_clients = result.get("n_clients", 0)
+    total_amount = result.get("total_amount", 0)
+
+    k1, k2, k3, k4 = st.columns(4)
+    k1.metric("🆕 عدد المحصلين الجدد", f"{len(new_names)}")
+    k2.metric("👥 عملاء مُسندون", f"{n_clients:,}")
+    k3.metric("💰 إجمالي المبالغ", f"{total_amount:,.0f}")
+    k4.metric("📌 حالات المصدر", f"{len(result.get('selected_states') or [])}")
+
+    if result.get("skipped_existing"):
+        st.info(f"تم استبعاد {result['skipped_existing']:,} صف لعملاء كانوا في المحفظة بالفعل.")
+
+    summary = result.get("summary")
+    if summary is not None and not summary.empty and len(summary) > 1:
+        amt_spread = float(summary["إجمالي المبلغ"].max() - summary["إجمالي المبلغ"].min())
+        cli_spread = int(summary["عدد العملاء"].max() - summary["عدد العملاء"].min())
+        acc_spread = int(summary["عدد الحسابات"].max() - summary["عدد الحسابات"].min())
+        st.markdown("#### 📏 الفروقات بين المحصلين الجدد")
+        s1, s2, s3 = st.columns(3)
+        s1.metric("فرق المبالغ", f"{amt_spread:,.0f}")
+        s2.metric("فرق العملاء", f"{cli_spread}")
+        s3.metric("فرق الحسابات", f"{acc_spread}")
+
+    warnings = result.get("warnings") or []
+    for w in warnings:
+        st.warning(f"⚠️ {w}")
+
+    if summary is not None and not summary.empty:
+        st.markdown("#### ملخص محافظ المحصلين الجدد")
+        st.dataframe(summary, use_container_width=True, hide_index=True)
+
+        fig = px.bar(
+            summary,
+            x="المحصّل",
+            y=["عدد العملاء", "عدد الحسابات"],
+            barmode="group",
+            template=PLOTLY_TEMPLATE,
+            color_discrete_sequence=OPS_SCALE,
+        )
+        _apply_ops_chart_style(fig, "العملاء والحسابات — محصلين جدد", height=380, xaxis_title="", yaxis_title="العدد")
+        st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG, key="newc_summary_chart")
+
+        fig2 = px.bar(
+            summary,
+            x="المحصّل",
+            y="إجمالي المبلغ",
+            template=PLOTLY_TEMPLATE,
+            color="إجمالي المبلغ",
+            color_continuous_scale=OPS_SCALE,
+        )
+        _apply_ops_chart_style(fig2, "المبالغ — محصلين جدد", height=380, xaxis_title="", yaxis_title="المبلغ")
+        st.plotly_chart(fig2, use_container_width=True, config=PLOTLY_CONFIG, key="newc_amount_chart")
+
+    detail = result.get("detail")
+    if detail is not None and not detail.empty:
+        with st.expander("📋 تفاصيل إسناد كل عميل (قديم → جديد)", expanded=False):
+            st.dataframe(detail, use_container_width=True, hide_index=True)
+
+    st.markdown("#### ⬇️ تحميل النتائج")
+    d1, d2 = st.columns(2)
+    with d1:
+        row_level = result.get("row_level_export")
+        if row_level is not None and not row_level.empty:
+            buf = io.BytesIO()
+            with pd.ExcelWriter(buf, engine="openpyxl") as writer:
+                row_level.to_excel(writer, index=False, sheet_name="مطالبات_المحصلين_الجدد")
+                if detail is not None:
+                    detail.to_excel(writer, index=False, sheet_name="إسناد_عملاء")
+                if summary is not None:
+                    summary.to_excel(writer, index=False, sheet_name="ملخص")
+            st.download_button(
+                "📥 مطالبات المحصلين الجدد فقط (+ المحصل القديم)",
+                data=buf.getvalue(),
+                file_name=f"مطالبات_محصلين_جدد_{datetime.now().strftime('%Y%m%d')}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                use_container_width=True,
+                type="primary",
+                key="newc_dl_new_only",
+            )
+    with d2:
+        full_df = result.get("full_df")
+        if full_df is not None:
+            buf2 = io.BytesIO()
+            with pd.ExcelWriter(buf2, engine="openpyxl") as writer:
+                full_df.to_excel(writer, index=False, sheet_name="المحفظة_الكاملة")
+                if summary is not None:
+                    summary.to_excel(writer, index=False, sheet_name="ملخص_الجدد")
+                port_summary = result.get("port_summary")
+                if port_summary is not None and not port_summary.empty:
+                    port_summary.to_excel(writer, index=False, sheet_name="ملخص_الحاليين_قبل")
+            st.download_button(
+                "📥 المحفظة الكاملة بعد إضافة الجدد",
+                data=buf2.getvalue(),
+                file_name=f"محفظة_كاملة_بعد_محصلين_جدد_{datetime.now().strftime('%Y%m%d')}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                use_container_width=True,
+                key="newc_dl_full",
+            )
+
+
+
 def page_distribution():
     """توزيع عملاء المحصل المستقيل على باقي المحصلين (أو إنشاء محفظة لمحصل جديد)."""
     page_header(
@@ -8147,8 +8714,7 @@ def page_distribution():
     st.session_state[DISTRIBUTION_SCENARIO_KEY] = scenario
 
     if scenario == "new_collector":
-        st.info("🚧 حالة «محصل جديد — بناء محفظة» هتتضاف في الخطوة الجاية. حالياً ركزنا على حالة الموظف المستقيل.")
-        st.caption("الفكرة: تختار المحصلين اللي هياخد منهم عملاء، وتحدد نسب أو أعداد، ويتبنى ملف محفظة جديد للمحصل الجديد.")
+        _page_distribution_new_collector()
         return
 
     # ---- حالة المحصل المستقيل ----

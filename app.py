@@ -8374,60 +8374,70 @@ def _nc_equal_pull_for_new(
 
 
 def _page_distribution_new_collector():
-    """واجهة حالة محصل جديد: سحب من الإهمال بالتساوي وبناء محفظة متوازنة."""
+    """محصل جديد على 3 خطوات:
+    1) رفع المحفظة + إدخال المحصلين الجدد + حساب الحصة المستهدفة
+    2) عرض الحسبة (حسابات / عملاء / مبالغ)
+    3) رفع شيت الإهمال والسحب بالتساوي لتغطية الاحتياج
+    """
     st.markdown("---")
     st.markdown("### 🆕 محصّل جديد — بناء محفظة من الإهمال")
     st.caption(
-        "اسحب عملاء من شيت الإهمال بالتساوي من المحصلين المختارين، "
-        "وساوِ الحسابات والعملاء والمبالغ مع مجموعة المقارنة"
+        "الخطوة 1: ارفع المحفظة وسجّل المحصلين الجدد → نحسب الحصة المستهدفة. "
+        "الخطوة 2: ارفع شيت الإهمال → نسحب منه بالتساوي عشان نوصل للهدف."
     )
 
-    st.subheader("1️⃣ رفع المحفظة وشيت الإهمال")
-    up1, up2 = st.columns(2)
-    with up1:
-        wallet_file = st.file_uploader(
-            "📂 محفظة المحصلين الحاليين (Excel / CSV)",
-            type=["xlsx", "xls", "csv"],
-            key=NEW_COLLECTOR_WALLET_UPLOAD_KEY,
-            on_change=sync_file_cache,
-            args=(NEW_COLLECTOR_WALLET_UPLOAD_KEY, NEW_COLLECTOR_WALLET_CACHE, [NEW_COLLECTOR_RESULT_KEY]),
-        )
-    with up2:
-        neglect_file = st.file_uploader(
-            "📂 شيت الإهمال (Excel / CSV)",
-            type=["xlsx", "xls", "csv"],
-            key=NEW_COLLECTOR_NEGLECT_UPLOAD_KEY,
-            on_change=sync_file_cache,
-            args=(NEW_COLLECTOR_NEGLECT_UPLOAD_KEY, NEW_COLLECTOR_NEGLECT_CACHE, [NEW_COLLECTOR_RESULT_KEY]),
-        )
+    # =========================
+    # الخطوة 1: المحفظة + المحصلين الجدد + الحسبة
+    # =========================
+    st.subheader("1️⃣ رفع المحفظة وإدخال المحصلين الجدد")
 
-    cached = st.session_state.get(NEW_COLLECTOR_RESULT_KEY)
-    if wallet_file is None or neglect_file is None:
-        if cached:
-            st.success("✅ نتيجة سابقة محفوظة — ارفع الملفين من جديد لإعادة الحساب أو راجع الملخص بالأسفل.")
-            _render_new_collector_results(cached)
+    wallet_file = st.file_uploader(
+        "📂 ارفع محفظة المحصلين الحاليين (Excel / CSV)",
+        type=["xlsx", "xls", "csv"],
+        key=NEW_COLLECTOR_WALLET_UPLOAD_KEY,
+        on_change=sync_file_cache,
+        args=(NEW_COLLECTOR_WALLET_UPLOAD_KEY, NEW_COLLECTOR_WALLET_CACHE, [NEW_COLLECTOR_RESULT_KEY]),
+    )
+
+    # استرجاع محفظة من كاش الجلسة لو الملف اتشال مؤقتًا بعد الحساب
+    wallet_cache_key = "nc_wallet_df_cache"
+    wallet_meta_key = "nc_wallet_meta_cache"
+
+    if wallet_file is not None:
+        try:
+            wallet_df = _nc_prepare_df(wallet_file)
+            st.session_state[wallet_cache_key] = wallet_df
+            st.session_state[wallet_meta_key] = {
+                "filename": wallet_file.name,
+                "file_hash": uploaded_file_hash(wallet_file),
+                "rows": len(wallet_df),
+            }
+        except Exception as e:
+            st.error(f"تعذر قراءة المحفظة: {e}")
+            return
+    else:
+        wallet_df = st.session_state.get(wallet_cache_key)
+        meta = st.session_state.get(wallet_meta_key) or {}
+        if wallet_df is not None:
+            st.success(
+                f"✅ المحفظة محفوظة: **{meta.get('filename', '—')}** "
+                f"({meta.get('rows', len(wallet_df)):,} صف). ارفعها من جديد فقط لو عايز تغيّرها."
+            )
         else:
-            st.info("ارفع **المحفظة** و**شيت الإهمال** معًا لبدء التوزيع.")
-        return
-
-    try:
-        wallet_df = _nc_prepare_df(wallet_file)
-        neglect_df = _nc_prepare_df(neglect_file)
-    except Exception as e:
-        st.error(f"تعذر قراءة أحد الملفات: {e}")
-        return
+            st.info("ارفع **المحفظة** أولاً عشان نحسب حصة كل محصل بعد إضافة الجدد.")
+            cached = st.session_state.get(NEW_COLLECTOR_RESULT_KEY)
+            if cached:
+                _render_new_collector_results(cached)
+            return
 
     st.caption(
-        f"المحفظة: **{wallet_file.name}** ({len(wallet_df):,} صف) · "
-        f"الإهمال: **{neglect_file.name}** ({len(neglect_df):,} صف)"
+        f"المحفظة: **{(st.session_state.get(wallet_meta_key) or {}).get('filename', '—')}** · "
+        f"**{len(wallet_df):,}** صف"
     )
 
-    st.markdown("---")
-    st.subheader("2️⃣ تحديد الأعمدة")
-
+    # ---- أعمدة المحفظة ----
+    st.markdown("##### 💼 أعمدة المحفظة")
     w_cols = list(wallet_df.columns)
-    n_cols = list(neglect_df.columns)
-
     det_w_sales = find_column(wallet_df, SALES_PERSON_CANDIDATES) or (w_cols[0] if w_cols else None)
     det_w_client = (
         find_column(wallet_df, WALLET_CUSTOMER_ID_CANDIDATES)
@@ -8436,22 +8446,12 @@ def _page_distribution_new_collector():
     )
     det_w_account = find_column(wallet_df, ACCOUNT_NUMBER_CANDIDATES) or det_w_client
     det_w_amount = find_column(wallet_df, PROMISE_NET_AMOUNT_CANDIDATES)
-    det_n_sales = find_column(neglect_df, SALES_PERSON_CANDIDATES) or (n_cols[0] if n_cols else None)
-    det_n_account = (
-        find_column(neglect_df, ACCOUNT_NUMBER_CANDIDATES)
-        or find_column(neglect_df, WALLET_CUSTOMER_ID_CANDIDATES)
-        or find_column(neglect_df, ID_CANDIDATES)
-    )
-    det_n_state = find_column(neglect_df, PROMISE_SUB_STATE_CANDIDATES) or find_column(
-        neglect_df, WALLET_CUSTOMER_STATE_CANDIDATES
-    )
 
     def _idx(options, val):
         if val in options:
             return options.index(val)
         return 0
 
-    st.markdown("##### 💼 أعمدة المحفظة")
     wc1, wc2, wc3, wc4 = st.columns(4)
     with wc1:
         w_sales_col = st.selectbox("👤 المحصّل", w_cols, index=_idx(w_cols, det_w_sales), key="nc_w_sales")
@@ -8467,7 +8467,198 @@ def _page_distribution_new_collector():
             key="nc_w_amount",
         )
 
+    wallet_agents = _nc_valid_values(wallet_df[w_sales_col])
+
+    # ---- محصلين المقارنة ----
+    with st.container(border=True):
+        st.markdown("#### 📊 محصلين المقارنة في المحفظة")
+        st.caption("المجموعة اللي هتتحسب عليها المساواة بعد إضافة المحصلين الجدد.")
+        compare_agents = _nc_pretty_multiselect(
+            "محصلين المقارنة",
+            wallet_agents,
+            key="nc_compare_agents",
+            help_text="multi-select · افتراضيًا كل المحصلين",
+            default=wallet_agents,
+        )
+
+    # ---- أسماء المحصلين الجدد ----
+    st.markdown("##### 🆕 المحصلين الجدد")
+    st.caption("اكتب اسم كل محصل جديد في سطر مستقل. الحسبة هتقسم الإجمالي بالتساوي على (المقارنة + الجدد).")
+    new_names_raw = st.text_area(
+        "أسماء المحصلين الجدد (سطر لكل اسم)",
+        value=st.session_state.get("nc_new_names_text", "محصل جديد"),
+        key="nc_new_names_text_widget",
+        height=100,
+        placeholder="مثال:\nأحمد علي\nمحمود حسن",
+    )
+    st.session_state["nc_new_names_text"] = new_names_raw
+    new_names = []
+    seen = set()
+    for line in (new_names_raw or "").splitlines():
+        name = line.strip()
+        if not name:
+            continue
+        if name in seen:
+            continue
+        if name in wallet_agents:
+            st.warning(f"الاسم «{name}» موجود بالفعل في المحفظة — هيتجاهل كمحصل جديد.")
+            continue
+        seen.add(name)
+        new_names.append(name)
+
+    if not compare_agents:
+        st.warning("اختر محصل واحد على الأقل للمقارنة.")
+        return
+    if not new_names:
+        st.warning("أدخل اسم محصل جديد واحد على الأقل.")
+        return
+
+    # ---- الحسبة ----
+    st.markdown("---")
+    st.subheader("2️⃣ الحسبة — الحصة المستهدفة بعد إضافة الجدد")
+
+    stats = _nc_agent_stats(
+        wallet_df, w_sales_col, w_client_col, w_account_col, w_amount_col, agents=compare_agents
+    )
+    if stats.empty:
+        st.error("لا توجد بيانات للمحصلين المختارين في المحفظة.")
+        return
+
+    total_clients = int(stats["عدد العملاء"].sum())
+    total_accounts = int(stats["عدد الحسابات"].sum())
+    total_amount = float(stats["إجمالي المبلغ"].sum())
+    n_group = len(compare_agents) + len(new_names)
+    target_clients = max(1, int(round(total_clients / n_group))) if n_group else 0
+    target_accounts = max(1, int(round(total_accounts / n_group))) if n_group else 0
+    target_amount = (total_amount / n_group) if n_group else 0.0
+
+    # احتياج الإجمالي لكل الجدد مجتمعين
+    need_clients_total = target_clients * len(new_names)
+    need_accounts_total = target_accounts * len(new_names)
+    need_amount_total = target_amount * len(new_names)
+
+    k1, k2, k3, k4 = st.columns(4)
+    k1.metric("👥 إجمالي عملاء المقارنة", f"{total_clients:,}")
+    k2.metric("🔢 إجمالي الحسابات", f"{total_accounts:,}")
+    k3.metric("💰 إجمالي المبالغ", f"{total_amount:,.0f}")
+    k4.metric("📐 عدد المجموعة بعد الإضافة", f"{n_group} ({len(compare_agents)}+{len(new_names)})")
+
+    st.markdown(
+        f"**الحصة المستهدفة لكل محصل (حالي أو جديد):** "
+        f"`{target_clients}` عميل · `{target_accounts}` حساب · `{target_amount:,.0f}` مبلغ"
+    )
+    st.markdown(
+        f"**إجمالي المطلوب سحبه للجدد ({len(new_names)}):** "
+        f"`{need_clients_total}` عميل · `{need_accounts_total}` حساب · `{need_amount_total:,.0f}` مبلغ"
+    )
+
+    # جدول الوضع الحالي مقابل الهدف للمانحين المحتملين
+    plan = stats.copy()
+    plan["هدف العملاء"] = target_clients
+    plan["هدف الحسابات"] = target_accounts
+    plan["هدف المبلغ"] = round(target_amount, 2)
+    plan["فائض عملاء"] = (plan["عدد العملاء"] - target_clients).clip(lower=0)
+    plan["فائض حسابات"] = (plan["عدد الحسابات"] - target_accounts).clip(lower=0)
+    plan["فائض مبلغ"] = (plan["إجمالي المبلغ"] - target_amount).clip(lower=0).round(2)
+
+    st.markdown("##### وضع المحصلين الحاليين مقابل الهدف")
+    st.dataframe(plan, use_container_width=True, hide_index=True)
+
+    new_plan = pd.DataFrame(
+        [
+            {
+                "المحصّل الجديد": name,
+                "هدف العملاء": target_clients,
+                "هدف الحسابات": target_accounts,
+                "هدف المبلغ": round(target_amount, 2),
+            }
+            for name in new_names
+        ]
+    )
+    st.markdown("##### أهداف المحصلين الجدد")
+    st.dataframe(new_plan, use_container_width=True, hide_index=True)
+
+    # حفظ الحسبة في الجلسة للخطوة التالية
+    st.session_state["nc_plan_cache"] = {
+        "compare_agents": compare_agents,
+        "new_names": new_names,
+        "w_sales_col": w_sales_col,
+        "w_client_col": w_client_col,
+        "w_account_col": w_account_col,
+        "w_amount_col": w_amount_col,
+        "target_clients": target_clients,
+        "target_accounts": target_accounts,
+        "target_amount": target_amount,
+        "need_clients_total": need_clients_total,
+        "need_accounts_total": need_accounts_total,
+        "need_amount_total": need_amount_total,
+        "before_stats": stats,
+        "plan": plan,
+        "new_plan": new_plan,
+    }
+
+    # =========================
+    # الخطوة 3: شيت الإهمال + السحب
+    # =========================
+    st.markdown("---")
+    st.subheader("3️⃣ رفع شيت الإهمال والسحب حسب الاحتياج")
+    st.caption("بعد ما شفت الحسبة فوق — ارفع شيت الإهمال واختار الحالات والمانحين، والسحب هيتم بالتساوي لتغطية أهداف الجدد.")
+
+    neglect_file = st.file_uploader(
+        "📂 ارفع شيت الإهمال (Excel / CSV)",
+        type=["xlsx", "xls", "csv"],
+        key=NEW_COLLECTOR_NEGLECT_UPLOAD_KEY,
+        on_change=sync_file_cache,
+        args=(NEW_COLLECTOR_NEGLECT_UPLOAD_KEY, NEW_COLLECTOR_NEGLECT_CACHE, [NEW_COLLECTOR_RESULT_KEY]),
+    )
+
+    neglect_cache_key = "nc_neglect_df_cache"
+    neglect_meta_key = "nc_neglect_meta_cache"
+    if neglect_file is not None:
+        try:
+            neglect_df = _nc_prepare_df(neglect_file)
+            st.session_state[neglect_cache_key] = neglect_df
+            st.session_state[neglect_meta_key] = {
+                "filename": neglect_file.name,
+                "file_hash": uploaded_file_hash(neglect_file),
+                "rows": len(neglect_df),
+            }
+        except Exception as e:
+            st.error(f"تعذر قراءة شيت الإهمال: {e}")
+            return
+    else:
+        neglect_df = st.session_state.get(neglect_cache_key)
+        nmeta = st.session_state.get(neglect_meta_key) or {}
+        if neglect_df is not None:
+            st.success(
+                f"✅ شيت الإهمال محفوظ: **{nmeta.get('filename', '—')}** "
+                f"({nmeta.get('rows', len(neglect_df)):,} صف)."
+            )
+        else:
+            st.info("ارفع **شيت الإهمال** عشان نسحب منه العملاء/الحسابات المطلوبة للجدد.")
+            cached = st.session_state.get(NEW_COLLECTOR_RESULT_KEY)
+            if cached:
+                _render_new_collector_results(cached)
+            return
+
+    st.caption(
+        f"الإهمال: **{(st.session_state.get(neglect_meta_key) or {}).get('filename', '—')}** · "
+        f"**{len(neglect_df):,}** صف"
+    )
+
+    # أعمدة الإهمال
     st.markdown("##### ⚠️ أعمدة شيت الإهمال")
+    n_cols = list(neglect_df.columns)
+    det_n_sales = find_column(neglect_df, SALES_PERSON_CANDIDATES) or (n_cols[0] if n_cols else None)
+    det_n_account = (
+        find_column(neglect_df, ACCOUNT_NUMBER_CANDIDATES)
+        or find_column(neglect_df, WALLET_CUSTOMER_ID_CANDIDATES)
+        or find_column(neglect_df, ID_CANDIDATES)
+    )
+    det_n_state = find_column(neglect_df, PROMISE_SUB_STATE_CANDIDATES) or find_column(
+        neglect_df, WALLET_CUSTOMER_STATE_CANDIDATES
+    )
+
     nc1, nc2, nc3 = st.columns(3)
     with nc1:
         n_sales_col = st.selectbox("👤 المحصّل", n_cols, index=_idx(n_cols, det_n_sales), key="nc_n_sales")
@@ -8483,27 +8674,12 @@ def _page_distribution_new_collector():
             key="nc_n_state",
         )
 
-    st.markdown("---")
-    st.subheader("3️⃣ السلايسرز")
-
-    wallet_agents = _nc_valid_values(wallet_df[w_sales_col])
     neglect_agents = _nc_valid_values(neglect_df[n_sales_col])
     neglect_states = _nc_valid_values(neglect_df[n_state_col]) if n_state_col in neglect_df.columns else []
 
     with st.container(border=True):
-        st.markdown("#### 📊 محصلين المقارنة في المحفظة")
-        st.caption("هتحسب عليهم متوسط الحسابات / العملاء / المبالغ عشان تحدد احتياج المحصل الجديد.")
-        compare_agents = _nc_pretty_multiselect(
-            "محصلين المقارنة",
-            wallet_agents,
-            key="nc_compare_agents",
-            help_text="multi-select · افتراضيًا كل المحصلين",
-            default=wallet_agents,
-        )
-
-    with st.container(border=True):
         st.markdown("#### 🏷️ حالات شيت الإهمال")
-        st.caption("العملاء/الحسابات اللي حالتها ضمن الاختيار هي اللي هتتسحب للجديد.")
+        st.caption("هنتسحب فقط الحسابات اللي حالتها ضمن الاختيار.")
         selected_states = _nc_pretty_multiselect(
             "حالات الإهمال",
             neglect_states,
@@ -8514,62 +8690,47 @@ def _page_distribution_new_collector():
 
     with st.container(border=True):
         st.markdown("#### 🤝 المحصلين اللي هتسحب منهم")
-        st.caption("السحب بالتساوي round-robin من كل محصل مختار (من تقاطع المحفظة × الإهمال).")
-        donor_candidates = sorted(set(wallet_agents) & set(neglect_agents)) or list(wallet_agents)
+        st.caption("السحب بالتساوي round-robin من كل مانح (تقاطع المحفظة × الإهمال).")
+        donor_candidates = [a for a in compare_agents if a in set(wallet_agents) & set(neglect_agents)]
+        if not donor_candidates:
+            donor_candidates = sorted(set(wallet_agents) & set(neglect_agents)) or list(compare_agents)
         donor_agents = _nc_pretty_multiselect(
             "المانحين",
             donor_candidates,
             key="nc_donor_agents",
-            help_text="multi-select · يُفضَّل يكونوا ضمن محصلين المقارنة",
+            help_text="multi-select",
             default=donor_candidates,
         )
 
-    new_name = st.text_input(
-        "🆕 اسم المحصل الجديد",
-        value=st.session_state.get("nc_new_name", "محصل جديد"),
-        key="nc_new_name_input",
-    ).strip() or "محصل جديد"
-    st.session_state["nc_new_name"] = new_name
-
-    if not compare_agents:
-        st.warning("اختر محصل واحد على الأقل للمقارنة.")
-        return
     if not donor_agents:
         st.warning("اختر محصل واحد على الأقل للسحب منه.")
         return
 
-    st.markdown("---")
-    st.subheader("4️⃣ وضع المحفظة الحالي واحتياج الجديد")
-
-    stats = _nc_agent_stats(
-        wallet_df, w_sales_col, w_client_col, w_account_col, w_amount_col, agents=compare_agents
-    )
-    if stats.empty:
-        st.error("لا توجد بيانات للمحصلين المختارين في المحفظة.")
-        return
-
-    total_clients = int(stats["عدد العملاء"].sum())
-    total_accounts = int(stats["عدد الحسابات"].sum())
-    total_amount = float(stats["إجمالي المبلغ"].sum())
-    n_group = len(compare_agents) + 1
-    target_clients = max(1, int(round(total_clients / n_group)))
-    target_accounts = max(1, int(round(total_accounts / n_group)))
-    target_amount = total_amount / n_group if n_group else 0.0
-
-    k1, k2, k3, k4 = st.columns(4)
-    k1.metric("👥 إجمالي عملاء المقارنة", f"{total_clients:,}")
-    k2.metric("🔢 إجمالي الحسابات", f"{total_accounts:,}")
-    k3.metric("💰 إجمالي المبالغ", f"{total_amount:,.0f}")
-    k4.metric("🆕 هدف الجديد (≈ حصة)", f"{target_clients} عميل · {target_accounts} حساب")
-
-    st.markdown(
-        f"**الهدف التقريبي للمحصل الجديد بعد المساواة على {len(compare_agents)} + 1:** "
-        f"`{target_clients}` عميل · `{target_accounts}` حساب · `{target_amount:,.0f}` مبلغ"
-    )
-    st.dataframe(stats, use_container_width=True, hide_index=True)
-
-    st.markdown("---")
-    st.subheader("5️⃣ تنفيذ السحب بالتساوي")
+    # أهداف قابلة للتعديل (إجمالي للجدد)
+    st.markdown("##### 🎯 تأكيد / تعديل الاحتياج الإجمالي للجدد")
+    col_t1, col_t2, col_t3 = st.columns(3)
+    with col_t1:
+        use_target_clients = st.number_input(
+            "إجمالي عملاء مطلوب للجدد",
+            min_value=0,
+            value=int(need_clients_total),
+            key="nc_tgt_clients",
+        )
+    with col_t2:
+        use_target_accounts = st.number_input(
+            "إجمالي حسابات مطلوب للجدد",
+            min_value=0,
+            value=int(need_accounts_total),
+            key="nc_tgt_accounts",
+        )
+    with col_t3:
+        use_target_amount = st.number_input(
+            "إجمالي مبلغ مطلوب للجدد",
+            min_value=0.0,
+            value=float(round(need_amount_total, 2)),
+            key="nc_tgt_amount",
+            step=1000.0,
+        )
 
     customers_pool, eligible_rows = _nc_build_pool_from_neglect(
         wallet_df,
@@ -8606,142 +8767,140 @@ def _page_distribution_new_collector():
     p3.metric("مبالغ متاحة", f"{float(customers_pool['amount'].sum()):,.0f}")
     st.dataframe(pool_summary, use_container_width=True, hide_index=True)
 
-    col_t1, col_t2, col_t3 = st.columns(3)
-    with col_t1:
-        use_target_clients = st.number_input(
-            "هدف عدد العملاء للجديد", min_value=0, value=int(target_clients), key="nc_tgt_clients"
-        )
-    with col_t2:
-        use_target_accounts = st.number_input(
-            "هدف عدد الحسابات للجديد", min_value=0, value=int(target_accounts), key="nc_tgt_accounts"
-        )
-    with col_t3:
-        use_target_amount = st.number_input(
-            "هدف المبلغ للجديد",
-            min_value=0.0,
-            value=float(round(target_amount, 2)),
-            key="nc_tgt_amount",
-            step=1000.0,
-        )
-
     run = st.button(
-        "🚀 تنفيذ توزيع المحصل الجديد",
+        "🚀 تنفيذ توزيع المحصلين الجدد",
         type="primary",
         use_container_width=True,
         key="nc_run_btn",
     )
-    if run:
-        selected, detail = _nc_equal_pull_for_new(
-            customers_pool,
-            donor_agents,
-            target_clients=use_target_clients or None,
-            target_accounts=use_target_accounts or None,
-            target_amount=use_target_amount or None,
+    if not run:
+        cached = st.session_state.get(NEW_COLLECTOR_RESULT_KEY)
+        if cached:
+            _render_new_collector_results(cached)
+        return
+
+    # سحب إجمالي يغطي احتياج كل الجدد، ثم توزيع المسحوب بالتساوي على الجدد
+    selected, detail = _nc_equal_pull_for_new(
+        customers_pool,
+        donor_agents,
+        target_clients=use_target_clients or None,
+        target_accounts=use_target_accounts or None,
+        target_amount=use_target_amount or None,
+    )
+    if not selected:
+        st.error("لم يتم سحب أي عميل — جرّب توسيع الحالات أو المحصلين المانحين.")
+        return
+
+    # توزيع العملاء المسحوبين على المحصلين الجدد بالتساوي (round-robin حسب الحجم)
+    ordered = sorted(selected, key=lambda r: (-float(r["amount"]), -int(r["n_accounts"])))
+    assign_new = {name: [] for name in new_names}
+    loads = {
+        name: {"amount": 0.0, "clients": 0, "accounts": 0}
+        for name in new_names
+    }
+    for cand in ordered:
+        # اختار الجديد الأقل حملاً
+        dest = min(
+            new_names,
+            key=lambda n: (loads[n]["amount"], loads[n]["accounts"], loads[n]["clients"], n),
         )
-        if not selected:
-            st.error("لم يتم سحب أي عميل — جرّب توسيع الحالات أو المحصلين المانحين.")
-            return
+        assign_new[dest].append(cand)
+        loads[dest]["amount"] += float(cand["amount"])
+        loads[dest]["clients"] += 1
+        loads[dest]["accounts"] += int(cand["n_accounts"])
 
-        taken_clients = {r["client_key"] for r in selected}
-        wal = wallet_df.copy()
-        wal["_sales"] = _nc_clean_str_series(wal[w_sales_col])
-        wal["_client"] = _nc_clean_str_series(wal[w_client_col])
-        move_mask = wal["_client"].isin(taken_clients) & wal["_sales"].isin(set(donor_agents))
-        moved_rows = wal.loc[move_mask].copy()
-        stayed = wal.loc[~move_mask].copy()
+    client_to_new = {}
+    for new_name, items in assign_new.items():
+        for it in items:
+            client_to_new[it["client_key"]] = new_name
 
-        moved_rows[w_sales_col] = new_name
-        full_df = pd.concat(
-            [
-                stayed.drop(columns=["_sales", "_client"], errors="ignore"),
-                moved_rows.drop(columns=["_sales", "_client"], errors="ignore"),
-            ],
-            ignore_index=True,
-        )
+    taken_clients = set(client_to_new.keys())
+    wal = wallet_df.copy()
+    wal["_sales"] = _nc_clean_str_series(wal[w_sales_col])
+    wal["_client"] = _nc_clean_str_series(wal[w_client_col])
+    move_mask = wal["_client"].isin(taken_clients) & wal["_sales"].isin(set(donor_agents))
+    moved_rows = wal.loc[move_mask].copy()
+    stayed = wal.loc[~move_mask].copy()
 
-        after_agents = list(compare_agents) + [new_name]
-        after_stats = _nc_agent_stats(
-            full_df, w_sales_col, w_client_col, w_account_col, w_amount_col, agents=after_agents
-        )
+    moved_rows[w_sales_col] = moved_rows["_client"].map(client_to_new)
+    full_df = pd.concat(
+        [
+            stayed.drop(columns=["_sales", "_client"], errors="ignore"),
+            moved_rows.drop(columns=["_sales", "_client"], errors="ignore"),
+        ],
+        ignore_index=True,
+    )
 
-        detail_out = detail.copy() if detail is not None else pd.DataFrame()
-        if not detail_out.empty:
-            detail_out = detail_out.rename(
-                columns={
-                    "donor": "من المحصّل",
-                    "client_key": "هوية العميل",
-                    "amount": "المبلغ",
-                    "n_accounts": "عدد الحسابات",
-                    "n_rows": "عدد الصفوف",
+    after_agents = list(compare_agents) + list(new_names)
+    after_stats = _nc_agent_stats(
+        full_df, w_sales_col, w_client_col, w_account_col, w_amount_col, agents=after_agents
+    )
+
+    detail_rows = []
+    for new_name, items in assign_new.items():
+        for it in items:
+            detail_rows.append(
+                {
+                    "هوية العميل": it["client_key"],
+                    "من المحصّل": it["donor"],
+                    "إلى المحصّل": new_name,
+                    "المبلغ": it["amount"],
+                    "عدد الحسابات": it["n_accounts"],
+                    "عدد الصفوف": it["n_rows"],
                 }
             )
-            detail_out["إلى المحصّل"] = new_name
-            cols_order = [
-                c
-                for c in ["هوية العميل", "من المحصّل", "إلى المحصّل", "المبلغ", "عدد الحسابات", "عدد الصفوف"]
-                if c in detail_out.columns
-            ]
-            detail_out = detail_out[cols_order]
+    detail_out = pd.DataFrame(detail_rows)
+    if not detail_out.empty:
+        detail_out = detail_out.sort_values(
+            ["إلى المحصّل", "المبلغ"], ascending=[True, False]
+        ).reset_index(drop=True)
 
-        check = full_df.copy()
-        check["_c"] = _nc_clean_str_series(check[w_client_col])
-        check["_s"] = _nc_clean_str_series(check[w_sales_col])
-        multi = check.groupby("_c")["_s"].nunique()
-        multi_clients = int((multi > 1).sum())
+    check = full_df.copy()
+    check["_c"] = _nc_clean_str_series(check[w_client_col])
+    check["_s"] = _nc_clean_str_series(check[w_sales_col])
+    multi = check.groupby("_c")["_s"].nunique()
+    multi_clients = int((multi > 1).sum())
 
-        result = {
-            "scenario": "new_collector",
-            "filename_wallet": wallet_file.name,
-            "filename_neglect": neglect_file.name,
-            "file_hash": uploaded_file_hash(wallet_file) + ":" + uploaded_file_hash(neglect_file),
-            "new_name": new_name,
-            "compare_agents": compare_agents,
-            "donor_agents": donor_agents,
-            "selected_states": selected_states,
-            "before_stats": stats,
-            "after_stats": after_stats,
-            "detail": detail_out,
-            "moved_rows": moved_rows.drop(columns=["_sales", "_client"], errors="ignore"),
-            "full_df": full_df,
-            "pool_summary": pool_summary,
-            "targets": {
-                "clients": use_target_clients,
-                "accounts": use_target_accounts,
-                "amount": use_target_amount,
-            },
-            "got": {
-                "clients": (
-                    int(detail_out["هوية العميل"].nunique())
-                    if not detail_out.empty and "هوية العميل" in detail_out.columns
-                    else len(selected)
-                ),
-                "accounts": (
-                    int(detail_out["عدد الحسابات"].sum())
-                    if not detail_out.empty and "عدد الحسابات" in detail_out.columns
-                    else 0
-                ),
-                "amount": (
-                    float(detail_out["المبلغ"].sum())
-                    if not detail_out.empty and "المبلغ" in detail_out.columns
-                    else 0.0
-                ),
-            },
-            "multi_client_violations": multi_clients,
-            "sales_col": w_sales_col,
-            "client_col": w_client_col,
-            "account_col": w_account_col,
-            "amount_col": w_amount_col,
-        }
-        st.session_state[NEW_COLLECTOR_RESULT_KEY] = result
-        st.success(
-            f"✅ تم بناء محفظة **{new_name}** بسحب {result['got']['clients']} عميل بالتساوي من المانحين."
-        )
-        st.rerun()
-
-    cached = st.session_state.get(NEW_COLLECTOR_RESULT_KEY)
-    if cached:
-        _render_new_collector_results(cached)
-
+    result = {
+        "scenario": "new_collector",
+        "filename_wallet": (st.session_state.get(wallet_meta_key) or {}).get("filename", "wallet"),
+        "filename_neglect": (st.session_state.get(neglect_meta_key) or {}).get("filename", "neglect"),
+        "file_hash": f"{(st.session_state.get(wallet_meta_key) or {}).get('file_hash', '')}:{(st.session_state.get(neglect_meta_key) or {}).get('file_hash', '')}",
+        "new_name": " · ".join(new_names),
+        "new_names": new_names,
+        "compare_agents": compare_agents,
+        "donor_agents": donor_agents,
+        "selected_states": selected_states,
+        "before_stats": stats,
+        "after_stats": after_stats,
+        "detail": detail_out,
+        "moved_rows": moved_rows.drop(columns=["_sales", "_client"], errors="ignore"),
+        "full_df": full_df,
+        "pool_summary": pool_summary,
+        "targets": {
+            "clients": use_target_clients,
+            "accounts": use_target_accounts,
+            "amount": use_target_amount,
+            "per_collector_clients": target_clients,
+            "per_collector_accounts": target_accounts,
+            "per_collector_amount": target_amount,
+        },
+        "got": {
+            "clients": int(detail_out["هوية العميل"].nunique()) if not detail_out.empty else 0,
+            "accounts": int(detail_out["عدد الحسابات"].sum()) if not detail_out.empty else 0,
+            "amount": float(detail_out["المبلغ"].sum()) if not detail_out.empty else 0.0,
+        },
+        "multi_client_violations": multi_clients,
+        "sales_col": w_sales_col,
+        "client_col": w_client_col,
+        "account_col": w_account_col,
+        "amount_col": w_amount_col,
+    }
+    st.session_state[NEW_COLLECTOR_RESULT_KEY] = result
+    st.success(
+        f"✅ تم بناء محافظ الجدد ({len(new_names)}) بسحب {result['got']['clients']} عميل بالتساوي من المانحين."
+    )
+    st.rerun()
 
 def _render_new_collector_results(result):
     """عرض نتائج توزيع المحصل الجديد."""

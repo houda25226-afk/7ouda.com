@@ -926,7 +926,22 @@ st.set_page_config(
     page_icon="🟢",
     layout="wide",
     initial_sidebar_state="expanded",
+    menu_items={
+        "Get Help": "https://docs.streamlit.io/",
+        "Report a bug": None,
+        "About": (
+            "### إجادة — إدارة المحافظ ونشاط المحصلين\n"
+            "تصنيف إفادات المكالمات + الوقت المهدر + الداشبورد.\n\n"
+            "الموديل: `Mahmoud252002/7oudaModel`"
+        ),
+    },
 )
+
+# إظهار قائمة Streamlit كاملة (وضع المطوّر)
+try:
+    st.set_option("client.toolbarMode", "developer")
+except Exception:
+    pass
 
 # ==========================================================
 # الهوية البصرية (Theme)
@@ -1002,15 +1017,8 @@ THEMES = {
 
 def _detect_native_streamlit_theme() -> str:
     """
-    بيقرأ الوضع (Light/Dark) اللي المستخدم مختاره فعليًا من قائمة
-    إعدادات Streamlit نفسها ("⋮" ← Settings ← Choose app theme)
-    أو من شريط الثيم السفلي (System / Light / Dark).
-
-    - light / dark: يُستخدم مباشرة.
-    - system: Streamlit يحلّه لـ light أو dark حسب نظام التشغيل؛
-      لو رجّع "system" صراحةً نحاول قراءة base من السياق أو نحتفظ بآخر قيمة.
-    عن طريق st.context.theme.type (متاحة من Streamlit 1.46+).
-    لو مش متاحة لأي سبب، بيرجع لآخر قيمة في session_state أو "dark".
+    بيقرأ الوضع (Light/Dark) من قائمة Streamlit (⋮) أو شريط الثيم.
+    يدعم light / dark / system.
     """
     try:
         ctx_theme = st.context.theme
@@ -1021,7 +1029,6 @@ def _detect_native_streamlit_theme() -> str:
             theme_type = theme_type.strip().lower()
         if theme_type in ("light", "dark"):
             return theme_type
-        # System أو قيمة غير معروفة: جرّب base كإشارة للوضع المحلول
         if theme_type in ("system", None, ""):
             base = getattr(ctx_theme, "base", None)
             if base is None and hasattr(ctx_theme, "get"):
@@ -1094,7 +1101,7 @@ html, body, [class*="css"]  {{
   margin-bottom: 4rem !important;
 }}
 
-/* هيدر Streamlit — ظاهر عشان قائمة الإعدادات (⋮) والأدوات تفضل شغّالة */
+/* هيدر Streamlit ظاهر — قائمة ⋮ كاملة */
 header[data-testid="stHeader"] {{
   background: {t["bg"]}ee !important;
   backdrop-filter: blur(8px);
@@ -1105,21 +1112,22 @@ header[data-testid="stHeader"] {{
   background-color: {t["bg"]}ee !important;
   visibility: visible !important;
 }}
-/* شريط الزخرفة العلوي فقط — مش بنخفي القائمة */
 div[data-testid="stDecoration"] {{
   display: none !important;
 }}
-/* تأكيد ظهور قائمة الإعدادات وشريط الأدوات */
 #MainMenu,
 [data-testid="stMainMenu"],
 [data-testid="stToolbar"],
 [data-testid="stHeader"] button,
 [data-testid="baseButton-header"],
 [data-testid="stAppDeployButton"],
-[data-testid="stStatusWidget"] {{
+[data-testid="stStatusWidget"],
+[data-testid="stBaseButton-headerNoPadding"],
+[kind="header"] {{
   visibility: visible !important;
   opacity: 1 !important;
   pointer-events: auto !important;
+  display: inline-flex !important;
 }}
 
 

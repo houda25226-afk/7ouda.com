@@ -8210,6 +8210,62 @@ def _select_clients_to_match_targets(
 
 
 
+
+def _parse_new_collector_names(raw_text: str):
+    """استخراج أسماء المحصلين الجدد من نص متعدد الأسطر / فواصل."""
+    if not raw_text:
+        return []
+    parts = []
+    for line in str(raw_text).replace(",", "\n").replace("،", "\n").splitlines():
+        name = line.strip()
+        if name:
+            parts.append(name)
+    seen = set()
+    out = []
+    for n in parts:
+        key = n.lower()
+        if key not in seen:
+            seen.add(key)
+            out.append(n)
+    return out
+
+
+def _portfolio_collector_stats(df, sales_col, client_key_col, account_key_col, amount_cols):
+    """ملخص المحفظة الحالية لكل محصل: عملاء / حسابات / مبلغ."""
+    work = df.copy()
+    work["_sales"] = work[sales_col].astype(str).str.strip()
+    work = work[~work["_sales"].str.lower().isin({"nan", "none", "null", ""})]
+    work["_client"] = work[client_key_col].astype(str).str.strip()
+    work["_account"] = (
+        work[account_key_col].astype(str).str.strip()
+        if account_key_col and account_key_col in work.columns
+        else work["_client"]
+    )
+    if amount_cols:
+        amt = None
+        for c in amount_cols:
+            if c in work.columns:
+                colv = pd.to_numeric(work[c], errors="coerce").fillna(0)
+                amt = colv if amt is None else amt + colv
+        work["_amount"] = amt if amt is not None else 0.0
+    else:
+        work["_amount"] = 0.0
+
+    rows = []
+    for name, g in work.groupby("_sales", dropna=False):
+        rows.append({
+            "المحصّل": name,
+            "عدد العملاء": int(g["_client"].nunique()),
+            "عدد الحسابات": int(g["_account"].nunique()),
+            "عدد المطالبات": int(len(g)),
+            "إجمالي المبلغ": float(g["_amount"].sum()),
+        })
+    summary = pd.DataFrame(rows)
+    if not summary.empty:
+        summary = summary.sort_values("إجمالي المبلغ", ascending=False).reset_index(drop=True)
+    return summary, work
+
+
 def _page_distribution_new_collector():
     """بناء محافظ لمحصلين جدد من شيت الإهمال + دمجها في المحفظة الكاملة."""
     st.markdown("---")

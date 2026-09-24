@@ -8394,20 +8394,136 @@ def _page_distribution_new_collector():
     pool = neg_df[state_vals.isin(selected_states)].copy().reset_index(drop=True)
     st.caption(f"صفوف الإهمال بعد فلترة الحالات: **{len(pool):,}** من أصل {len(neg_df):,}")
 
+    # ----- المحصلين المصدر (هتاخد منهم) -----
+    st.markdown("##### 👤 المحصلين اللي هتاخد منهم (من شيت الإهمال)")
+    neg_sales_series = pool[neg_sales_col].astype(str).str.strip()
+    source_options = sorted({
+        v for v in neg_sales_series.tolist()
+        if v and v.lower() not in {"nan", "none", "null", ""}
+    })
+    if not source_options:
+        st.error("مفيش أسماء محصلين في شيت الإهمال بعد فلترة الحالات.")
+        return
+
+    sb1, sb2, _ = st.columns([1, 1, 2])
+    with sb1:
+        if st.button("✅ كل مصادر الإهمال", key="newc_src_all", use_container_width=True):
+            st.session_state["newc_source_ms"] = list(source_options)
+            st.rerun()
+    with sb2:
+        if st.button("⬜ إلغاء المصادر", key="newc_src_none", use_container_width=True):
+            st.session_state["newc_source_ms"] = []
+            st.rerun()
+
+    if "newc_source_ms" not in st.session_state:
+        st.session_state["newc_source_ms"] = list(source_options)
+    else:
+        st.session_state["newc_source_ms"] = [
+            x for x in st.session_state["newc_source_ms"] if x in source_options
+        ]
+
+    source_collectors = st.multiselect(
+        "اختر المحصلين اللي هتتسحب مطالباتهم للجدد",
+        options=source_options,
+        key="newc_source_ms",
+        help="المطالبات هتتاخد من المحصلين دول فقط من شيت الإهمال",
+    )
+    if not source_collectors:
+        st.warning("لازم تختار محصل مصدر واحد على الأقل.")
+        return
+
+    pool = pool[neg_sales_series.isin(source_collectors)].copy().reset_index(drop=True)
+    st.caption(f"بعد اختيار المصادر: **{len(pool):,}** صف من **{len(source_collectors)}** محصل")
+
     exclude_existing = st.checkbox(
         "استبعاد العملاء الموجودين بالفعل في المحفظة الكاملة (تفادي تكرار العميل على محصلين)",
         value=True,
         key="newc_exclude_existing",
     )
 
-    # ========== 4) أوزان و tolerance ==========
+    # ----- المحصلين للمقارنة / المساواة -----
     st.markdown("---")
-    st.markdown("#### 4️⃣ موازنة التوزيع بين المحصلين الجدد")
+    st.markdown("#### 4️⃣ المحصلين اللي هتقارن بيهم في المحفظة (هدف المساواة)")
     st.caption(
-        f"الهدف التقريبي لكل محصل جديد ≈ متوسط المحفظة الحالية "
-        f"(عملاء {avg_clients:,.1f} · حسابات {avg_accounts:,.1f} · مبلغ {avg_amount:,.0f}). "
-        "التوزيع هيساوي بين الجدد قدر الإمكان من شيت الإهمال."
+        "اختار من المحفظة الكاملة المحصلين اللي متوسطهم هيبقى الهدف "
+        "لحجم محفظة كل محصل جديد (عملاء / حسابات / مبالغ)."
     )
+    if not existing_collectors:
+        st.error("المحفظة مفيهاش محصلين للمقارنة.")
+        return
+
+    cb1, cb2, _ = st.columns([1, 1, 2])
+    with cb1:
+        if st.button("✅ كل محصلي المحفظة", key="newc_cmp_all", use_container_width=True):
+            st.session_state["newc_compare_ms"] = list(existing_collectors)
+            st.rerun()
+    with cb2:
+        if st.button("⬜ إلغاء المقارنة", key="newc_cmp_none", use_container_width=True):
+            st.session_state["newc_compare_ms"] = []
+            st.rerun()
+
+    if "newc_compare_ms" not in st.session_state:
+        st.session_state["newc_compare_ms"] = list(existing_collectors)
+    else:
+        st.session_state["newc_compare_ms"] = [
+            x for x in st.session_state["newc_compare_ms"] if x in existing_collectors
+        ]
+
+    compare_collectors = st.multiselect(
+        "المحصلين المرجعيين للمساواة",
+        options=existing_collectors,
+        key="newc_compare_ms",
+        help="متوسط العملاء/الحسابات/المبالغ لهؤلاء هو هدف كل محصل جديد",
+    )
+    if not compare_collectors:
+        st.warning("لازم تختار محصل واحد على الأقل للمقارنة.")
+        return
+
+    cmp_summary = port_summary[port_summary["المحصّل"].isin(compare_collectors)].copy() if not port_summary.empty else pd.DataFrame()
+    if cmp_summary.empty:
+        st.error("تعذر حساب ملخص المحصلين المختارين للمقارنة.")
+        return
+
+    avg_clients = float(cmp_summary["عدد العملاء"].mean())
+    avg_accounts = float(cmp_summary["عدد الحسابات"].mean())
+    avg_amount = float(cmp_summary["إجمالي المبلغ"].mean())
+    med_clients = float(cmp_summary["عدد العملاء"].median())
+    med_accounts = float(cmp_summary["عدد الحسابات"].median())
+    med_amount = float(cmp_summary["إجمالي المبلغ"].median())
+
+    # معاينة هدف المساواة
+    st.markdown("##### 🎯 هدف المساواة (من المحصلين المختارين)")
+    m1, m2, m3 = st.columns(3)
+    m1.metric("متوسط العملاء", f"{avg_clients:,.1f}", help=f"الوسيط: {med_clients:,.1f}")
+    m2.metric("متوسط الحسابات", f"{avg_accounts:,.1f}", help=f"الوسيط: {med_accounts:,.1f}")
+    m3.metric("متوسط المبلغ", f"{avg_amount:,.0f}", help=f"الوسيط: {med_amount:,.0f}")
+
+    with st.expander("تفاصيل المحصلين المرجعيين", expanded=False):
+        st.dataframe(cmp_summary, use_container_width=True, hide_index=True)
+
+    # تقدير من الإهمال
+    pool_amt = pd.to_numeric(pool[neg_amount_col], errors="coerce").fillna(0).sum()
+    pool_clients = pool[neg_client_col].astype(str).str.strip().nunique()
+    pool_accounts = pool[neg_account_col].astype(str).str.strip().nunique()
+    n_new = max(len(new_names), 1)
+    est_cli = pool_clients / n_new
+    est_acc = pool_accounts / n_new
+    est_amt = float(pool_amt) / n_new
+
+    st.markdown("##### 📐 تقدير بعد التوزيع بالتساوي على الجدد")
+    e1, e2, e3 = st.columns(3)
+    e1.metric("≈ عملاء / محصل جديد", f"{est_cli:,.1f}", delta=f"{est_cli - avg_clients:+.1f} عن المتوسط")
+    e2.metric("≈ حسابات / محصل جديد", f"{est_acc:,.1f}", delta=f"{est_acc - avg_accounts:+.1f} عن المتوسط")
+    e3.metric("≈ مبلغ / محصل جديد", f"{est_amt:,.0f}", delta=f"{est_amt - avg_amount:+,.0f} عن المتوسط")
+    st.caption(
+        f"مصدر الإهمال المختار: **{pool_clients:,}** عميل · **{pool_accounts:,}** حساب · "
+        f"**{float(pool_amt):,.0f}** مبلغ → هيتوزعوا على **{n_new}** محصل جديد. "
+        "الخوارزمية هتساوي بين الجدد (من غير ما تقسّم عميل)، والهدف المرجعي هو متوسط المحصلين اللي اخترتهم فوق."
+    )
+
+    # ========== 5) أوزان و tolerance ==========
+    st.markdown("---")
+    st.markdown("#### 5️⃣ أوزان الموازنة والـ Tolerance")
     w1, w2, w3 = st.columns(3)
     with w1:
         amount_weight = st.slider("وزن المبالغ", 0.0, 3.0, 1.0, 0.1, key="newc_w_amt")
@@ -8418,17 +8534,16 @@ def _page_distribution_new_collector():
 
     t1, t2, t3 = st.columns(3)
     with t1:
-        max_diff_amount = st.number_input("أقصى فرق مبالغ", min_value=0.0, value=5000.0, step=500.0, key="newc_max_amt")
+        max_diff_amount = st.number_input("أقصى فرق مبالغ بين الجدد", min_value=0.0, value=5000.0, step=500.0, key="newc_max_amt")
     with t2:
-        max_diff_clients = st.number_input("أقصى فرق عملاء", min_value=0, value=2, step=1, key="newc_max_cli")
+        max_diff_clients = st.number_input("أقصى فرق عملاء بين الجدد", min_value=0, value=2, step=1, key="newc_max_cli")
     with t3:
-        max_diff_accounts = st.number_input("أقصى فرق حسابات", min_value=0, value=3, step=1, key="newc_max_acc")
+        max_diff_accounts = st.number_input("أقصى فرق حسابات بين الجدد", min_value=0, value=3, step=1, key="newc_max_acc")
 
     match_existing_avg = st.checkbox(
-        "حاول تقرّب حجم محفظة كل محصل جديد من متوسط المحصلين الحاليين (مش هتقسّم عميل)",
+        "اعرض مقارنة النتيجة مع متوسط المحصلين المرجعيين بعد التنفيذ",
         value=True,
         key="newc_match_avg",
-        help="لو شيت الإهمال أكبر من اللازم، هيتوزع بالتساوي بين الجدد مع محاولة الاقتراب من المتوسط.",
     )
 
     run = st.button("🚀 إنشاء محافظ المحصلين الجدد", type="primary", use_container_width=True, key="newc_run")
@@ -8555,6 +8670,8 @@ def _page_distribution_new_collector():
             "portfolio_hash": uploaded_file_hash(portfolio_up),
             "new_names": new_names,
             "selected_states": selected_states,
+            "source_collectors": source_collectors,
+            "compare_collectors": compare_collectors,
             "summary": new_summary,
             "detail": detail,
             "row_level_export": row_level_export,
@@ -8594,6 +8711,15 @@ def _render_new_collector_results(result):
     k2.metric("👥 عملاء مُسندون", f"{n_clients:,}")
     k3.metric("💰 إجمالي المبالغ", f"{total_amount:,.0f}")
     k4.metric("📌 حالات المصدر", f"{len(result.get('selected_states') or [])}")
+
+    src = result.get("source_collectors") or []
+    cmp_ = result.get("compare_collectors") or []
+    if src or cmp_:
+        st.caption(
+            ("المصادر: " + " · ".join(src[:12]) + ("…" if len(src) > 12 else "") if src else "")
+            + (" | " if src and cmp_ else "")
+            + ("المرجعيون للمساواة: " + " · ".join(cmp_[:12]) + ("…" if len(cmp_) > 12 else "") if cmp_ else "")
+        )
 
     if result.get("skipped_existing"):
         st.info(f"تم استبعاد {result['skipped_existing']:,} صف لعملاء كانوا في المحفظة بالفعل.")

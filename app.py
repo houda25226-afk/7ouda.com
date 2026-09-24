@@ -1004,21 +1004,33 @@ def _detect_native_streamlit_theme() -> str:
     """
     بيقرأ الوضع (Light/Dark) اللي المستخدم مختاره فعليًا من قائمة
     إعدادات Streamlit نفسها ("⋮" ← Settings ← Choose app theme)
+    أو من شريط الثيم السفلي (System / Light / Dark).
+
+    - light / dark: يُستخدم مباشرة.
+    - system: Streamlit يحلّه لـ light أو dark حسب نظام التشغيل؛
+      لو رجّع "system" صراحةً نحاول قراءة base من السياق أو نحتفظ بآخر قيمة.
     عن طريق st.context.theme.type (متاحة من Streamlit 1.46+).
-    لو مش متاحة لأي سبب (نسخة قديمة من Streamlit)، بيرجع لآخر قيمة
-    محفوظة في session_state، ولو لا يوجد هيستخدم "dark" كافتراضي.
+    لو مش متاحة لأي سبب، بيرجع لآخر قيمة في session_state أو "dark".
     """
     try:
         ctx_theme = st.context.theme
         theme_type = getattr(ctx_theme, "type", None)
         if theme_type is None and hasattr(ctx_theme, "get"):
             theme_type = ctx_theme.get("type")
+        if isinstance(theme_type, str):
+            theme_type = theme_type.strip().lower()
         if theme_type in ("light", "dark"):
             return theme_type
+        # System أو قيمة غير معروفة: جرّب base كإشارة للوضع المحلول
+        if theme_type in ("system", None, ""):
+            base = getattr(ctx_theme, "base", None)
+            if base is None and hasattr(ctx_theme, "get"):
+                base = ctx_theme.get("base")
+            if isinstance(base, str) and base.strip().lower() in ("light", "dark"):
+                return base.strip().lower()
     except Exception:
         pass
     return st.session_state.get("theme_mode", "dark")
-
 
 THEME_NAME = _detect_native_streamlit_theme()
 st.session_state["theme_mode"] = THEME_NAME
@@ -1082,15 +1094,32 @@ html, body, [class*="css"]  {{
   margin-bottom: 4rem !important;
 }}
 
-/* فصل عن الهيدر العلوي */
+/* هيدر Streamlit — ظاهر عشان قائمة الإعدادات (⋮) والأدوات تفضل شغّالة */
 header[data-testid="stHeader"] {{
-  background: transparent !important;
+  background: {t["bg"]}ee !important;
+  backdrop-filter: blur(8px);
+  visibility: visible !important;
+  z-index: 999990 !important;
 }}
+.stApp > header {{
+  background-color: {t["bg"]}ee !important;
+  visibility: visible !important;
+}}
+/* شريط الزخرفة العلوي فقط — مش بنخفي القائمة */
 div[data-testid="stDecoration"] {{
   display: none !important;
 }}
-.stApp > header {{
-  background-color: transparent !important;
+/* تأكيد ظهور قائمة الإعدادات وشريط الأدوات */
+#MainMenu,
+[data-testid="stMainMenu"],
+[data-testid="stToolbar"],
+[data-testid="stHeader"] button,
+[data-testid="baseButton-header"],
+[data-testid="stAppDeployButton"],
+[data-testid="stStatusWidget"] {{
+  visibility: visible !important;
+  opacity: 1 !important;
+  pointer-events: auto !important;
 }}
 
 

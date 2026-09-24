@@ -8,3 +8,10 @@ backgroundColor = "#0E1420"
 secondaryBackgroundColor = "#151F30"
 textColor = "#E7ECF3"
 font = "sans serif"
+[client]
+toolbarMode = "developer"
+showErrorDetails = "full"
+
+[browser]
+gatherUsageStats = false
+

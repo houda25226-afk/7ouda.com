@@ -8266,6 +8266,146 @@ def _portfolio_collector_stats(df, sales_col, client_key_col, account_key_col, a
     return summary, work
 
 
+
+def _select_clients_balanced_from_sources(
+    work: pd.DataFrame,
+    source_collectors: list,
+    n_new: int,
+    need_clients: float,
+    need_accounts: float,
+    need_amount: float,
+    client_col: str = "_client",
+    source_col: str = "_old_collector",
+    amount_col: str = "_amount",
+    account_col: str = "_account",
+):
+    """
+    يسحب من كل محصل مصدر نفس العدد تقريبًا من العملاء،
+    بإجمالي ≈ need_clients × n_new (سقف المرجعيين).
+
+    work لازم يكون فيه: client / source / amount / account.
+    بيرجع (grouped_df بنفس شكل _greedy_assign، draw_stats).
+    """
+    empty = pd.DataFrame(columns=["client_key", "amount", "n_accounts", "n_rows", "source"])
+    stats = {
+        "selected_clients": 0,
+        "selected_accounts": 0,
+        "selected_amount": 0.0,
+        "target_clients_total": float(need_clients) * max(n_new, 1),
+        "target_accounts_total": float(need_accounts) * max(n_new, 1),
+        "target_amount_total": float(need_amount) * max(n_new, 1),
+        "capped": False,
+        "per_source": {},
+        "available_clients": 0,
+    }
+    if work is None or work.empty or not source_collectors or n_new <= 0:
+        return empty, stats
+
+    df = work.copy()
+    df[client_col] = df[client_col].astype(str).str.strip()
+    df[source_col] = df[source_col].astype(str).str.strip()
+    df[amount_col] = pd.to_numeric(df[amount_col], errors="coerce").fillna(0.0)
+    df[account_col] = df[account_col].astype(str).str.strip()
+    df = df[~df[client_col].str.lower().isin({"nan", "none", "null", ""})]
+    df = df[df[source_col].isin(source_collectors)]
+
+    if df.empty:
+        return empty, stats
+
+    # عميل واحد → مصدر أساسي (الأكثر صفوفًا / مبلغًا عنده)
+    client_rows = []
+    for ck, g in df.groupby(client_col, sort=False):
+        src_counts = g.groupby(source_col)[amount_col].sum().sort_values(ascending=False)
+        primary_src = str(src_counts.index[0])
+        client_rows.append({
+            "client_key": ck,
+            "source": primary_src,
+            "amount": float(g[amount_col].sum()),
+            "n_accounts": int(g[account_col].nunique()),
+            "n_rows": int(len(g)),
+        })
+    clients = pd.DataFrame(client_rows)
+    stats["available_clients"] = int(len(clients))
+
+    target_total = max(1, int(round(float(need_clients) * n_new)))
+    # لو المتاح أقل من الهدف → خد الكل مع توزيع متساوٍ قدر الإمكان (مش هنزود)
+    n_src = len(source_collectors)
+    base_quota = target_total // n_src
+    remainder = target_total % n_src
+
+    selected_parts = []
+    per_source = {}
+    # وزّع الباقي على أول مصادر حسب المتاح
+    src_order = list(source_collectors)
+    for i, src in enumerate(src_order):
+        quota = base_quota + (1 if i < remainder else 0)
+        pool_src = clients[clients["source"] == src].sort_values(
+            ["amount", "n_accounts", "n_rows"], ascending=[False, False, False]
+        )
+        take_n = min(quota, len(pool_src))
+        # لو مصدر فاضي، quota هتضيع — نجمع العجز لاحقًا
+        taken = pool_src.head(take_n)
+        selected_parts.append(taken)
+        per_source[src] = {
+            "available": int(len(pool_src)),
+            "quota": int(quota),
+            "taken": int(len(taken)),
+        }
+
+    selected = pd.concat(selected_parts, ignore_index=True) if selected_parts else empty.copy()
+
+    # عجز: مصادر ما كملتش الحصة → كمّل من مصادر عندها فائض (برضو بالتساوي على اللي فاضل)
+    taken_total = int(len(selected))
+    shortfall = target_total - taken_total
+    if shortfall > 0:
+        selected_keys = set(selected["client_key"].tolist()) if not selected.empty else set()
+        # مصادر مرتبة حسب المتبقي المتاح
+        leftovers = []
+        for src in src_order:
+            pool_src = clients[clients["source"] == src].sort_values(
+                ["amount", "n_accounts"], ascending=[False, False]
+            )
+            extra = pool_src[~pool_src["client_key"].isin(selected_keys)]
+            leftovers.append(extra)
+        # round-robin من الفائض
+        ptrs = [0] * len(leftovers)
+        added = 0
+        while added < shortfall:
+            progressed = False
+            for si, extra in enumerate(leftovers):
+                if added >= shortfall:
+                    break
+                if ptrs[si] < len(extra):
+                    row = extra.iloc[ptrs[si]]
+                    ptrs[si] += 1
+                    selected = pd.concat([selected, row.to_frame().T], ignore_index=True)
+                    selected_keys.add(row["client_key"])
+                    src = str(row["source"])
+                    per_source.setdefault(src, {"available": 0, "quota": 0, "taken": 0})
+                    per_source[src]["taken"] = int(per_source[src].get("taken", 0)) + 1
+                    added += 1
+                    progressed = True
+            if not progressed:
+                break
+
+    if selected is None or selected.empty:
+        return empty, stats
+
+    selected = selected.drop_duplicates(subset=["client_key"]).reset_index(drop=True)
+    capped = int(len(selected)) < int(len(clients))
+    stats.update({
+        "selected_clients": int(len(selected)),
+        "selected_accounts": int(pd.to_numeric(selected["n_accounts"], errors="coerce").fillna(1).sum()),
+        "selected_amount": float(pd.to_numeric(selected["amount"], errors="coerce").fillna(0).sum()),
+        "capped": capped,
+        "per_source": per_source,
+        "quota_each": base_quota,
+        "target_clients_total": float(target_total),
+    })
+    grouped = selected[["client_key", "amount", "n_accounts", "n_rows"]].copy()
+    return grouped, stats
+
+
 def _page_distribution_new_collector():
     """بناء محافظ لمحصلين جدد من شيت الإهمال + دمجها في المحفظة الكاملة."""
     st.markdown("---")
@@ -8672,37 +8812,36 @@ def _page_distribution_new_collector():
             st.error("لا توجد صفوف صالحة للتوزيع بعد الفلترة.")
             return
 
-        # تجميع على مستوى العميل (عميل واحد → محصل واحد)
-        grouped_all = (
-            work.groupby("_client", as_index=False)
-            .agg(
-                amount=("_amount", "sum"),
-                n_accounts=("_account", "nunique"),
-                n_rows=("_amount", "count"),
-            )
-            .rename(columns={"_client": "client_key"})
-        )
-
-        # سقف حسب متوسط المرجعيين — عشان الجديد مياخدش 2000 والقديم 500
-        cap_stats = {
-            "selected_clients": int(len(grouped_all)),
-            "selected_accounts": int(grouped_all["n_accounts"].sum()) if not grouped_all.empty else 0,
-            "selected_amount": float(grouped_all["amount"].sum()) if not grouped_all.empty else 0.0,
-            "capped": False,
-        }
+        # سحب متساوٍ من كل محصل مصدر + سقف حسب احتياج المرجعيين
+        cap_stats = {"selected_clients": 0, "capped": False, "per_source": {}}
         if cap_to_reference and need_clients > 0:
-            grouped, cap_stats = _select_clients_to_match_targets(
-                grouped_all,
-                n_targets=len(new_names),
-                target_clients_each=need_clients,
-                target_accounts_each=need_accounts,
-                target_amount_each=need_amount,
-                client_weight=client_weight,
-                account_weight=account_weight,
-                amount_weight=amount_weight,
+            grouped, cap_stats = _select_clients_balanced_from_sources(
+                work,
+                source_collectors=source_collectors,
+                n_new=len(new_names),
+                need_clients=need_clients,
+                need_accounts=need_accounts,
+                need_amount=need_amount,
             )
         else:
+            grouped_all = (
+                work.groupby("_client", as_index=False)
+                .agg(
+                    amount=("_amount", "sum"),
+                    n_accounts=("_account", "nunique"),
+                    n_rows=("_amount", "count"),
+                )
+                .rename(columns={"_client": "client_key"})
+            )
             grouped = grouped_all
+            cap_stats = {
+                "selected_clients": int(len(grouped)),
+                "selected_accounts": int(grouped["n_accounts"].sum()) if not grouped.empty else 0,
+                "selected_amount": float(grouped["amount"].sum()) if not grouped.empty else 0.0,
+                "capped": False,
+                "available_clients": int(len(grouped)),
+                "per_source": {},
+            }
 
         if grouped is None or grouped.empty:
             st.error("لا يوجد عملاء بعد تطبيق سقف المقارنة مع المرجعيين.")
@@ -8726,16 +8865,22 @@ def _page_distribution_new_collector():
             return
 
         warnings = list(warnings or [])
-        if cap_stats.get("capped"):
+        if cap_stats.get("capped") or cap_stats.get("per_source"):
             warnings.append(
-                f"تم تطبيق سقف المرجعيين: اُختير {cap_stats.get('selected_clients', 0):,} عميل "
-                f"من أصل {cap_stats.get('available_clients', 0):,} متاحين في الإهمال "
-                f"(الهدف الإجمالي ≈ {cap_stats.get('target_clients_total', 0):,.0f} عميل / "
-                f"{cap_stats.get('target_amount_total', 0):,.0f} مبلغ)."
+                f"سحب متساوٍ من المصادر + سقف المرجعيين: اُختير {cap_stats.get('selected_clients', 0):,} عميل "
+                f"من أصل {cap_stats.get('available_clients', 0):,} "
+                f"(≈ {cap_stats.get('quota_each', 0)} من كل مصدر · الهدف الإجمالي ≈ {cap_stats.get('target_clients_total', 0):,.0f})."
             )
+            per = cap_stats.get("per_source") or {}
+            if per:
+                lines = [
+                    f"{src}: أُخذ {info.get('taken', 0)} / متاح {info.get('available', 0)} (حصة {info.get('quota', 0)})"
+                    for src, info in list(per.items())[:20]
+                ]
+                warnings.append("تفاصيل السحب من كل محصل مصدر — " + " · ".join(lines))
             left_out = int(cap_stats.get("available_clients", 0) or 0) - int(cap_stats.get("selected_clients", 0) or 0)
             if left_out > 0:
-                warnings.append(f"{left_out:,} عميل من الإهمال لم يُسندوا لأنهم فوق هدف المساواة مع المرجعيين.")
+                warnings.append(f"{left_out:,} عميل من الإهمال لم يُسندوا (فوق هدف المساواة أو خارج الحصص).")
 
         # صفوف المطالبات مع المحصل الجديد + القديم (العملاء المختارين فقط)
         assigned_rows = work.copy()

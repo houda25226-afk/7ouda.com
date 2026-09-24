@@ -8223,6 +8223,30 @@ def _nc_agent_stats(df, sales_col, client_col, account_col, amount_col, agents=N
     return out.sort_values("إجمالي المبلغ", ascending=False).reset_index(drop=True)
 
 
+def _nc_norm_key(val):
+    """تطبيع مفتاح الحساب/العميل للمقارنة بين الشيتين."""
+    if val is None:
+        return ""
+    try:
+        if isinstance(val, float) and val != val:  # NaN
+            return ""
+    except Exception:
+        pass
+    s = str(val).strip()
+    if not s or s.lower() in {"nan", "none", "null"}:
+        return ""
+    # شيل .0 من الأرقام اللي جاية من Excel
+    if s.endswith(".0"):
+        core = s[:-2]
+        if core.replace("-", "", 1).isdigit():
+            s = core
+    # شيل فواصل الآلاف والمسافات الداخلية الشائعة
+    s2 = s.replace(",", "").replace(" ", "").replace("\u00a0", "")
+    if s2.replace("-", "", 1).isdigit():
+        return s2
+    return s
+
+
 def _nc_build_pool_from_neglect(
     wallet_df,
     neglect_df,
@@ -8236,48 +8260,82 @@ def _nc_build_pool_from_neglect(
     donor_agents,
     selected_states,
 ):
-    """يبني مجمع العملاء القابلين للسحب من شيت الإهمال مع مطابقة المحفظة."""
-    neg = neglect_df.copy()
-    neg["_sales"] = _nc_clean_str_series(neg[neglect_sales_col])
-    neg["_account"] = _nc_clean_str_series(neg[neglect_account_col])
-    if neglect_state_col and neglect_state_col in neg.columns:
-        neg["_state"] = _nc_clean_str_series(neg[neglect_state_col])
-        if selected_states:
-            neg = neg[neg["_state"].isin(selected_states)]
-    neg = neg[neg["_sales"].isin(set(donor_agents))]
-    neg = neg[neg["_account"].ne("") & ~neg["_account"].str.lower().isin(["nan", "none", "null"])]
+    """
+    مجمع السحب = حسابات موجودة في شيت الإهمال (بعد فلتر الحالة/المانح)
+    وبنفس رقم الحساب موجودة في المحفظة عند المانحين.
 
+    المطابقة على رقم الحساب فقط (مش المحصل+الحساب)، لأن اسم المحصل
+    ممكن يختلف كتابةً بين الشيتين. العميل في الإهمال أصلاً متوقع يكون في المحفظة.
+    """
+    neg = neglect_df.copy()
+    neg["_sales_raw"] = neg[neglect_sales_col].astype(str).str.strip()
+    neg["_account_raw"] = neg[neglect_account_col]
+    neg["_account"] = neg["_account_raw"].map(_nc_norm_key)
+
+    if neglect_state_col and neglect_state_col in neg.columns:
+        neg["_state"] = neg[neglect_state_col].astype(str).str.strip()
+        if selected_states:
+            neg = neg[neg["_state"].isin(set(selected_states))]
+
+    # فلترة مانحي الإهمال لو العمود موجود (اختياري — لو الاسم مختلف مش هنضيّع الحسابات)
+    donor_set = set(donor_agents or [])
+    if donor_set:
+        neg_by_donor = neg[neg["_sales_raw"].isin(donor_set)]
+        # لو فلترة المحصل في الإهمال فضّت النتيجة، نكمّل بالحساب فقط
+        if not neg_by_donor.empty:
+            neg = neg_by_donor
+
+    neg = neg[neg["_account"].ne("")]
     if neg.empty:
         return pd.DataFrame(), pd.DataFrame()
 
-    allowed_accounts = set(zip(neg["_sales"], neg["_account"]))
+    # كل أرقام الحسابات المسموح سحبها من الإهمال
+    allowed_accounts = set(neg["_account"].tolist())
 
     wal = wallet_df.copy()
-    wal["_sales"] = _nc_clean_str_series(wal[wallet_sales_col])
-    wal["_client"] = (
-        _nc_clean_str_series(wal[wallet_client_col])
-        if wallet_client_col in wal.columns
-        else wal.index.astype(str)
-    )
-    wal["_account"] = (
-        _nc_clean_str_series(wal[wallet_account_col])
-        if wallet_account_col in wal.columns
-        else wal["_client"]
-    )
+    wal["_sales"] = wal[wallet_sales_col].astype(str).str.strip()
+    wal["_client_raw"] = wal[wallet_client_col] if wallet_client_col in wal.columns else wal.index
+    wal["_client"] = wal["_client_raw"].map(_nc_norm_key)
+    # لو هوية العميل فاضية نستخدم رقم الحساب كبديل
+    wal["_account"] = wal[wallet_account_col].map(_nc_norm_key) if wallet_account_col in wal.columns else wal["_client"]
+    wal.loc[wal["_client"].eq(""), "_client"] = wal.loc[wal["_client"].eq(""), "_account"]
+
     if wallet_amount_col and wallet_amount_col in wal.columns:
         wal["_amount"] = pd.to_numeric(wal[wallet_amount_col], errors="coerce").fillna(0.0)
     else:
         wal["_amount"] = 0.0
 
-    wal = wal[wal["_sales"].isin(set(donor_agents))]
-    mask = [((s, a) in allowed_accounts) for s, a in zip(wal["_sales"], wal["_account"])]
-    eligible_rows = wal.loc[mask].copy()
+    # صفوف المحفظة عند المانحين + رقم الحساب موجود في الإهمال
+    wal = wal[wal["_sales"].isin(donor_set)] if donor_set else wal
+    eligible_rows = wal[wal["_account"].isin(allowed_accounts)].copy()
+
+    # لو لم نجد شيئًا بفلتر المانح، جرّب المطابقة بالحساب فقط ثم انسب للمانح الحالي في المحفظة
+    if eligible_rows.empty and donor_set:
+        wal_all = wallet_df.copy()
+        wal_all["_sales"] = wal_all[wallet_sales_col].astype(str).str.strip()
+        wal_all["_client_raw"] = wal_all[wallet_client_col] if wallet_client_col in wal_all.columns else wal_all.index
+        wal_all["_client"] = wal_all["_client_raw"].map(_nc_norm_key)
+        wal_all["_account"] = (
+            wal_all[wallet_account_col].map(_nc_norm_key)
+            if wallet_account_col in wal_all.columns
+            else wal_all["_client"]
+        )
+        wal_all.loc[wal_all["_client"].eq(""), "_client"] = wal_all.loc[wal_all["_client"].eq(""), "_account"]
+        if wallet_amount_col and wallet_amount_col in wal_all.columns:
+            wal_all["_amount"] = pd.to_numeric(wal_all[wallet_amount_col], errors="coerce").fillna(0.0)
+        else:
+            wal_all["_amount"] = 0.0
+        # خذ الحسابات من الإهمال اللي حالياً عند المانحين في المحفظة
+        eligible_rows = wal_all[
+            wal_all["_account"].isin(allowed_accounts) & wal_all["_sales"].isin(donor_set)
+        ].copy()
+
     if eligible_rows.empty:
         return pd.DataFrame(), pd.DataFrame()
 
     cust_rows = []
     for (sales, client), g in eligible_rows.groupby(["_sales", "_client"], sort=False):
-        if not client or client.lower() in {"nan", "none", "null"}:
+        if not client:
             continue
         cust_rows.append({
             "donor": sales,
@@ -8285,7 +8343,7 @@ def _nc_build_pool_from_neglect(
             "amount": float(g["_amount"].sum()),
             "n_accounts": int(g["_account"].nunique()),
             "n_rows": int(len(g)),
-            "accounts": sorted(set(g["_account"].tolist())),
+            "accounts": sorted({a for a in g["_account"].tolist() if a}),
         })
     customers = pd.DataFrame(cust_rows)
     return customers, eligible_rows
@@ -8747,10 +8805,27 @@ def _page_distribution_new_collector():
     )
 
     if customers_pool.empty:
-        st.error(
-            "لا يوجد عملاء قابلين للسحب بعد مطابقة شيت الإهمال مع المحفظة "
-            "(راجع الحالات / المحصلين / أعمدة المطابقة)."
-        )
+        # تشخيص سريع للمطابقة
+        try:
+            neg_acc = set(neglect_df[n_account_col].map(_nc_norm_key)) - {""}
+            wal_acc = set(wallet_df[w_account_col].map(_nc_norm_key)) - {""}
+            overlap = neg_acc & wal_acc
+            st.error(
+                "لا يوجد عملاء قابلين للسحب بعد مطابقة شيت الإهمال مع المحفظة. "
+                "المطابقة تتم على **رقم الحساب** للحسابات الموجودة عند المانحين."
+            )
+            st.warning(
+                f"تشخيص: حسابات الإهمال={len(neg_acc):,} · "
+                f"حسابات المحفظة={len(wal_acc):,} · "
+                f"تقاطع الحسابات={len(overlap):,} · "
+                f"المانحين={len(donor_agents)}. "
+                "لو التقاطع = 0 راجع عمود رقم الحساب في الشيتين."
+            )
+        except Exception:
+            st.error(
+                "لا يوجد عملاء قابلين للسحب بعد مطابقة شيت الإهمال مع المحفظة "
+                "(راجع الحالات / المحصلين / أعمدة المطابقة)."
+            )
         return
 
     pool_summary = (

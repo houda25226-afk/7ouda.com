@@ -8458,11 +8458,16 @@ def _render_new_collector_results(result):
     )
 
 
-def _greedy_fill_targets(customers_df, targets_per_new):
+def _greedy_fill_targets(customers_df, targets_per_new, amount_overshoot_ratio=0.08, amount_overshoot_abs=500.0):
     """
-    يوزّع عملاء شيت الإهمال (بعد فلترة المحصلين والحالات) على المحصلين الجدد،
-    بحيث كل واحد يوصل لأقرب نقطة من المستهدف بتاعه (عملاء/حسابات/مبلغ/كل نوع حالة)
-    من غير ما ياخد أكتر من احتياجه، والعميل ياخده محصل واحد بس.
+    يوزّع عملاء شيت الإهمال على المحصلين الجدد وصولاً للمستهدف
+    (عملاء + حسابات + مبلغ + حالات) بدون تجاوز المبلغ بشكل كبير.
+
+    المنطق:
+    - الأولوية لمطابقة عدد العملاء والحالات مع الالتزام بسقف المبلغ.
+    - مفيش إسناد لعميل لو المحصل وصل/عدّى مستهدف المبلغ (إلا لو لسه محتاج عملاء
+      والعميل من أصغر المبالغ المتاحة وبما لا يتجاوز نسبة overshoot بسيطة).
+    - التعبئة من الأصغر للأكبر عشان نقدر نقرّب من مستهدف المبلغ بدون قفزة كبيرة.
     """
     if customers_df.empty or not targets_per_new:
         return {}, pd.DataFrame(), []
@@ -8470,7 +8475,7 @@ def _greedy_fill_targets(customers_df, targets_per_new):
     names = list(targets_per_new.keys())
     cust_info = {}
     for _, row in customers_df.iterrows():
-        ck = row["client_key"]
+        ck = str(row["client_key"])
         cust_info[ck] = {
             "amount": float(row["amount"] or 0),
             "n_accounts": int(row["n_accounts"] or 0),
@@ -8482,6 +8487,65 @@ def _greedy_fill_targets(customers_df, targets_per_new):
         for n in names
     }
 
+    def _remaining(name, s=None):
+        t = targets_per_new[name]
+        rem_clients = t["clients"] - state[name]["clients"]
+        rem_accounts = t["accounts"] - state[name]["accounts"]
+        rem_amount = t["amount"] - state[name]["amount"]
+        rem_status = None
+        if s is not None:
+            rem_status = t["status"].get(s, 0) - state[name]["status_counts"].get(s, 0)
+        return rem_clients, rem_accounts, rem_amount, rem_status
+
+    def _amount_cap(name):
+        t_amt = float(targets_per_new[name]["amount"] or 0)
+        return t_amt + max(amount_overshoot_abs, t_amt * amount_overshoot_ratio)
+
+    def _can_take(name, info, require_status=None, allow_soft_overshoot=True):
+        rem_clients, rem_accounts, rem_amount, rem_status = _remaining(name, require_status)
+        if rem_clients <= 0:
+            return False, None
+        if require_status is not None and (rem_status is None or rem_status <= 0):
+            return False, None
+        new_amount = state[name]["amount"] + info["amount"]
+        cap = _amount_cap(name)
+        # لو المبلغ الحالي وصل/عدّى السقف الصارم للمستهدف، متاخدش أكتر
+        if rem_amount <= 0 and info["amount"] > 0:
+            return False, None
+        if new_amount > cap:
+            if not allow_soft_overshoot:
+                return False, None
+            # soft: اسمح فقط لو العميل صغير نسبيًا ولسه محتاجين عملاء/حالة بشدة
+            if info["amount"] > max(amount_overshoot_abs, targets_per_new[name]["amount"] * 0.15):
+                return False, None
+            if rem_clients > 2 and (require_status is None or (rem_status or 0) > 1):
+                # لسه عندنا مساحة عملاء كبيرة — فضّل نلاقي عملاء أصغر بعدين
+                return False, None
+        # score: أعلى احتياج حالة/عملاء، أقرب لمبلغ متبقي بدون تجاوز
+        overshoot = max(0.0, new_amount - targets_per_new[name]["amount"])
+        fit = abs(rem_amount - info["amount"]) if rem_amount > 0 else overshoot
+        status_need = rem_status if rem_status is not None else 0
+        # ترتيب أفضل = احتياج أعلى + تجاوز أقل + فرق مبلغ أقل
+        score = (
+            -int(status_need or 0),
+            -int(rem_clients),
+            -int(max(0, rem_accounts)),
+            overshoot,
+            fit,
+            info["amount"],
+        )
+        return True, score
+
+    def _assign(name, ck, info):
+        s = info["status"]
+        state[name]["amount"] += info["amount"]
+        state[name]["clients"] += 1
+        state[name]["accounts"] += info["n_accounts"]
+        state[name]["status_counts"][s] = state[name]["status_counts"].get(s, 0) + 1
+        state[name]["client_keys"].append(ck)
+
+    used = set()
+    # ترتيب الحالات حسب إجمالي المستهدف منها
     status_series = customers_df["status"].fillna("—").astype(str)
     all_statuses = sorted(status_series.unique().tolist())
     status_order = sorted(
@@ -8489,61 +8553,85 @@ def _greedy_fill_targets(customers_df, targets_per_new):
         key=lambda s: -sum(t["status"].get(s, 0) for t in targets_per_new.values()),
     )
 
-    def _remaining(name, s):
-        t = targets_per_new[name]
-        rem_clients = t["clients"] - state[name]["clients"]
-        rem_amount = t["amount"] - state[name]["amount"]
-        rem_status = t["status"].get(s, 0) - state[name]["status_counts"].get(s, 0)
-        return rem_clients, rem_amount, rem_status
-
-    used = set()
+    # مرحلة 1: تعبئة حسب الحالة — من الأصغر للأكبر عشان المبلغ مينفش
     for s in status_order:
-        group = customers_df[status_series == s].sort_values("amount", ascending=False)
+        group = customers_df[status_series == s].copy()
+        group = group.sort_values(["amount", "n_accounts"], ascending=[True, True])
         for _, row in group.iterrows():
-            ck = row["client_key"]
+            ck = str(row["client_key"])
             if ck in used:
                 continue
             info = cust_info[ck]
-            # نسحب من الحالة دي بس لمحصل لسه محتاج مستهدف الحالة دي بالذات (عشان النسبة تفضل متقاربة)
-            candidates = []
+            best_name, best_score = None, None
             for name in names:
-                rem_clients, rem_amount, rem_status = _remaining(name, s)
-                if rem_clients <= 0 or rem_status <= 0:
+                ok, score = _can_take(name, info, require_status=s, allow_soft_overshoot=True)
+                if not ok:
                     continue
-                candidates.append((rem_status, rem_clients, rem_amount, name))
-            if not candidates:
-                # كل المستهدفين وصلوا لنصيبهم من الحالة دي — سيب العميل ده لمرحلة السد الأخيرة لو لسه محتاجين عدد عملاء
+                if best_score is None or score < best_score:
+                    best_score = score
+                    best_name = name
+            if best_name is None:
                 continue
-            candidates.sort(key=lambda x: (-x[0], -x[1], -x[2]))
-            best_name = candidates[0][3]
-            state[best_name]["amount"] += info["amount"]
-            state[best_name]["clients"] += 1
-            state[best_name]["accounts"] += info["n_accounts"]
-            state[best_name]["status_counts"][s] = state[best_name]["status_counts"].get(s, 0) + 1
-            state[best_name]["client_keys"].append(ck)
+            _assign(best_name, ck, info)
             used.add(ck)
 
-    # لو لسه عملاء متبقية في المجموعة (محصل معينش أي حالة) وفيه مستهدفين لسه محتاجين عملاء عموماً
-    remaining_pool = customers_df[~customers_df["client_key"].isin(used)].sort_values("amount", ascending=False)
+    # مرحلة 2: سد العجز في عدد العملاء (من غير إجبار حالة) مع سقف المبلغ
+    remaining_pool = customers_df[~customers_df["client_key"].astype(str).isin(used)].copy()
+    remaining_pool = remaining_pool.sort_values(["amount", "n_accounts"], ascending=[True, True])
     for _, row in remaining_pool.iterrows():
-        ck = row["client_key"]
-        info = cust_info[ck]
-        candidates = [
-            (targets_per_new[n]["clients"] - state[n]["clients"], n)
-            for n in names
-            if targets_per_new[n]["clients"] - state[n]["clients"] > 0
-        ]
-        if not candidates:
+        ck = str(row["client_key"])
+        if ck in used:
+            continue
+        # لو كل المحصلين وصلوا لعدد العملاء المطلوب وقف
+        if all(state[n]["clients"] >= targets_per_new[n]["clients"] for n in names):
             break
-        candidates.sort(key=lambda x: -x[0])
-        best_name = candidates[0][1]
-        state[best_name]["amount"] += info["amount"]
-        state[best_name]["clients"] += 1
-        state[best_name]["accounts"] += info["n_accounts"]
-        s_key = info["status"]
-        state[best_name]["status_counts"][s_key] = state[best_name]["status_counts"].get(s_key, 0) + 1
-        state[best_name]["client_keys"].append(ck)
+        info = cust_info[ck]
+        best_name, best_score = None, None
+        for name in names:
+            ok, score = _can_take(name, info, require_status=None, allow_soft_overshoot=True)
+            if not ok:
+                continue
+            if best_score is None or score < best_score:
+                best_score = score
+                best_name = name
+        if best_name is None:
+            continue
+        _assign(best_name, ck, info)
         used.add(ck)
+
+    # مرحلة 3 (اختيارية): لو لسه عجز عملاء ومفيش عملاء صغيرة تناسب السقف،
+    # جرّب أكبر عميل ينفع من غير ما يعدّي السقف المطلق بكتير
+    still_need = [n for n in names if state[n]["clients"] < targets_per_new[n]["clients"]]
+    if still_need:
+        leftover = customers_df[~customers_df["client_key"].astype(str).isin(used)].copy()
+        leftover = leftover.sort_values("amount", ascending=True)
+        for _, row in leftover.iterrows():
+            if not still_need:
+                break
+            ck = str(row["client_key"])
+            if ck in used:
+                continue
+            info = cust_info[ck]
+            best_name, best_score = None, None
+            for name in list(still_need):
+                rem_clients, _, rem_amount, _ = _remaining(name)
+                if rem_clients <= 0:
+                    continue
+                new_amount = state[name]["amount"] + info["amount"]
+                # في المرحلة دي نسمح بتجاوز أكبر شوية لو مفيش بديل
+                hard_cap = _amount_cap(name) * 1.25
+                if new_amount > hard_cap and info["amount"] > 0:
+                    continue
+                overshoot = max(0.0, new_amount - targets_per_new[name]["amount"])
+                score = (-rem_clients, overshoot, info["amount"])
+                if best_score is None or score < best_score:
+                    best_score = score
+                    best_name = name
+            if best_name is None:
+                continue
+            _assign(best_name, ck, info)
+            used.add(ck)
+            still_need = [n for n in names if state[n]["clients"] < targets_per_new[n]["clients"]]
 
     assign_map = {}
     for name in names:
@@ -8562,6 +8650,8 @@ def _greedy_fill_targets(customers_df, targets_per_new):
             "الفعلي_حسابات": s_state["accounts"],
             "المستهدف_مبلغ": round(t["amount"], 2),
             "الفعلي_مبلغ": round(s_state["amount"], 2),
+            "فرق_المبلغ": round(s_state["amount"] - t["amount"], 2),
+            "فرق_العملاء": int(s_state["clients"] - t["clients"]),
         }
         for s in t["status"]:
             row[f"مستهدف حالة: {s}"] = t["status"][s]
@@ -8576,10 +8666,22 @@ def _greedy_fill_targets(customers_df, targets_per_new):
         if s_state["clients"] < t["clients"]:
             warnings.append(
                 f"⚠️ {name}: وصلنا لـ {s_state['clients']} عميل بس من أصل مستهدف {t['clients']} "
-                f"— مفيش عملاء كفاية في شيت الإهمال بعد الفلترة الحالية"
+                f"— مفيش عملاء كفاية في شيت الإهمال تناسب سقف المبلغ بعد الفلترة الحالية"
+            )
+        amt_diff = s_state["amount"] - t["amount"]
+        if t["amount"] > 0 and abs(amt_diff) / t["amount"] > 0.2:
+            warnings.append(
+                f"⚠️ {name}: فرق المبلغ عن المستهدف = {amt_diff:,.0f} "
+                f"(المستهدف {t['amount']:,.0f} / الفعلي {s_state['amount']:,.0f})"
+            )
+        if s_state["amount"] > _amount_cap(name) * 1.01:
+            warnings.append(
+                f"⚠️ {name}: الفعلي عدّى سقف المبلغ المسموح — راجع أعمدة المبالغ في شيت الإهمال "
+                f"وتأكد إنها نفس أعمدة المحفظة"
             )
 
     return assign_map, fill_summary, warnings
+
 
 
 def _render_neglect_pull_results(result):
@@ -8632,7 +8734,8 @@ def _render_neglect_pull_section(target_result):
 
     st.caption(
         "هنسحب عملاء من شيت الإهمال بتاع المحصلين القدامى عشان نوصّل المحصل الجديد للمستهدف "
-        "اللي طلع فوق، من غير ما نمس عملاء نشطين مع باقي المحصلين."
+        "اللي طلع فوق (عملاء + حسابات + مبلغ + حالات)، مع الالتزام بسقف المبلغ قدر الإمكان. "
+        "مهم: اختار نفس عمود المبلغ المستخدم في المحفظة (مثل Net Amount) عشان المقارنة تبقى صحيحة."
     )
 
     uploaded_neg = st.file_uploader(
@@ -8714,7 +8817,11 @@ def _render_neglect_pull_section(target_result):
             else (amount_options_neg[:1] if amount_options_neg else [])
         )
         amount_cols_neg = st.multiselect(
-            "💰 أعمدة المبالغ", options=amount_options_neg, default=default_amount_neg, key="neg_amount_cols",
+            "💰 أعمدة المبالغ (لازم تكون نفس أعمدة المحفظة — غالبًا Net Amount فقط)",
+            options=amount_options_neg,
+            default=default_amount_neg,
+            key="neg_amount_cols",
+            help="لو اختارت أعمدة زيادة أو مختلفة عن المحفظة، الفعلي_مبلغ هيطلع أكبر بكتير من المستهدف.",
         )
 
     if not sales_col_neg or sales_col_neg not in df_neg.columns:

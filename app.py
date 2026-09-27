@@ -8363,16 +8363,21 @@ def _render_new_collector_results(result):
     st.subheader("📊 المستهدف العادل لكل محصل")
 
     new_collectors = result.get("new_collectors", [])
+    selected_existing = result.get("selected_existing") or result.get("existing_collectors", [])
     all_targets = result.get("all_targets", [])
     n_clients = result.get("n_clients", 0)
     total_amount = result.get("total_amount", 0)
 
-    k1, k2, k3 = st.columns(3)
+    k1, k2, k3, k4 = st.columns(4)
     new_label = ", ".join(new_collectors) if len(new_collectors) <= 3 else f"{len(new_collectors)} محصل جديد"
     k1.metric("🆕 المحصّل/المحصلين الجدد", new_label)
-    k2.metric("👥 إجمالي عملاء المحفظة", f"{n_clients:,}")
-    k3.metric("🎯 إجمالي عدد المحصلين", f"{len(all_targets)}")
-    st.caption(f"💰 إجمالي المبالغ في المحفظة: {total_amount:,.0f}")
+    k2.metric("👤 محصلين المحفظة المشاركين", f"{len(selected_existing)}")
+    k3.metric("👥 إجمالي عملاء الأساس", f"{n_clients:,}")
+    k4.metric("🎯 إجمالي عدد المحصلين", f"{len(all_targets)}")
+    st.caption(
+        f"💰 إجمالي المبالغ (من المحصلين المختارين): {total_amount:,.0f} · "
+        f"محصلين المحفظة: {', '.join(selected_existing) if len(selected_existing) <= 5 else str(len(selected_existing)) + ' محصل'}"
+    )
 
     warnings = result.get("warnings") or []
     if warnings:
@@ -9002,8 +9007,68 @@ def page_distribution():
             f"عدد المحصلين الحاليين: **{len(existing_collectors)}**"
         )
 
+        if not existing_collectors:
+            st.warning("الملف مفيهوش محصلين صالحين في عمود المحصّل المختار.")
+            return
+
         st.markdown("---")
-        st.subheader("2️⃣ المحصّل (أو المحصّلين) الجدد")
+        st.subheader("2️⃣ محصلين المحفظة اللي هيتحسب منهم المستهدف")
+        st.caption(
+            "اختار مين من محصلين المحفظة الحالية يدخل في حساب المستهدف. "
+            "العملاء والحسابات والمبالغ هتتحسب من المحصلين دول بس، وبعدين تتوزع بالتساوي عليهم + المحصلين الجدد."
+        )
+
+        # حافظ على اختيار المستخدم عبر rerun، ونشيل أي اسم اختفى من الملف الجديد
+        if "newcol_selected_existing" not in st.session_state:
+            st.session_state["newcol_selected_existing"] = list(existing_collectors)
+        else:
+            prev = list(st.session_state.get("newcol_selected_existing") or [])
+            st.session_state["newcol_selected_existing"] = [c for c in prev if c in existing_collectors]
+
+        b_all, b_none, _ = st.columns([1, 1, 2])
+        with b_all:
+            if st.button("✅ تحديد الكل", key="newcol_select_all_existing", use_container_width=True):
+                st.session_state["newcol_selected_existing"] = list(existing_collectors)
+                st.session_state["newcol_existing_multiselect"] = list(existing_collectors)
+                st.rerun()
+        with b_none:
+            if st.button("⬜ إلغاء الكل", key="newcol_select_none_existing", use_container_width=True):
+                st.session_state["newcol_selected_existing"] = []
+                st.session_state["newcol_existing_multiselect"] = []
+                st.rerun()
+
+        # مزامنة قيمة الـ multiselect مع الـ session قبل الرسم (عشان الأزرار تشتغل صح)
+        if "newcol_existing_multiselect" not in st.session_state:
+            st.session_state["newcol_existing_multiselect"] = [
+                c for c in st.session_state.get("newcol_selected_existing", existing_collectors)
+                if c in existing_collectors
+            ]
+        else:
+            st.session_state["newcol_existing_multiselect"] = [
+                c for c in st.session_state["newcol_existing_multiselect"]
+                if c in existing_collectors
+            ]
+
+        selected_existing_nc = st.multiselect(
+            "👤 محصلين المحفظة المشاركين في حساب المستهدف",
+            options=existing_collectors,
+            key="newcol_existing_multiselect",
+            help="المحصلين اللي مش هتختارهم مش هيدخلوا في حساب المتوسط المستهدف ولا هتتحسب محفظتهم ضمن الإجمالي.",
+        )
+        st.session_state["newcol_selected_existing"] = list(selected_existing_nc)
+
+        if not selected_existing_nc:
+            st.warning("لازم تختار محصل واحد على الأقل من المحفظة عشان يتحسب منه المستهدف.")
+            return
+
+        rows_in_selected = int(sales_vals_nc.isin(selected_existing_nc).sum())
+        st.success(
+            f"هيتاخد **{len(selected_existing_nc)}** محصل من المحفظة "
+            f"(**{rows_in_selected:,}** صف) كأساس لحساب المستهدف."
+        )
+
+        st.markdown("---")
+        st.subheader("3️⃣ المحصّل (أو المحصّلين) الجدد")
         new_names_raw = st.text_area(
             "اكتب اسم/أسماء المحصلين الجدد (اسم في كل سطر)",
             key="newcol_new_names",
@@ -9021,14 +9086,15 @@ def page_distribution():
             st.info("اكتب اسم محصل جديد واحد على الأقل عشان تكمل.")
             return
 
-        all_targets_nc = existing_collectors + [n for n in new_collectors if n not in existing_collectors]
+        all_targets_nc = list(selected_existing_nc) + [n for n in new_collectors if n not in selected_existing_nc]
         st.success(
             f"هنحسب المستهدف العادل (عملاء/حسابات/مبالغ/حالات) لكل واحد من الـ **{len(all_targets_nc)}** "
-            f"محصل (منهم {len(new_collectors)} جديد) — من غير ما نلمس أو نحرك عملاء حد من المحفظة دي."
+            f"محصل (**{len(selected_existing_nc)}** من المحفظة + **{len(new_collectors)}** جديد) — "
+            "من غير ما نلمس أو نحرك عملاء حد من المحفظة دي."
         )
 
         st.markdown("---")
-        st.subheader("3️⃣ أوزان الموازنة والـ Tolerances")
+        st.subheader("4️⃣ أوزان الموازنة والـ Tolerances")
         w1, w2, w3, w4 = st.columns(4)
         with w1:
             amount_weight_nc = st.slider("وزن المبالغ", 0.0, 3.0, 1.0, 0.1, key="newcol_w_amt")
@@ -9083,6 +9149,13 @@ def page_distribution():
                 return
 
             work_nc = df_nc.copy()
+            # نحسب المستهدف من محفظة المحصلين المختارين فقط (مش كل الملف)
+            work_nc[sales_col_nc] = work_nc[sales_col_nc].astype(str).str.strip()
+            work_nc = work_nc[work_nc[sales_col_nc].isin(selected_existing_nc)].copy()
+            if work_nc.empty:
+                st.error("بعد فلترة محصلين المحفظة المختارين مفيش صفوف صالحة للحساب.")
+                return
+
             work_nc["_client_key"] = work_nc[client_key_col_nc].astype(str).str.strip()
             work_nc["_account_key"] = work_nc[account_key_col_nc].astype(str).str.strip()
             work_nc = work_nc[
@@ -9137,6 +9210,7 @@ def page_distribution():
                 "filename": uploaded_nc.name,
                 "file_hash": uploaded_file_hash(uploaded_nc),
                 "existing_collectors": existing_collectors,
+                "selected_existing": list(selected_existing_nc),
                 "new_collectors": new_collectors,
                 "all_targets": all_targets_nc,
                 "sales_col": sales_col_nc,

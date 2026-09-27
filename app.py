@@ -8263,7 +8263,12 @@ def _pick_rows_for_new_collectors(
     client_weight=1.5,
     account_weight=1.5,
 ):
-    """يسحب عملاء من شيت الإهمال للمحصلين الجدد مع موازنة متساوية بينهم."""
+    """يسحب عملاء من شيت الإهمال للمحصلين الجدد مع موازنة متساوية + تحسين بالتباديل.
+
+    قيود:
+    - عميل واحد لا يُسند لأكثر من محصل.
+    - نقرّب عدد العملاء والحسابات والمطالبات والمبلغ من المستهدف عبر اختيار + إضافة/حذف/تبديل.
+    """
     pool = neglect_work.copy()
     pool = pool[pool["_sales"].isin(source_collectors)]
     if source_states and state_col and "_state" in pool.columns:
@@ -8285,146 +8290,227 @@ def _pick_rows_for_new_collectors(
     if cust.empty:
         return {}, pd.DataFrame(), ["لا يوجد عملاء صالحين بعد التجميع."]
 
-    cust = cust.sort_values("amount", ascending=False).reset_index(drop=True)
+    cust_info = {}
+    for _, row in cust.iterrows():
+        ck = row["_client"]
+        cust_info[ck] = {
+            "amount": float(row["amount"]),
+            "n_accounts": int(row["n_accounts"]),
+            "n_rows": int(row["n_rows"]),
+        }
 
     n_new = len(new_names)
-    total_clients = len(cust)
-    total_accounts = int(cust["n_accounts"].sum())
-    total_amount = float(cust["amount"].sum())
-    total_rows = int(cust["n_rows"].sum())
+    need_clients = max(1, int(round(float(target_per_new.get("clients", len(cust) / max(n_new, 1))))))
+    need_accounts = max(1, int(round(float(target_per_new.get("accounts", sum(c["n_accounts"] for c in cust_info.values()) / max(n_new, 1))))))
+    need_amount = float(target_per_new.get("amount", sum(c["amount"] for c in cust_info.values()) / max(n_new, 1)))
+    need_rows = max(1, int(round(float(target_per_new.get("cases", sum(c["n_rows"] for c in cust_info.values()) / max(n_new, 1))))))
 
-    need_clients = max(1, int(round(target_per_new.get("clients", total_clients / max(n_new, 1)))))
-    need_accounts = max(1, int(round(target_per_new.get("accounts", total_accounts / max(n_new, 1)))))
-    need_amount = float(target_per_new.get("amount", total_amount / max(n_new, 1)))
-    need_rows = max(1, int(round(target_per_new.get("cases", total_rows / max(n_new, 1)))))
-
-    # سقف مرن للمبلغ: نسمح بتجاوز بسيط عشان نقدر نقرّب عدد العملاء
-    amount_hard_cap = need_amount * 1.08
-    amount_target = need_amount
+    # متوسط مبلغ العميل المثالي لتحقيق الأهداف معًا
+    ideal_unit = need_amount / max(need_clients, 1)
 
     state = {
-        name: {"amount": 0.0, "clients": 0, "accounts": 0, "rows": 0, "client_keys": []}
+        name: {"amount": 0.0, "clients": 0, "accounts": 0, "rows": 0, "client_keys": set()}
         for name in new_names
     }
-    assign_map = {}
-    remaining = cust.copy().reset_index(drop=True)
+    assigned = {}  # client_key -> collector
 
-    def _progress(name):
+    def _add(name, ck):
+        if ck in assigned:
+            return False
+        info = cust_info[ck]
         s = state[name]
-        pc = s["clients"] / max(need_clients, 1)
-        pa = s["amount"] / max(need_amount, 1.0)
-        pk = s["accounts"] / max(need_accounts, 1)
-        return pc, pa, pk
+        s["amount"] += info["amount"]
+        s["clients"] += 1
+        s["accounts"] += info["n_accounts"]
+        s["rows"] += info["n_rows"]
+        s["client_keys"].add(ck)
+        assigned[ck] = name
+        return True
 
-    def _is_done(name):
-        """خلص لما العملاء والمبلغ قربوا معًا من المستهدف (مش واحد بس)."""
-        pc, pa, pk = _progress(name)
-        # شرط الإكمال: العملاء ≥ 95% والمبلغ ≥ 92%
-        # أو المبلغ وصل السقف الصلب والعملاء ≥ 80%
-        if pc >= 0.95 and pa >= 0.92:
-            return True
-        if pa >= 1.08 and pc >= 0.80:
-            return True
-        if pc >= 1.0 and pa >= 0.90:
-            return True
-        return False
-
-    def _pick_best_for(name, pool_df):
-        """يختار أنسب عميل للمحصل حسب الفجوة الحالية بين العملاء والمبلغ."""
-        if pool_df.empty:
-            return None
+    def _remove(name, ck):
+        if assigned.get(ck) != name:
+            return False
+        info = cust_info[ck]
         s = state[name]
-        pc, pa, pk = _progress(name)
-        # لو المبلغ سابق العملاء → فضّل عملاء أصغر مبلغًا
-        # لو العملاء سابقين المبلغ → فضّل عملاء أكبر مبلغًا
-        prefer_small = pa > pc + 0.05
-        prefer_large = pc > pa + 0.05
+        s["amount"] -= info["amount"]
+        s["clients"] -= 1
+        s["accounts"] -= info["n_accounts"]
+        s["rows"] -= info["n_rows"]
+        s["client_keys"].discard(ck)
+        del assigned[ck]
+        return True
 
-        best_idx, best_sc = None, None
-        for idx, row in pool_df.iterrows():
-            amt = float(row["amount"])
-            nacc = int(row["n_accounts"])
-            nrows = int(row["n_rows"])
-            new_amt = s["amount"] + amt
-            new_cli = s["clients"] + 1
-            new_acc = s["accounts"] + nacc
+    def _error(name):
+        s = state[name]
+        dc = abs(s["clients"] - need_clients) / max(need_clients, 1)
+        da = abs(s["amount"] - need_amount) / max(need_amount, 1.0)
+        dk = abs(s["accounts"] - need_accounts) / max(need_accounts, 1)
+        dr = abs(s["rows"] - need_rows) / max(need_rows, 1)
+        # عقوبة إضافية للاتجاه (نقص/زيادة) عشان متميلش ناحية واحدة
+        return (
+            client_weight * dc
+            + amount_weight * da
+            + account_weight * dk
+            + 0.35 * dr
+        )
 
-            # رفض التجاوز الصلب للمبلغ (إلا لو لسه العملاء أقل من 50% ومفيش بديل أصغر)
-            if new_amt > amount_hard_cap and s["clients"] >= max(1, int(need_clients * 0.5)):
+    def _total_error():
+        return sum(_error(n) for n in new_names)
+
+    # ----- 1) بناء أولي: نختار للعملاء الأقرب لـ ideal_unit بالتناوب على المحصلين -----
+    ordered = sorted(
+        cust_info.keys(),
+        key=lambda ck: abs(cust_info[ck]["amount"] - ideal_unit),
+    )
+    # جولة أولى: املأ بالتناوب مع رفض الإضافة لو هتخرّب الهدف بزيادة كبيرة
+    for ck in ordered:
+        if len(assigned) >= need_clients * n_new + n_new:
+            break
+        # المحصل الأقل خطأ بعد الإضافة المحتملة
+        best_name, best_delta = None, None
+        for name in new_names:
+            s = state[name]
+            # لو العملاء اكتملوا والمبلغ كمان قريب — تخطي
+            if s["clients"] >= need_clients and s["amount"] >= need_amount * 0.98:
                 continue
+            info = cust_info[ck]
+            # منع تجاوز مبلغ جامد
+            if s["amount"] + info["amount"] > need_amount * 1.12 and s["clients"] >= int(need_clients * 0.7):
+                continue
+            before = _error(name)
+            # محاكاة
+            s["amount"] += info["amount"]
+            s["clients"] += 1
+            s["accounts"] += info["n_accounts"]
+            s["rows"] += info["n_rows"]
+            after = _error(name)
+            s["amount"] -= info["amount"]
+            s["clients"] -= 1
+            s["accounts"] -= info["n_accounts"]
+            s["rows"] -= info["n_rows"]
+            delta = after - before
+            if best_delta is None or delta < best_delta:
+                best_delta, best_name = delta, name
+        if best_name is not None and (best_delta is None or best_delta < 0.35):
+            _add(best_name, ck)
 
-            # مسافة عن الأهداف بعد الإضافة
-            da = abs(new_amt - amount_target) / max(amount_target, 1.0)
-            dc = abs(new_cli - need_clients) / max(need_clients, 1.0)
-            dk = abs(new_acc - need_accounts) / max(need_accounts, 1.0)
+    # ----- 2) تحسين: إضافة / حذف / استبدال لحد التقارب -----
+    free = [ck for ck in cust_info if ck not in assigned]
+    improved = True
+    rounds = 0
+    max_rounds = 40
+    while improved and rounds < max_rounds:
+        improved = False
+        rounds += 1
+        base_err = _total_error()
 
-            over_amt = max(0.0, (new_amt - amount_target) / max(amount_target, 1.0))
-            over_cli = max(0, new_cli - need_clients)
+        for name in new_names:
+            s = state[name]
+            # أ) إضافة من الـ free لو في نقص
+            if s["clients"] < need_clients or s["amount"] < need_amount * 0.98:
+                best_ck, best_after = None, base_err
+                for ck in free:
+                    info = cust_info[ck]
+                    if s["amount"] + info["amount"] > need_amount * 1.10 and s["clients"] >= need_clients:
+                        continue
+                    _add(name, ck)
+                    err = _total_error()
+                    _remove(name, ck)
+                    if err + 1e-9 < best_after:
+                        best_after, best_ck = err, ck
+                if best_ck is not None and best_after + 1e-9 < base_err:
+                    _add(name, best_ck)
+                    free.remove(best_ck)
+                    base_err = best_after
+                    improved = True
+                    continue
 
-            sc = (
-                amount_weight * da
-                + client_weight * dc
-                + account_weight * dk
-                + 40.0 * amount_weight * over_amt
-                + 15.0 * client_weight * over_cli
-            )
-            # حوافز حسب الاحتياج
-            if prefer_small:
-                sc += (amt / max(amount_target, 1.0)) * 8.0  # عاقب المبالغ الكبيرة
-            elif prefer_large:
-                sc -= (amt / max(amount_target, 1.0)) * 3.0  # كافئ المبالغ الأكبر شوية
-            else:
-                # متوازن: قرب متوسط مبلغ العميل من (المتبقي مبلغ / المتبقي عملاء)
-                left_amt = max(amount_target - s["amount"], 1.0)
-                left_cli = max(need_clients - s["clients"], 1)
-                ideal = left_amt / left_cli
-                sc += abs(amt - ideal) / max(ideal, 1.0) * 2.0
+            # ب) حذف عميل لو في زيادة واضحة
+            if s["clients"] > need_clients or s["amount"] > need_amount * 1.02:
+                best_ck, best_after = None, base_err
+                for ck in list(s["client_keys"]):
+                    _remove(name, ck)
+                    err = _total_error()
+                    _add(name, ck)
+                    if err + 1e-9 < best_after:
+                        best_after, best_ck = err, ck
+                if best_ck is not None and best_after + 1e-9 < base_err:
+                    _remove(name, best_ck)
+                    free.append(best_ck)
+                    base_err = best_after
+                    improved = True
+                    continue
 
-            if best_sc is None or sc < best_sc:
-                best_sc, best_idx = sc, idx
-        return best_idx
+            # ج) استبدال: شيل عميل جوّه و حط واحد من free (تقريب أدق للمبلغ والعدد)
+            if free and s["client_keys"]:
+                best_pair, best_after = None, base_err
+                # حدّث عيّنة للسرعة لو العدد كبير
+                inner = list(s["client_keys"])
+                outer = free
+                if len(inner) > 80:
+                    inner = sorted(inner, key=lambda ck: cust_info[ck]["amount"])[:: max(1, len(inner) // 80)]
+                if len(outer) > 120:
+                    outer = sorted(outer, key=lambda ck: abs(cust_info[ck]["amount"] - ideal_unit))[:120]
+                for ck_out in inner:
+                    for ck_in in outer:
+                        # محاكاة استبدال
+                        _remove(name, ck_out)
+                        if not _add(name, ck_in):
+                            _add(name, ck_out)
+                            continue
+                        err = _total_error()
+                        _remove(name, ck_in)
+                        _add(name, ck_out)
+                        if err + 1e-9 < best_after:
+                            best_after = err
+                            best_pair = (ck_out, ck_in)
+                if best_pair is not None and best_after + 1e-9 < base_err:
+                    ck_out, ck_in = best_pair
+                    _remove(name, ck_out)
+                    _add(name, ck_in)
+                    free.remove(ck_in)
+                    free.append(ck_out)
+                    base_err = best_after
+                    improved = True
+                    continue
 
-    max_steps = len(remaining) + 5
-    for _ in range(max_steps):
-        if remaining.empty or all(_is_done(n) for n in new_names):
-            break
-        # المحصل الأكثر احتياجًا (أقل امتلاءً مركب)
-        open_names = [n for n in new_names if not _is_done(n)]
-        if not open_names:
-            break
+        # د) تبادل بين محصلين جدد (لو أكتر من واحد)
+        if n_new >= 2:
+            for i, a in enumerate(new_names):
+                for b in new_names[i + 1 :]:
+                    keys_a = list(state[a]["client_keys"])
+                    keys_b = list(state[b]["client_keys"])
+                    if not keys_a or not keys_b:
+                        continue
+                    if len(keys_a) > 40:
+                        keys_a = sorted(keys_a, key=lambda ck: cust_info[ck]["amount"])[:: max(1, len(keys_a) // 40)]
+                    if len(keys_b) > 40:
+                        keys_b = sorted(keys_b, key=lambda ck: cust_info[ck]["amount"])[:: max(1, len(keys_b) // 40)]
+                    best_swap, best_after = None, base_err
+                    for ck_a in keys_a:
+                        for ck_b in keys_b:
+                            _remove(a, ck_a)
+                            _remove(b, ck_b)
+                            _add(a, ck_b)
+                            _add(b, ck_a)
+                            err = _total_error()
+                            _remove(a, ck_b)
+                            _remove(b, ck_a)
+                            _add(a, ck_a)
+                            _add(b, ck_b)
+                            if err + 1e-9 < best_after:
+                                best_after = err
+                                best_swap = (ck_a, ck_b)
+                    if best_swap is not None and best_after + 1e-9 < base_err:
+                        ck_a, ck_b = best_swap
+                        _remove(a, ck_a)
+                        _remove(b, ck_b)
+                        _add(a, ck_b)
+                        _add(b, ck_a)
+                        base_err = best_after
+                        improved = True
 
-        def _fill_key(n):
-            pc, pa, pk = _progress(n)
-            return amount_weight * pa + client_weight * pc + account_weight * pk
-
-        open_names.sort(key=_fill_key)
-        name = open_names[0]
-        idx = _pick_best_for(name, remaining)
-        if idx is None:
-            # مفيش عميل مناسب للمحصل ده — جرّب باقي المفتوحين
-            progressed = False
-            for alt in open_names[1:]:
-                idx = _pick_best_for(alt, remaining)
-                if idx is not None:
-                    name = alt
-                    progressed = True
-                    break
-            if not progressed:
-                break
-
-        row = remaining.loc[idx]
-        ck = row["_client"]
-        amt = float(row["amount"])
-        nacc = int(row["n_accounts"])
-        nrows = int(row["n_rows"])
-        state[name]["amount"] += amt
-        state[name]["clients"] += 1
-        state[name]["accounts"] += nacc
-        state[name]["rows"] += nrows
-        state[name]["client_keys"].append(ck)
-        assign_map[ck] = name
-        remaining = remaining.drop(index=idx)
-
+    assign_map = dict(assigned)
     summary_rows = []
     for name in new_names:
         s = state[name]
@@ -8447,28 +8533,24 @@ def _pick_rows_for_new_collectors(
         warnings.append("لم يتم إسناد أي عملاء.")
     else:
         for _, r in summary.iterrows():
-            if r["إجمالي المبلغ"] > need_amount * 1.08:
+            cli_ok = abs(r["فرق_العملاء"]) <= max(3, int(need_clients * 0.05))
+            amt_ok = abs(r["فرق_المبلغ"]) <= max(need_amount * 0.05, 1)
+            if cli_ok and amt_ok:
                 warnings.append(
-                    f"⚠️ {r['المحصّل']}: المبلغ ({r['إجمالي المبلغ']:,.0f}) أكبر من المستهدف ({need_amount:,.0f}) "
-                    f"بفرق {r['فرق_المبلغ']:,.0f}"
+                    f"✅ {r['المحصّل']}: قريب من المستهدف — عملاء {int(r['عدد العملاء'])}/{need_clients} · "
+                    f"مبلغ {r['إجمالي المبلغ']:,.0f}/{need_amount:,.0f}"
                 )
-            elif r["عدد العملاء"] < need_clients * 0.85:
+            else:
                 warnings.append(
-                    f"ℹ️ {r['المحصّل']}: العملاء ({int(r['عدد العملاء'])}) أقل من المستهدف ({need_clients}) — "
-                    f"تركيبة مبالغ حوض الإهمال قد لا تسمح بمطابقة العملاء والمبلغ معًا"
+                    f"ℹ️ {r['المحصّل']}: عملاء {int(r['عدد العملاء'])}/{need_clients} (فرق {int(r['فرق_العملاء'])}) · "
+                    f"مبلغ {r['إجمالي المبلغ']:,.0f}/{need_amount:,.0f} (فرق {r['فرق_المبلغ']:,.0f})"
                 )
-            elif r["إجمالي المبلغ"] < need_amount * 0.9:
-                warnings.append(
-                    f"ℹ️ {r['المحصّل']}: المبلغ ({r['إجمالي المبلغ']:,.0f}) أقل من المستهدف ({need_amount:,.0f})"
-                )
-        if len(summary) > 1:
-            aspread = float(summary["إجمالي المبلغ"].max() - summary["إجمالي المبلغ"].min())
-            cspread = int(summary["عدد العملاء"].max() - summary["عدد العملاء"].min())
-            warnings.append(f"فرق المبالغ بين المحصلين الجدد: {aspread:,.0f} · فرق العملاء: {cspread}")
         warnings.append(
-            f"تم سحب {len(assign_map)} عميل · مستهدف ≈ {need_clients} عميل / {need_amount:,.0f} جنيه"
+            f"تحسين بعد {rounds} جولة · سُحب {len(assign_map)} عميل · "
+            f"كل عميل عند محصل واحد فقط"
         )
     return assign_map, summary, warnings
+
 
 
 def _page_distribution_new_collector():

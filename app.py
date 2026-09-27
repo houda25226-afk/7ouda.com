@@ -8298,84 +8298,132 @@ def _pick_rows_for_new_collectors(
     need_amount = float(target_per_new.get("amount", total_amount / max(n_new, 1)))
     need_rows = max(1, int(round(target_per_new.get("cases", total_rows / max(n_new, 1)))))
 
-    # حدود عدم التجاوز — المبلغ أهم عشان مش يعدّي المستهدف
-    amount_cap = need_amount * 1.02   # أقصى تجاوز مسموح ~2%
-    amount_soft = need_amount * 0.98  # نعتبر وصلنا للمستهدف عند 98%
-    clients_cap = need_clients + 1    # عميل زيادة بالكتير
+    # سقف مرن للمبلغ: نسمح بتجاوز بسيط عشان نقدر نقرّب عدد العملاء
+    amount_hard_cap = need_amount * 1.08
+    amount_target = need_amount
 
     state = {
         name: {"amount": 0.0, "clients": 0, "accounts": 0, "rows": 0, "client_keys": []}
         for name in new_names
     }
     assign_map = {}
+    remaining = cust.copy().reset_index(drop=True)
 
-    def _is_full(name):
+    def _progress(name):
         s = state[name]
-        # وصل المستهدف بالمبلغ أو بالعملاء (أيهما يحدث أولاً نوقف عليه)
-        amount_done = s["amount"] >= amount_soft
-        clients_done = s["clients"] >= need_clients
-        return amount_done or clients_done
+        pc = s["clients"] / max(need_clients, 1)
+        pa = s["amount"] / max(need_amount, 1.0)
+        pk = s["accounts"] / max(need_accounts, 1)
+        return pc, pa, pk
 
-    def _would_overshoot(name, amt):
+    def _is_done(name):
+        """خلص لما العملاء والمبلغ قربوا معًا من المستهدف (مش واحد بس)."""
+        pc, pa, pk = _progress(name)
+        # شرط الإكمال: العملاء ≥ 95% والمبلغ ≥ 92%
+        # أو المبلغ وصل السقف الصلب والعملاء ≥ 80%
+        if pc >= 0.95 and pa >= 0.92:
+            return True
+        if pa >= 1.08 and pc >= 0.80:
+            return True
+        if pc >= 1.0 and pa >= 0.90:
+            return True
+        return False
+
+    def _pick_best_for(name, pool_df):
+        """يختار أنسب عميل للمحصل حسب الفجوة الحالية بين العملاء والمبلغ."""
+        if pool_df.empty:
+            return None
         s = state[name]
-        return (s["amount"] + amt) > amount_cap
+        pc, pa, pk = _progress(name)
+        # لو المبلغ سابق العملاء → فضّل عملاء أصغر مبلغًا
+        # لو العملاء سابقين المبلغ → فضّل عملاء أكبر مبلغًا
+        prefer_small = pa > pc + 0.05
+        prefer_large = pc > pa + 0.05
 
-    def _score(name, amt, nacc, nrows):
-        s = state[name]
-        a = s["amount"] + amt
-        c = s["clients"] + 1
-        k = s["accounts"] + nacc
-        r = s["rows"] + nrows
-        # قرب من الهدف (نفضّل اللي لسه تحت المستهدف)
-        da = abs(a - need_amount) / max(need_amount, 1.0)
-        dc = abs(c - need_clients) / max(need_clients, 1.0)
-        dk = abs(k - need_accounts) / max(need_accounts, 1.0)
-        dr = abs(r - need_rows) / max(need_rows, 1.0)
-        over = 0.0
-        if a > need_amount:
-            over += 50.0 * amount_weight * ((a - need_amount) / max(need_amount, 1.0))
-        if c > need_clients:
-            over += 20.0 * client_weight * (c - need_clients)
-        # أولوية للمحصل الأقل امتلاءً حالياً
-        fill = (s["amount"] / max(need_amount, 1.0)) * amount_weight + (s["clients"] / max(need_clients, 1.0)) * client_weight
-        return amount_weight * da + client_weight * dc + account_weight * dk + 0.3 * dr + over + fill
+        best_idx, best_sc = None, None
+        for idx, row in pool_df.iterrows():
+            amt = float(row["amount"])
+            nacc = int(row["n_accounts"])
+            nrows = int(row["n_rows"])
+            new_amt = s["amount"] + amt
+            new_cli = s["clients"] + 1
+            new_acc = s["accounts"] + nacc
 
-    for _, row in cust.iterrows():
-        if all(_is_full(n) for n in new_names):
+            # رفض التجاوز الصلب للمبلغ (إلا لو لسه العملاء أقل من 50% ومفيش بديل أصغر)
+            if new_amt > amount_hard_cap and s["clients"] >= max(1, int(need_clients * 0.5)):
+                continue
+
+            # مسافة عن الأهداف بعد الإضافة
+            da = abs(new_amt - amount_target) / max(amount_target, 1.0)
+            dc = abs(new_cli - need_clients) / max(need_clients, 1.0)
+            dk = abs(new_acc - need_accounts) / max(need_accounts, 1.0)
+
+            over_amt = max(0.0, (new_amt - amount_target) / max(amount_target, 1.0))
+            over_cli = max(0, new_cli - need_clients)
+
+            sc = (
+                amount_weight * da
+                + client_weight * dc
+                + account_weight * dk
+                + 40.0 * amount_weight * over_amt
+                + 15.0 * client_weight * over_cli
+            )
+            # حوافز حسب الاحتياج
+            if prefer_small:
+                sc += (amt / max(amount_target, 1.0)) * 8.0  # عاقب المبالغ الكبيرة
+            elif prefer_large:
+                sc -= (amt / max(amount_target, 1.0)) * 3.0  # كافئ المبالغ الأكبر شوية
+            else:
+                # متوازن: قرب متوسط مبلغ العميل من (المتبقي مبلغ / المتبقي عملاء)
+                left_amt = max(amount_target - s["amount"], 1.0)
+                left_cli = max(need_clients - s["clients"], 1)
+                ideal = left_amt / left_cli
+                sc += abs(amt - ideal) / max(ideal, 1.0) * 2.0
+
+            if best_sc is None or sc < best_sc:
+                best_sc, best_idx = sc, idx
+        return best_idx
+
+    max_steps = len(remaining) + 5
+    for _ in range(max_steps):
+        if remaining.empty or all(_is_done(n) for n in new_names):
+            break
+        # المحصل الأكثر احتياجًا (أقل امتلاءً مركب)
+        open_names = [n for n in new_names if not _is_done(n)]
+        if not open_names:
             break
 
+        def _fill_key(n):
+            pc, pa, pk = _progress(n)
+            return amount_weight * pa + client_weight * pc + account_weight * pk
+
+        open_names.sort(key=_fill_key)
+        name = open_names[0]
+        idx = _pick_best_for(name, remaining)
+        if idx is None:
+            # مفيش عميل مناسب للمحصل ده — جرّب باقي المفتوحين
+            progressed = False
+            for alt in open_names[1:]:
+                idx = _pick_best_for(alt, remaining)
+                if idx is not None:
+                    name = alt
+                    progressed = True
+                    break
+            if not progressed:
+                break
+
+        row = remaining.loc[idx]
         ck = row["_client"]
         amt = float(row["amount"])
         nacc = int(row["n_accounts"])
         nrows = int(row["n_rows"])
-
-        # مرشحين: مش ممتلئين، وإضافة العميل مش هتعدّي سقف المبلغ
-        candidates = [
-            name for name in new_names
-            if not _is_full(name) and not _would_overshoot(name, amt)
-        ]
-        if not candidates:
-            # لو العميل كبير أوي ومفيش حد ياخده من غير تجاوز — نتخطاه
-            # (إلا لو في محصل فاضي تماماً ومبلغ العميل وحده أصغر من السقف)
-            candidates = [
-                name for name in new_names
-                if state[name]["clients"] == 0 and amt <= amount_cap
-            ]
-            if not candidates:
-                continue
-
-        best, best_sc = None, None
-        for name in candidates:
-            sc = _score(name, amt, nacc, nrows)
-            if best is None or sc < best_sc:
-                best, best_sc = name, sc
-
-        state[best]["amount"] += amt
-        state[best]["clients"] += 1
-        state[best]["accounts"] += nacc
-        state[best]["rows"] += nrows
-        state[best]["client_keys"].append(ck)
-        assign_map[ck] = best
+        state[name]["amount"] += amt
+        state[name]["clients"] += 1
+        state[name]["accounts"] += nacc
+        state[name]["rows"] += nrows
+        state[name]["client_keys"].append(ck)
+        assign_map[ck] = name
+        remaining = remaining.drop(index=idx)
 
     summary_rows = []
     for name in new_names:
@@ -8399,21 +8447,27 @@ def _pick_rows_for_new_collectors(
         warnings.append("لم يتم إسناد أي عملاء.")
     else:
         for _, r in summary.iterrows():
-            if r["إجمالي المبلغ"] > need_amount * 1.02:
+            if r["إجمالي المبلغ"] > need_amount * 1.08:
                 warnings.append(
                     f"⚠️ {r['المحصّل']}: المبلغ ({r['إجمالي المبلغ']:,.0f}) أكبر من المستهدف ({need_amount:,.0f}) "
                     f"بفرق {r['فرق_المبلغ']:,.0f}"
                 )
+            elif r["عدد العملاء"] < need_clients * 0.85:
+                warnings.append(
+                    f"ℹ️ {r['المحصّل']}: العملاء ({int(r['عدد العملاء'])}) أقل من المستهدف ({need_clients}) — "
+                    f"تركيبة مبالغ حوض الإهمال قد لا تسمح بمطابقة العملاء والمبلغ معًا"
+                )
             elif r["إجمالي المبلغ"] < need_amount * 0.9:
                 warnings.append(
-                    f"ℹ️ {r['المحصّل']}: المبلغ ({r['إجمالي المبلغ']:,.0f}) أقل من المستهدف ({need_amount:,.0f}) — "
-                    f"حوض الإهمال قد لا يكفي أو الحالات المختارة محدودة"
+                    f"ℹ️ {r['المحصّل']}: المبلغ ({r['إجمالي المبلغ']:,.0f}) أقل من المستهدف ({need_amount:,.0f})"
                 )
         if len(summary) > 1:
             aspread = float(summary["إجمالي المبلغ"].max() - summary["إجمالي المبلغ"].min())
             cspread = int(summary["عدد العملاء"].max() - summary["عدد العملاء"].min())
             warnings.append(f"فرق المبالغ بين المحصلين الجدد: {aspread:,.0f} · فرق العملاء: {cspread}")
-        warnings.append(f"تم سحب {len(assign_map)} عميل من شيت الإهمال لصالح {n_new} محصل جديد · مستهدف المبلغ ≈ {need_amount:,.0f}")
+        warnings.append(
+            f"تم سحب {len(assign_map)} عميل · مستهدف ≈ {need_clients} عميل / {need_amount:,.0f} جنيه"
+        )
     return assign_map, summary, warnings
 
 

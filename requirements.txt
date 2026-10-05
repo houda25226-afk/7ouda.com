@@ -1,6 +1,6 @@
 streamlit
 transformers
-torch
+torch==2.4.1+cpu --extra-index-url https://download.pytorch.org/whl/cpu
 pandas
 openpyxl
 plotly

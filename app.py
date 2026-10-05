@@ -8749,6 +8749,7 @@ def _page_distribution_new_collector():
             "compare_collectors": compare_collectors,
             "filename": portfolio_file.name,
             "df": filtered_portfolio,
+            "full_df": portfolio_df,
         }
         st.session_state["newc_portfolio_meta"] = portfolio_meta
     else:
@@ -9325,12 +9326,36 @@ def _render_final_rebalance(result):
         "_sales": "المحصّل الأصلي", "_final": "المحصّل النهائي", "_src": "المصدر",
     })[["العميل", "الحساب", "الحالة", "المبلغ", "المحصّل الأصلي", "المحصّل النهائي", "المصدر"]]
 
+    # ---- المحفظة كاملة بكل الأعمدة الأصلية وبالمحصل النهائي ----
+    full_out = None
+    full_pf = meta.get("full_df")
+    if full_pf is not None:
+        client_final = rows.drop_duplicates("_client").set_index("_client")["_final"].to_dict()
+        p_sales_col, p_client_col = meta["sales_col"], meta["client_col"]
+        full_out = full_pf.copy()
+        keys = _norm_identity(full_out[p_client_col])
+        prev = full_out[p_sales_col].astype(str).str.strip()
+        newv = keys.map(client_final)
+        moved = newv.notna() & (newv != prev)
+        full_out["المحصّل السابق"] = prev.where(moved, "")
+        full_out.loc[newv.notna(), p_sales_col] = newv[newv.notna()]
+        n_client_col = result.get("n_client_col")
+        if n_client_col in assigned_df.columns:
+            extra = assigned_df[~_norm_identity(assigned_df[n_client_col]).isin(set(keys))].copy()
+            if len(extra):
+                n_sales_name = result["sales_col"]
+                if n_sales_name != p_sales_col and n_sales_name in extra.columns:
+                    extra[p_sales_col] = extra[n_sales_name]
+                    extra = extra.drop(columns=[n_sales_name])
+                full_out = pd.concat([full_out, extra], ignore_index=True)
+                full_out["المحصّل السابق"] = full_out["المحصّل السابق"].fillna("")
+
     locked_n = sum(1 for u in units if u["locked"])
     multi_n = sum(1 for u in units if u["multi_owner"])
     st.session_state[REBALANCE_RESULT_KEY] = {
         "cmp": cmp_df, "moves": moves, "final_rows": final_rows,
         "cost0": c0, "cost1": c1_, "locked": locked_n, "multi": multi_n, "units": len(units),
-        "team": team, "new_names": new_names,
+        "team": team, "new_names": new_names, "full_portfolio": full_out,
     }
     _render_rebalance_results(st.session_state[REBALANCE_RESULT_KEY])
 
@@ -9362,11 +9387,13 @@ def _render_rebalance_results(r):
 
     buf = io.BytesIO()
     with pd.ExcelWriter(buf, engine="openpyxl") as writer:
+        if r.get("full_portfolio") is not None:
+            r["full_portfolio"].to_excel(writer, index=False, sheet_name="المحفظة_كاملة")
         r["cmp"].to_excel(writer, index=False, sheet_name="قبل_وبعد")
         r["moves"].to_excel(writer, index=False, sheet_name="الحركات")
         r["final_rows"].to_excel(writer, index=False, sheet_name="المحفظة_النهائية")
     st.download_button(
-        "⬇️ تحميل Excel — الموازنة النهائية", data=buf.getvalue(),
+        "⬇️ تحميل المحفظة كاملة بعد الموازنة (Excel)", data=buf.getvalue(),
         file_name=f"موازنة_نهائية_{datetime.now().strftime('%Y%m%d')}.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         use_container_width=True, type="primary", key="rebal_download",

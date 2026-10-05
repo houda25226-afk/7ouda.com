@@ -9106,20 +9106,46 @@ def _build_rebalance_units(rows: pd.DataFrame, new_names):
     return units, rows
 
 
-def _rebalance_units_search(units, team, weights, restarts=5, seed=7, max_passes=200, progress=None):
-    """بحث محلي: نقل أفضل وحدة + تبديل بين زوج محصلين + إعادة محاولات بتشويش عشوائي."""
+def _rebalance_units_search(units, team, weights, restarts=8, seed=7, max_passes=300, progress=None):
+    """بحث محلي قوي: نقل + تبديل وحدات بين المحصلين المختارين فقط لحد ما العملاء/الحسابات/المبالغ/المطالبات تتساوى.
+
+    - يشتغل فقط على ``team`` (المحصل الجديد + المحصلين اللي اختارهم المستخدم).
+    - الوحدات المقفولة ما بتتحركش.
+    - أي وحدة مالكها مش من الفريق بتتنسب لأقرب عضو في الفريق كبداية.
+    """
     import numpy as np
 
     k = len(team)
+    if k == 0 or not units:
+        empty_T = np.zeros((max(k, 1), 4))
+        return np.array([], dtype=int), empty_T, empty_T, 0.0, 0.0
+
     idx = {n: i for i, n in enumerate(team)}
     U = np.array([[u["amount"], u["clients"], u["accounts"], u["rows"]] for u in units], dtype=float)
-    movable = np.array([not u["locked"] for u in units])
-    owner0 = np.array([idx[u["owner"]] for u in units])
+    movable = np.array([not u["locked"] for u in units], dtype=bool)
+
+    # مالك أولي: لو المالك الأصلي مش من الفريق → نوزّعه على أقل محصل حالياً (fallback = 0)
+    owner0 = np.zeros(len(units), dtype=int)
+    provisional = []
+    for i, u in enumerate(units):
+        if u["owner"] in idx:
+            owner0[i] = idx[u["owner"]]
+        else:
+            provisional.append(i)
+            owner0[i] = 0
+    if provisional:
+        # وزّع الوحدات الغريبة بالتناوب على الفريق عشان ما تتراكمش على واحد
+        for j, i in enumerate(provisional):
+            owner0[i] = j % k
+
     w = np.array(weights, dtype=float)
+    if w.sum() <= 0:
+        w = np.array([1.0, 1.0, 1.0, 0.5], dtype=float)
     total = U.sum(axis=0)
     mean = np.maximum(total / k, 1e-9)
 
-    def rc(T):  # تكلفة صف/صفوف
+    def rc(T):
+        # تكلفة نسبية: كل بُعد (مبلغ/عملاء/حسابات/مطالبات) يتقرب من المتوسط
         return (w * ((T - mean) / mean) ** 2).sum(axis=-1)
 
     def totals(owner):
@@ -9130,23 +9156,24 @@ def _rebalance_units_search(units, team, weights, restarts=5, seed=7, max_passes
     def total_cost(owner):
         return float(rc(totals(owner)).sum())
 
-    def descend(owner):
+    def descend(owner, local_seed):
         owner = owner.copy()
         T = totals(owner)
-        rng = np.random.default_rng(seed)
+        rng = np.random.default_rng(local_seed)
         prev_cost = float(rc(T).sum())
         for _ in range(max_passes):
             improved = False
-            # ---- 1) نقل ----
+            # ---- 1) نقل وحدات منفصلة (greedy متعدد) ----
             base = rc(T)
             Ta = T[owner]
-            d_a = rc(Ta - U) - base[owner]                      # (n,)
-            d_b = rc(T[None, :, :] + U[:, None, :]) - base[None, :]  # (n,k)
+            d_a = rc(Ta - U) - base[owner]
+            d_b = rc(T[None, :, :] + U[:, None, :]) - base[None, :]
             delta = d_a[:, None] + d_b
             delta[~movable, :] = np.inf
             delta[np.arange(len(U)), owner] = np.inf
             used = set()
-            flat = np.argsort(delta, axis=None)[: 4 * k]
+            # نجرب أكتر حركات في كل باس عشان المساواة تتحسن أسرع
+            flat = np.argsort(delta, axis=None)[: max(8 * k, 16)]
             for f in flat:
                 i, b = divmod(int(f), k)
                 if delta[i, b] >= -1e-12:
@@ -9159,44 +9186,91 @@ def _rebalance_units_search(units, team, weights, restarts=5, seed=7, max_passes
                 T[b] += U[i]
                 used.update((a, b))
                 improved = True
-            # ---- 2) تبديل بين كل زوج ----
+
+            # ---- 2) تبديل بين كل زوج محصلين ----
             base = rc(T)
+            sample_cap = 120  # عيّنة أكبر = فرص تساوي أفضل
             for a in range(k):
                 ia = np.where((owner == a) & movable)[0]
                 if len(ia) == 0:
                     continue
-                if len(ia) > 60:
-                    ia = rng.choice(ia, 60, replace=False)
+                if len(ia) > sample_cap:
+                    ia = rng.choice(ia, sample_cap, replace=False)
                 for b in range(a + 1, k):
-                    ia = ia[owner[ia] == a]
-                    if len(ia) == 0:
+                    ia_cur = ia[owner[ia] == a]
+                    if len(ia_cur) == 0:
                         break
                     ib = np.where((owner == b) & movable)[0]
                     if len(ib) == 0:
                         continue
-                    if len(ib) > 60:
-                        ib = rng.choice(ib, 60, replace=False)
-                    Ua, Ub = U[ia][:, None, :], U[ib][None, :, :]
+                    if len(ib) > sample_cap:
+                        ib = rng.choice(ib, sample_cap, replace=False)
+                    Ua = U[ia_cur][:, None, :]
+                    Ub = U[ib][None, :, :]
                     na = T[a] - Ua + Ub
                     nb = T[b] + Ua - Ub
                     d = rc(na) + rc(nb) - base[a] - base[b]
                     j = np.unravel_index(np.argmin(d), d.shape)
                     if d[j] < -1e-12:
-                        i1, i2 = ia[j[0]], ib[j[1]]
+                        i1, i2 = ia_cur[j[0]], ib[j[1]]
                         owner[i1], owner[i2] = b, a
                         T[a] += U[i2] - U[i1]
                         T[b] += U[i1] - U[i2]
                         base = rc(T)
                         improved = True
+
+            # ---- 3) نقل ثنائي: وحّدتين من A → B مقابل وحدة من B (تقريب أدق للمبالغ) ----
+            base = rc(T)
+            for a in range(k):
+                ia = np.where((owner == a) & movable)[0]
+                if len(ia) < 2:
+                    continue
+                if len(ia) > 40:
+                    ia = rng.choice(ia, 40, replace=False)
+                for b in range(k):
+                    if a == b:
+                        continue
+                    ib = np.where((owner == b) & movable)[0]
+                    if len(ib) == 0:
+                        continue
+                    if len(ib) > 40:
+                        ib = rng.choice(ib, 40, replace=False)
+                    # جرّب أزواج عشوائية محدودة من ia
+                    pairs = min(80, len(ia) * (len(ia) - 1) // 2)
+                    best_local = None
+                    for _try in range(pairs):
+                        i1, i2 = rng.choice(ia, 2, replace=False)
+                        if owner[i1] != a or owner[i2] != a:
+                            continue
+                        u_sum = U[i1] + U[i2]
+                        # أفضل وحدة من b تتعوّض بيها
+                        for j2 in ib:
+                            if owner[j2] != b:
+                                continue
+                            na = T[a] - u_sum + U[j2]
+                            nb = T[b] + u_sum - U[j2]
+                            d = float(rc(na) + rc(nb) - base[a] - base[b])
+                            if best_local is None or d < best_local[0]:
+                                best_local = (d, int(i1), int(i2), int(j2))
+                    if best_local is not None and best_local[0] < -1e-12:
+                        _, i1, i2, j2 = best_local
+                        owner[i1] = b
+                        owner[i2] = b
+                        owner[j2] = a
+                        T[a] = T[a] - U[i1] - U[i2] + U[j2]
+                        T[b] = T[b] + U[i1] + U[i2] - U[j2]
+                        base = rc(T)
+                        improved = True
+
             T = totals(owner)
             new_cost = float(rc(T).sum())
-            if (not improved) or (prev_cost - new_cost) < 1e-7 * max(prev_cost, 1e-9):
+            if (not improved) or (prev_cost - new_cost) < 1e-9 * max(prev_cost, 1e-9):
                 prev_cost = new_cost
                 break
             prev_cost = new_cost
         return owner, float(rc(totals(owner)).sum())
 
-    best_owner, best_cost = descend(owner0)
+    best_owner, best_cost = descend(owner0, seed)
     rng = np.random.default_rng(seed + 1)
     mv = np.where(movable)[0]
     for r in range(max(0, restarts)):
@@ -9204,17 +9278,21 @@ def _rebalance_units_search(units, team, weights, restarts=5, seed=7, max_passes
             progress((r + 1) / (restarts + 1))
         cand = best_owner.copy()
         if len(mv):
-            n_shake = max(2, int(len(mv) * 0.03))
+            # تشويش أقوى كل ما زادت المحاولة عشان نستكشف حلول أبعد
+            frac = 0.04 + 0.02 * (r % 5)
+            n_shake = max(3, int(len(mv) * frac))
             pick = rng.choice(mv, min(n_shake, len(mv)), replace=False)
             cand[pick] = rng.integers(0, k, len(pick))
-        cand, cost = descend(cand)
+        cand, cost = descend(cand, seed + 11 + r * 17)
         if cost < best_cost - 1e-12:
             best_owner, best_cost = cand, cost
+    if progress:
+        progress(1.0)
     return best_owner, totals(owner0), totals(best_owner), total_cost(owner0), best_cost
 
 
 def _render_final_rebalance(result):
-    """خطوة 3: موازنة نهائية بين المحصل الجديد والمحصلين المختارين."""
+    """خطوة 3: موازنة نهائية بين المحصل الجديد والمحصلين المختارين فقط."""
     import numpy as np
 
     meta = st.session_state.get("newc_portfolio_meta") or {}
@@ -9227,32 +9305,57 @@ def _render_final_rebalance(result):
     st.markdown("---")
     st.subheader("3️⃣ موازنة نهائية — المحصل الجديد مع المحصلين اللي تختارهم")
     st.caption(
-        "بنجمع محفظة المحصل الجديد (اللي اتسحبت من الإهمال) مع محافظ المحصلين اللي هتختارهم، "
-        "وبعدها بنجرّب نقل وتبديل عملاء بين الكل لحد ما العملاء والحسابات والمبالغ والمطالبات تتساوى. "
-        "العميل (والحسابات المرتبطة بيه) بيروح لمحصل واحد بس."
+        "بنشتغل **بس** على مطالبات المحصلين اللي هتختارهم + المحصل الجديد. "
+        "أي محصل تاني في عمود المحصل مش هيتلمّس خالص. "
+        "بنعمل تباديل وتوافيق (نقل + تبديل وحدات عملاء/حسابات) لحد ما العملاء والحسابات والمبالغ والمطالبات تتساوى بين الفريق المختار."
     )
 
-    existing = [c for c in meta.get("compare_collectors", []) if c not in new_names]
+    sales_col = meta["sales_col"]
+    # قائمة المحصلين المتاحين من المحفظة فقط (من غير الجدد)
+    all_portfolio_sales = sorted({
+        str(v).strip()
+        for v in pdf[sales_col].astype(str).tolist()
+        if str(v).strip() and str(v).strip().lower() not in {"nan", "none", "null"}
+    })
+    existing = [c for c in all_portfolio_sales if c not in new_names]
+    # لو compare_collectors موجود نفضّله كترتيب افتراضي
+    preferred = [c for c in meta.get("compare_collectors", []) if c in existing]
+    default_chosen = preferred or existing
+
     chosen = st.multiselect(
-        "👥 اختار المحصلين اللي هتساوي المحصل الجديد بيهم",
+        "👥 اختار المحصلين اللي هتساوي المحصل الجديد بيهم (المطالبات بتاعتهم بس اللي هتدخل في التباديل)",
         options=existing,
-        default=existing,
+        default=default_chosen,
         key="rebal_collectors",
+        help="المحصلين اللي مش مختارين هنا مش هتتلمس مطالباتهم خالص — ملكناش دعوة بيهم.",
     )
     c1, c2, c3 = st.columns(3)
     with c1:
-        w_amt = st.slider("وزن المبالغ", 0.0, 3.0, 1.0, 0.1, key="rebal_w_amt")
-        w_rows = st.slider("وزن المطالبات", 0.0, 3.0, 0.5, 0.1, key="rebal_w_rows")
+        w_amt = st.slider("وزن المبالغ", 0.0, 3.0, 1.2, 0.1, key="rebal_w_amt")
+        w_rows = st.slider("وزن المطالبات", 0.0, 3.0, 0.8, 0.1, key="rebal_w_rows")
     with c2:
-        w_cli = st.slider("وزن العملاء", 0.0, 3.0, 1.0, 0.1, key="rebal_w_cli")
-        restarts = st.slider("عدد محاولات التباديل", 0, 30, 3, 1, key="rebal_restarts")
+        w_cli = st.slider("وزن العملاء", 0.0, 3.0, 1.2, 0.1, key="rebal_w_cli")
+        restarts = st.slider("عدد محاولات التباديل", 0, 40, 10, 1, key="rebal_restarts",
+                             help="كل ما زاد العدد كل ما التباديل تبقى أعمق والمساواة أحسن (أبطأ شوية).")
     with c3:
-        w_acc = st.slider("وزن الحسابات", 0.0, 3.0, 1.0, 0.1, key="rebal_w_acc")
-        lock_on = st.checkbox("🔒 لا تنقل «واعد بالسداد» و«جدولة» من محصلها الحالي", value=True, key="rebal_lock")
+        w_acc = st.slider("وزن الحسابات", 0.0, 3.0, 1.2, 0.1, key="rebal_w_acc")
+        lock_on = st.checkbox(
+            "🔒 لا تنقل «واعد بالسداد» و«جدولة» من محصلها الحالي",
+            value=False,
+            key="rebal_lock",
+            help="لو مفعّل، الحالات دي هتفضل ثابتة وممكن تمنع المساواة الكاملة. للتسوية التامة سيبه مقفول.",
+        )
 
     if not chosen:
-        st.warning("اختار محصل واحد على الأقل.")
+        st.warning("اختار محصل واحد على الأقل عشان نقدر نساوي المحصل الجديد بيه.")
         return
+
+    team_preview = list(dict.fromkeys(new_names + chosen))
+    st.info(
+        f"الفريق اللي هيتساوى: **{len(team_preview)}** محصل "
+        f"({len(new_names)} جديد + {len(chosen)} مختار). "
+        f"باقي المحصلين في المحفظة ({len(existing) - len(chosen)}) مش داخلين في التباديل."
+    )
 
     if not st.button("⚖️ نفّذ الموازنة النهائية", type="primary", use_container_width=True, key="rebal_run"):
         cached = st.session_state.get(REBALANCE_RESULT_KEY)
@@ -9260,10 +9363,15 @@ def _render_final_rebalance(result):
             _render_rebalance_results(cached)
         return
 
-    # ---- تجهيز الصفوف ----
+    # ---- تجهيز الصفوف: مطالبات المختارين فقط + محفظة الجدد ----
+    chosen_set = set(chosen)
+    new_set = set(new_names)
+    team_set = chosen_set | new_set
+
+    port_mask = pdf[sales_col].astype(str).str.strip().isin(chosen_set)
     _, p_work = _agg_portfolio_metrics(
-        pdf[pdf[meta["sales_col"]].astype(str).str.strip().isin(chosen)],
-        meta["sales_col"], meta["client_col"], meta["account_col"], meta["amount_cols"], meta.get("state_col"),
+        pdf.loc[port_mask],
+        sales_col, meta["client_col"], meta["account_col"], meta["amount_cols"], meta.get("state_col"),
     )
     p_work = p_work.copy()
     p_work["_src"] = "portfolio"
@@ -9277,21 +9385,51 @@ def _render_final_rebalance(result):
     a_work = a_work.copy()
     a_work["_src"] = "neglect"
     a_work["_orig_index"] = a_work.index
+    # تأكيد إن محفظة الجدد منسوبة للجدد فقط
+    a_work["_sales"] = a_work["_sales"].astype(str).str.strip()
+    a_work = a_work[a_work["_sales"].isin(new_set) | a_work["_sales"].isin(chosen_set)]
+    # أي صف من الإهمال مش منسوب لجديد ننسبه لأول محصل جديد كحماية
+    if not a_work.empty and new_names:
+        orphan = ~a_work["_sales"].isin(new_set)
+        if orphan.any():
+            a_work.loc[orphan, "_sales"] = new_names[0]
 
     # أي عميل اتسحب للجديد يتشال من جانب المحفظة (إسناد الجديد هو الأساس)
     p_work = p_work[~p_work["_client"].isin(set(a_work["_client"]))]
 
     keep = ["_sales", "_client", "_account", "_amt", "_state", "_src", "_orig_index"]
     rows = pd.concat([p_work[keep], a_work[keep]], ignore_index=True)
-    rows = rows[rows["_sales"].isin(set(chosen) | set(new_names))]
+    # فلتر صارم: مفيش أي مطالبة من محصل مش مختار
+    rows = rows[rows["_sales"].astype(str).str.strip().isin(team_set)].copy()
+    if rows.empty:
+        st.error("مفيش مطالبات متاحة بعد فلترة المحصلين المختارين.")
+        return
+
+    st.caption(
+        f"عدد المطالبات الداخلة في التباديل: **{len(rows):,}** · "
+        f"من المحفظة: {(rows['_src']=='portfolio').sum():,} · "
+        f"من الإهمال (الجدد): {(rows['_src']=='neglect').sum():,}"
+    )
 
     units, rows = _build_rebalance_units(rows, set(new_names))
     if not lock_on:
         for u in units:
             u["locked"] = False
+    else:
+        # حتى مع القفل: وحدات الجدد تفضل قابلة للنقل (محفظتهم لسه بتتبنى)
+        for u in units:
+            if u["owner"] in new_set:
+                u["locked"] = False
 
-    team = list(dict.fromkeys(new_names + chosen))
-    bar = st.progress(0.0, text="جاري تجربة التباديل والتوافيق...")
+    team = list(dict.fromkeys(list(new_names) + list(chosen)))
+    # تأكيد إن كل وحدة مالكتها من الفريق (لو حصل تضارب أسماء)
+    team_idx = {n: i for i, n in enumerate(team)}
+    for u in units:
+        if u["owner"] not in team_idx:
+            # انسبها لمحصل جديد كبداية لو مش معروف
+            u["owner"] = new_names[0] if new_names else team[0]
+
+    bar = st.progress(0.0, text="جاري تجربة التباديل والتوافيق بين المحصلين المختارين فقط...")
     owner, T0, T1, c0, c1_ = _rebalance_units_search(
         units, team, [w_amt, w_cli, w_acc, w_rows], restarts=restarts, progress=lambda p: bar.progress(min(p, 1.0))
     )
@@ -9304,7 +9442,7 @@ def _render_final_rebalance(result):
     def _tbl(T):
         return pd.DataFrame({
             "المحصّل": team,
-            "إجمالي المبلغ": T[:, 0].round(2),
+            "إجمالي المبلغ": np.round(T[:, 0], 2),
             "عدد العملاء": T[:, 1].astype(int),
             "عدد الحسابات": T[:, 2].astype(int),
             "عدد المطالبات": T[:, 3].astype(int),
@@ -9312,7 +9450,20 @@ def _render_final_rebalance(result):
 
     before, after = _tbl(T0), _tbl(T1)
     cmp_df = before.merge(after, on="المحصّل", suffixes=(" (قبل)", " (بعد)"))
-    cmp_df.insert(1, "نوع", ["جديد" if n in new_names else "حالي" for n in cmp_df["المحصّل"]])
+    cmp_df.insert(1, "نوع", ["جديد" if n in new_set else "حالي" for n in cmp_df["المحصّل"]])
+
+    # أعمدة المستهدف (المتوسط) عشان تشوف قد إيه قربنا من المساواة
+    n_team = max(len(team), 1)
+    tgt_amt = float(after["إجمالي المبلغ"].sum()) / n_team
+    tgt_cli = float(after["عدد العملاء"].sum()) / n_team
+    tgt_acc = float(after["عدد الحسابات"].sum()) / n_team
+    tgt_rows = float(after["عدد المطالبات"].sum()) / n_team
+    cmp_df["مستهدف_مبلغ"] = round(tgt_amt, 2)
+    cmp_df["مستهدف_عملاء"] = round(tgt_cli, 1)
+    cmp_df["مستهدف_حسابات"] = round(tgt_acc, 1)
+    cmp_df["مستهدف_مطالبات"] = round(tgt_rows, 1)
+    cmp_df["فرق_مبلغ"] = (cmp_df["إجمالي المبلغ (بعد)"] - tgt_amt).round(2)
+    cmp_df["فرق_عملاء"] = (cmp_df["عدد العملاء (بعد)"] - tgt_cli).round(1)
 
     moves = (
         rows[rows["_sales"] != rows["_final"]]
@@ -9326,7 +9477,7 @@ def _render_final_rebalance(result):
         "_sales": "المحصّل الأصلي", "_final": "المحصّل النهائي", "_src": "المصدر",
     })[["العميل", "الحساب", "الحالة", "المبلغ", "المحصّل الأصلي", "المحصّل النهائي", "المصدر"]]
 
-    # ---- المحفظة كاملة بكل الأعمدة الأصلية وبالمحصل النهائي ----
+    # ---- المحفظة كاملة: نعدّل بس صفوف الفريق المختار / العملاء اللي دخلوا التباديل ----
     full_out = None
     full_pf = meta.get("full_df")
     if full_pf is not None:
@@ -9336,9 +9487,12 @@ def _render_final_rebalance(result):
         keys = _norm_identity(full_out[p_client_col])
         prev = full_out[p_sales_col].astype(str).str.strip()
         newv = keys.map(client_final)
-        moved = newv.notna() & (newv != prev)
+        # مهم: نعدّل الصف بس لو المحصل السابق من الفريق المختار أو العميل أصلاً من حوض التباديل
+        # → محصلين مش مختارين ما تتلمسش مطالباتهم أبدًا
+        eligible = newv.notna() & (prev.isin(team_set) | keys.isin(set(client_final.keys())))
+        moved = eligible & (newv != prev)
         full_out["المحصّل السابق"] = prev.where(moved, "")
-        full_out.loc[newv.notna(), p_sales_col] = newv[newv.notna()]
+        full_out.loc[eligible, p_sales_col] = newv[eligible]
         n_client_col = result.get("n_client_col")
         if n_client_col in assigned_df.columns:
             extra = assigned_df[~_norm_identity(assigned_df[n_client_col]).isin(set(keys))].copy()
@@ -9347,6 +9501,12 @@ def _render_final_rebalance(result):
                 if n_sales_name != p_sales_col and n_sales_name in extra.columns:
                     extra[p_sales_col] = extra[n_sales_name]
                     extra = extra.drop(columns=[n_sales_name])
+                # ثبّت المحصل النهائي للصفوف الإضافية من حوض التباديل
+                if n_client_col in extra.columns:
+                    extra_keys = _norm_identity(extra[n_client_col])
+                    mapped = extra_keys.map(client_final)
+                    if p_sales_col in extra.columns:
+                        extra.loc[mapped.notna(), p_sales_col] = mapped[mapped.notna()]
                 full_out = pd.concat([full_out, extra], ignore_index=True)
                 full_out["المحصّل السابق"] = full_out["المحصّل السابق"].fillna("")
 
@@ -9356,12 +9516,13 @@ def _render_final_rebalance(result):
         "cmp": cmp_df, "moves": moves, "final_rows": final_rows,
         "cost0": c0, "cost1": c1_, "locked": locked_n, "multi": multi_n, "units": len(units),
         "team": team, "new_names": new_names, "full_portfolio": full_out,
+        "targets": {"amount": tgt_amt, "clients": tgt_cli, "accounts": tgt_acc, "rows": tgt_rows},
     }
     _render_rebalance_results(st.session_state[REBALANCE_RESULT_KEY])
 
 
 def _render_rebalance_results(r):
-    st.markdown("#### 📊 قبل وبعد الموازنة")
+    st.markdown("#### 📊 قبل وبعد الموازنة (الفريق المختار فقط)")
     st.dataframe(r["cmp"], use_container_width=True, hide_index=True)
 
     after_cols = ["إجمالي المبلغ (بعد)", "عدد العملاء (بعد)", "عدد الحسابات (بعد)", "عدد المطالبات (بعد)"]
@@ -9371,8 +9532,18 @@ def _render_rebalance_results(r):
         col.metric(f"فرق {name.replace(' (بعد)', '')} (أكبر − أصغر)", f"{(s.max() - s.min()):,.0f}")
 
     improvement = 0 if r["cost0"] <= 0 else (1 - r["cost1"] / r["cost0"]) * 100
-    st.info(f"تحسّن مؤشر عدم التساوي بنسبة {improvement:.1f}% · وحدات عملاء: {r['units']:,} · "
-            f"مقفولة (واعد/جدولة): {r['locked']:,} · وحدات مرتبطة بأكتر من محصل أصلاً: {r['multi']:,}")
+    team_names = " · ".join(r.get("team") or [])
+    st.info(
+        f"تحسّن مؤشر عدم التساوي بنسبة {improvement:.1f}% · وحدات عملاء: {r['units']:,} · "
+        f"مقفولة: {r['locked']:,} · وحدات متعددة المالك: {r['multi']:,} — "
+        f"الفريق المتساوي: {team_names}"
+    )
+    if r.get("targets"):
+        t = r["targets"]
+        st.caption(
+            f"المستهدف للفرد ≈ مبلغ {t['amount']:,.0f} · عملاء {t['clients']:.1f} · "
+            f"حسابات {t['accounts']:.1f} · مطالبات {t['rows']:.1f}"
+        )
 
     fig = px.bar(
         r["cmp"].melt(id_vars=["المحصّل"], value_vars=["إجمالي المبلغ (قبل)", "إجمالي المبلغ (بعد)"]),

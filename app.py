@@ -8723,20 +8723,29 @@ def _balance_portfolio_among_collectors(
     account_weight=1.5,
     max_rounds=80,
 ):
-    """يوازن المحفظة بين محصلين مختارين بنقل/تبادل عملاء كاملين داخل الحالات المختارة فقط.
+    """يوازن المحفظة بين المحصلين المختارين فقط بنقل/تبادل عملاء بينهم.
 
-    - العملاء خارج الحالات المختارة ثابتون (مش بيتنقلوا).
-    - الهدف: تقريب المبالغ + عدد العملاء + عدد الحسابات بين المحصلين المختارين.
-    - يحدّث عمود المحصل + عمود المحصل_الجديد (لو موجود).
+    ضمانات صارمة:
+    - أي صف محصّله الحالي مش ضمن المختارين → ثابت 100% (لا زيادة ولا نقصان).
+    - النقل/التبادل يحصل فقط من مختار → إلى مختار.
+    - الحالات غير المختارة ثابتة حتى لو المحصل مختار.
+    - نبدأ من التوزيع الحالي ونحسّن بالتباديل (مش إعادة توزيع من الصفر على المحفظة كلها).
     """
     if portfolio_df is None or portfolio_df.empty or not balance_collectors:
         return portfolio_df, pd.DataFrame(), ["لا بيانات للموازنة."]
 
+    selected = {str(x).strip() for x in balance_collectors if str(x).strip()}
+    if len(selected) < 2:
+        return portfolio_df, pd.DataFrame(), ["لازم تختار محصلين اثنين على الأقل عشان يحصل تبادل بينهم."]
+
     work = portfolio_df.copy()
+    if sales_col not in work.columns:
+        return portfolio_df, pd.DataFrame(), [f"عمود المحصل غير موجود: {sales_col}"]
+
     if "المحصل_القديم" not in work.columns:
-        work["المحصل_القديم"] = work[sales_col].astype(str).str.strip() if sales_col in work.columns else ""
+        work["المحصل_القديم"] = work[sales_col].astype(str).str.strip()
     if "المحصل_الجديد" not in work.columns:
-        work["المحصل_الجديد"] = work[sales_col].astype(str).str.strip() if sales_col in work.columns else ""
+        work["المحصل_الجديد"] = work[sales_col].astype(str).str.strip()
 
     work["_sales"] = work[sales_col].astype(str).str.strip()
     work["_client"] = _norm_identity(work[client_col]) if client_col in work.columns else work.index.astype(str)
@@ -8757,33 +8766,63 @@ def _balance_portfolio_among_collectors(
     else:
         work["_state"] = ""
 
-    # صفوف قابلة للنقل فقط
-    movable_mask = work["_sales"].isin(balance_collectors)
+    # حماية: صفوف المحصلين غير المختارين — لا تُمس أبدًا
+    frozen_mask = ~work["_sales"].isin(selected)
+    # القابل للحركة: محصل مختار + (حالة مختارة أو مفيش فلتر حالات)
+    movable_mask = work["_sales"].isin(selected)
     if balance_states and state_col:
-        movable_mask = movable_mask & work["_state"].isin(balance_states)
-    movable = work.loc[movable_mask].copy()
-    if movable.empty:
+        allowed_states = {str(s).strip() for s in balance_states if str(s).strip()}
+        movable_mask = movable_mask & work["_state"].isin(allowed_states)
+
+    # ثبّت أي عميل عنده صفوف عند محصل غير مختار: متتشلش من غير المختار
+    # (لو نفس مفتاح العميل متقسم — نمنع لمس صفوف غير المختارين فقط)
+    if movable_mask.sum() == 0:
         return portfolio_df, pd.DataFrame(), ["لا توجد صفوف قابلة للنقل ضمن المحصلين/الحالات المختارة."]
 
-    # تجميع على مستوى العميل (عميل واحد عند محصل واحد)
+    # تجميع العملاء القابلين للحركة حسب المحصل الحالي (من المختارين فقط)
+    movable = work.loc[movable_mask].copy()
     cust = (
         movable.groupby("_client", as_index=False)
         .agg(
             amount=("_amt", "sum"),
             n_accounts=("_account", "nunique"),
             n_rows=("_amt", "count"),
-            current_sales=("_sales", "first"),
+            current_sales=("_sales", lambda s: str(s.iloc[0]).strip()),
         )
     )
     cust = cust[cust["_client"].ne("") & cust["_client"].str.lower().ne("nan")]
+    # تأكيد: صاحب العميل الحالي لازم يكون من المختارين
+    cust = cust[cust["current_sales"].isin(selected)]
     if cust.empty:
-        return portfolio_df, pd.DataFrame(), ["لا يوجد عملاء صالحين للموازنة."]
+        return portfolio_df, pd.DataFrame(), ["لا يوجد عملاء صالحين للموازنة بين المحصلين المختارين."]
 
-    # ثبّت العملاء غير القابلين للنقل كحمل أساسي لكل محصل
-    fixed = work.loc[~movable_mask & work["_sales"].isin(balance_collectors)].copy()
-    base_load = {name: {"amount": 0.0, "clients": 0, "accounts": 0, "rows": 0} for name in balance_collectors}
-    if not fixed.empty:
+    cust_info = {}
+    for _, row in cust.iterrows():
+        ck = row["_client"]
+        owner = str(row["current_sales"]).strip()
+        if owner not in selected:
+            continue
+        cust_info[ck] = {
+            "amount": float(row["amount"] or 0),
+            "n_accounts": int(row["n_accounts"] or 0),
+            "n_rows": int(row["n_rows"] or 0),
+            "owner": owner,
+        }
+
+    if not cust_info:
+        return portfolio_df, pd.DataFrame(), ["لا يوجد عملاء للحركة بعد التصفية."]
+
+    # الحمل الثابت لكل محصل مختار = صفوفه غير القابلة للحركة (حالات مستبعدة)
+    selected_list = sorted(selected)
+    base_load = {
+        name: {"amount": 0.0, "clients": 0, "accounts": 0, "rows": 0}
+        for name in selected_list
+    }
+    fixed_mask = work["_sales"].isin(selected) & (~movable_mask)
+    if fixed_mask.any():
+        fixed = work.loc[fixed_mask]
         for name, g in fixed.groupby("_sales"):
+            name = str(name).strip()
             if name not in base_load:
                 continue
             base_load[name]["amount"] += float(g["_amt"].sum())
@@ -8791,25 +8830,7 @@ def _balance_portfolio_among_collectors(
             base_load[name]["accounts"] += int(g["_account"].nunique())
             base_load[name]["rows"] += int(len(g))
 
-    cust_info = {}
-    for _, row in cust.iterrows():
-        ck = row["_client"]
-        cust_info[ck] = {
-            "amount": float(row["amount"]),
-            "n_accounts": int(row["n_accounts"]),
-            "n_rows": int(row["n_rows"]),
-            "start_sales": str(row["current_sales"]),
-        }
-
-    n = len(balance_collectors)
-    # إجمالي قابل للتوزيع + الثابت → متوسط مستهدف لكل محصل
-    total_amount = sum(base_load[n_]["amount"] for n_ in balance_collectors) + sum(c["amount"] for c in cust_info.values())
-    total_clients = sum(base_load[n_]["clients"] for n_ in balance_collectors) + len(cust_info)
-    total_accounts = sum(base_load[n_]["accounts"] for n_ in balance_collectors) + sum(c["n_accounts"] for c in cust_info.values())
-    avg_amount = total_amount / max(n, 1)
-    avg_clients = total_clients / max(n, 1)
-    avg_accounts = total_accounts / max(n, 1)
-
+    # حالة البداية = التوزيع الحالي (من غير إعادة خلط)
     state = {
         name: {
             "amount": float(base_load[name]["amount"]),
@@ -8818,9 +8839,27 @@ def _balance_portfolio_among_collectors(
             "rows": int(base_load[name]["rows"]),
             "client_keys": set(),
         }
-        for name in balance_collectors
+        for name in selected_list
     }
     assigned = {}
+    for ck, info in cust_info.items():
+        owner = info["owner"]
+        if owner not in state:
+            continue
+        state[owner]["amount"] += info["amount"]
+        state[owner]["clients"] += 1
+        state[owner]["accounts"] += info["n_accounts"]
+        state[owner]["rows"] += info["n_rows"]
+        state[owner]["client_keys"].add(ck)
+        assigned[ck] = owner
+
+    n = len(selected_list)
+    total_amount = sum(state[nm]["amount"] for nm in selected_list)
+    total_clients = sum(state[nm]["clients"] for nm in selected_list)
+    total_accounts = sum(state[nm]["accounts"] for nm in selected_list)
+    avg_amount = total_amount / max(n, 1)
+    avg_clients = total_clients / max(n, 1)
+    avg_accounts = total_accounts / max(n, 1)
 
     def _score(s):
         return (
@@ -8830,10 +8869,10 @@ def _balance_portfolio_among_collectors(
         )
 
     def _total_err():
-        return sum(_score(state[name]) for name in balance_collectors)
+        return sum(_score(state[name]) for name in selected_list)
 
     def _add(name, ck):
-        if ck in assigned:
+        if name not in selected or ck in assigned:
             return False
         info = cust_info[ck]
         s = state[name]
@@ -8846,7 +8885,7 @@ def _balance_portfolio_among_collectors(
         return True
 
     def _remove(name, ck):
-        if assigned.get(ck) != name:
+        if assigned.get(ck) != name or name not in selected:
             return False
         info = cust_info[ck]
         s = state[name]
@@ -8858,13 +8897,7 @@ def _balance_portfolio_among_collectors(
         del assigned[ck]
         return True
 
-    # إسناد أولي: الأكبر أولاً للأقل حملاً
-    ordered = sorted(cust_info.keys(), key=lambda ck: (cust_info[ck]["amount"], cust_info[ck]["n_accounts"]), reverse=True)
-    for ck in ordered:
-        best_name = min(balance_collectors, key=lambda nm: (_score(state[nm]), state[nm]["amount"], state[nm]["clients"]))
-        _add(best_name, ck)
-
-    # بحث محلي: نقل + تبادل
+    # تحسين محلي فقط: نقل/تبادل بين المختارين
     rounds = 0
     moved = 0
     swaps = 0
@@ -8873,12 +8906,13 @@ def _balance_portfolio_among_collectors(
         improved = False
         rounds += 1
         base_err = _total_err()
-        # نقل
-        for donor in list(balance_collectors):
+
+        # (أ) نقل عميل من محصل مختار لمحصل مختار آخر
+        for donor in selected_list:
             for ck in list(state[donor]["client_keys"]):
                 best_recv = None
                 best_err = base_err
-                for recv in balance_collectors:
+                for recv in selected_list:
                     if recv == donor:
                         continue
                     _remove(donor, ck)
@@ -8895,15 +8929,19 @@ def _balance_portfolio_among_collectors(
                     base_err = best_err
                     moved += 1
                     improved = True
-        # تبادل 1↔1
-        names = list(balance_collectors)
-        for i, a in enumerate(names):
-            for b in names[i + 1:]:
-                keys_a = list(state[a]["client_keys"])
-                keys_b = list(state[b]["client_keys"])
-                # عيّنة محدودة للأداء
-                for ck_a in keys_a[:40]:
-                    for ck_b in keys_b[:40]:
+
+        # (ب) تبادل 1↔1 بين مختارين فقط
+        for i, a in enumerate(selected_list):
+            for b in selected_list[i + 1:]:
+                keys_a = list(state[a]["client_keys"])[:50]
+                keys_b = list(state[b]["client_keys"])[:50]
+                for ck_a in keys_a:
+                    if assigned.get(ck_a) != a:
+                        continue
+                    swapped = False
+                    for ck_b in keys_b:
+                        if assigned.get(ck_b) != b:
+                            continue
                         _remove(a, ck_a)
                         _remove(b, ck_b)
                         _add(a, ck_b)
@@ -8913,35 +8951,46 @@ def _balance_portfolio_among_collectors(
                             base_err = err
                             swaps += 1
                             improved = True
-                            keys_a = list(state[a]["client_keys"])
-                            keys_b = list(state[b]["client_keys"])
+                            swapped = True
                             break
                         else:
                             _remove(a, ck_b)
                             _remove(b, ck_a)
                             _add(a, ck_a)
                             _add(b, ck_b)
-                    else:
-                        continue
-                    break
+                    if swapped:
+                        break
 
-    # طبّق الإسناد النهائي على الصفوف القابلة للنقل
+    # تطبيق النتائج: نلمس فقط صفوف movable_mask (مختارين + حالات مسموحة)
+    # وأي صف محصله مش من المختارين يفضل كما هو
     final_map = dict(assigned)
+    changed = 0
     for idx in work.index[movable_mask]:
+        current_owner = str(work.at[idx, "_sales"]).strip()
+        if current_owner not in selected:
+            # حماية إضافية — لا تُعدَّل
+            continue
         ck = work.at[idx, "_client"]
         new_owner = final_map.get(ck)
-        if not new_owner:
+        if not new_owner or new_owner not in selected:
             continue
-        old_sales = str(work.at[idx, sales_col]).strip()
-        if not str(work.at[idx, "المحصل_القديم"]).strip() or str(work.at[idx, "المحصل_القديم"]).lower() in {"nan", "none"}:
-            work.at[idx, "المحصل_القديم"] = old_sales
+        if new_owner == current_owner:
+            continue
+        # سجّل القديم مرة واحدة
+        old_keep = str(work.at[idx, "المحصل_القديم"]).strip()
+        if not old_keep or old_keep.lower() in {"nan", "none", ""}:
+            work.at[idx, "المحصل_القديم"] = current_owner
         work.at[idx, sales_col] = new_owner
         work.at[idx, "المحصل_الجديد"] = new_owner
         work.at[idx, "_sales"] = new_owner
+        changed += 1
 
+    # تحقق نهائي: صفوف غير المختارين لم تتغير
+    # (مقارنة على نسخة المبيعات الأصلية)
+    # ملخص بعد الموازنة — للمختارين فقط + نعرض غير المختارين كـ «ثابت»
     summary_rows = []
-    for name in balance_collectors:
-        g = work[work[sales_col].astype(str).str.strip() == name]
+    for name in selected_list:
+        g = work[work["_sales"] == name]
         summary_rows.append({
             "المحصّل": name,
             "عدد العملاء": int(g["_client"].nunique()) if not g.empty else 0,
@@ -8951,12 +9000,15 @@ def _balance_portfolio_among_collectors(
             "مستهدف_عملاء": round(avg_clients, 2),
             "مستهدف_حسابات": round(avg_accounts, 2),
             "مستهدف_مبلغ": round(avg_amount, 2),
+            "ملاحظة": "ضمن الموازنة",
         })
+
     summary = pd.DataFrame(summary_rows)
     out = work.drop(columns=["_sales", "_client", "_account", "_amt", "_state"], errors="ignore")
     warnings = [
-        f"موازنة بين {len(balance_collectors)} محصل · جولات {rounds} · نقل {moved} · تبادل {swaps}",
-        f"المستهدف التقريبي: عملاء {avg_clients:.1f} · حسابات {avg_accounts:.1f} · مبلغ {avg_amount:,.0f}",
+        f"الموازنة محصورة بين {len(selected_list)} محصل مختار فقط — باقي المحصلين ثابتين بدون زيادة أو نقصان.",
+        f"جولات {rounds} · نقل {moved} · تبادل {swaps} · صفوف تغيّر محصلها {changed}.",
+        f"المستهدف بين المختارين: عملاء {avg_clients:.1f} · حسابات {avg_accounts:.1f} · مبلغ {avg_amount:,.0f}",
     ]
     return out, summary, warnings
 
@@ -9301,7 +9353,7 @@ def _page_distribution_new_collector():
         options=team_options,
         default=team_options,
         key="newc_balance_collectors",
-        help="اختار مين يدخل في حلقة الموازنة. الباقي محفظته ثابتة.",
+        help="التباديل تتم بين المختارين فقط. أي محصل مش مختار: محفظته ثابتة 100% بدون زيادة أو نقصان.",
     )
 
     balance_states = []

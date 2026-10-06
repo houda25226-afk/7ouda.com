@@ -8585,6 +8585,434 @@ def _pick_rows_for_new_collectors(
 
 
 
+
+def _merge_assigned_into_portfolio(
+    portfolio_df,
+    assigned_df,
+    assign_map,
+    neglect_df,
+    p_sales_col,
+    p_client_col,
+    n_sales_col,
+    n_client_col,
+    n_state_col=None,
+):
+    """يدمج العملاء المسحوبين من الإهمال داخل المحفظة الأصلية مع أعمدة محصل قديم/جديد.
+
+    - الصفوف الموجودة أصلاً في المحفظة لنفس العميل: نحدّث المحصل الحالي + نسجّل القديم/الجديد.
+    - الصفوف الجديدة (مش موجودة في المحفظة): نضيفها من شيت الإهمال مع نفس الأعمدة المشتركة.
+    """
+    if portfolio_df is None or portfolio_df.empty:
+        base = assigned_df.copy() if assigned_df is not None else pd.DataFrame()
+    else:
+        base = portfolio_df.copy()
+
+    if "المحصل_القديم" not in base.columns:
+        base["المحصل_القديم"] = ""
+    if "المحصل_الجديد" not in base.columns:
+        base["المحصل_الجديد"] = ""
+
+    if not assign_map:
+        return base, pd.DataFrame()
+
+    # مفتاح العميل في المحفظة
+    if p_client_col and p_client_col in base.columns:
+        base["_client_key"] = _norm_identity(base[p_client_col])
+    else:
+        base["_client_key"] = base.index.astype(str)
+
+    # مصدر الإهمال: كل الصفوف للعملاء المسندين
+    neg = neglect_df.copy()
+    neg["_client_key"] = _norm_identity(neg[n_client_col])
+    neg = neg[neg["_client_key"].isin(assign_map.keys())].copy()
+    if n_sales_col in neg.columns:
+        neg["_old_sales"] = neg[n_sales_col].astype(str).str.strip()
+    else:
+        neg["_old_sales"] = ""
+
+    # قديم لكل عميل = أول محصل ظهر في الإهمال
+    old_by_client = (
+        neg.groupby("_client_key")["_old_sales"].first().to_dict()
+        if not neg.empty
+        else {}
+    )
+
+    existing_keys = set(base["_client_key"].tolist())
+    updated_mask = base["_client_key"].isin(assign_map.keys())
+    # حدّث الموجود
+    for idx in base.index[updated_mask]:
+        ck = base.at[idx, "_client_key"]
+        new_name = assign_map.get(ck)
+        if not new_name:
+            continue
+        old_val = base.at[idx, "المحصل_القديم"]
+        if not str(old_val).strip() or str(old_val).lower() in {"nan", "none", ""}:
+            # لو الصف أصلاً في المحفظة خُذ محصل المحفظة كقديم
+            if p_sales_col in base.columns:
+                base.at[idx, "المحصل_القديم"] = str(base.at[idx, p_sales_col]).strip()
+            else:
+                base.at[idx, "المحصل_القديم"] = old_by_client.get(ck, "")
+        base.at[idx, "المحصل_الجديد"] = new_name
+        if p_sales_col in base.columns:
+            base.at[idx, p_sales_col] = new_name
+
+    # أضف العملاء غير الموجودين في المحفظة
+    missing_keys = [ck for ck in assign_map.keys() if ck not in existing_keys]
+    added_parts = []
+    if missing_keys:
+        # خرائط أعمدة مشتركة بالاسم
+        common_cols = [c for c in neg.columns if c in base.columns and c not in {"_client_key", "_old_sales"}]
+        for ck in missing_keys:
+            rows = neg[neg["_client_key"] == ck]
+            if rows.empty:
+                continue
+            part = rows.copy()
+            # ابنِ صفوف متوافقة مع أعمدة المحفظة
+            aligned = pd.DataFrame(index=part.index)
+            for c in base.columns:
+                if c in ("_client_key",):
+                    continue
+                if c in part.columns:
+                    aligned[c] = part[c].values
+                else:
+                    aligned[c] = ""
+            aligned[p_sales_col] = assign_map[ck]
+            aligned["المحصل_القديم"] = part["_old_sales"].values
+            aligned["المحصل_الجديد"] = assign_map[ck]
+            aligned["_client_key"] = ck
+            added_parts.append(aligned)
+
+    if added_parts:
+        added_df = pd.concat(added_parts, ignore_index=True)
+        # رتّب الأعمدة زي base
+        for c in base.columns:
+            if c not in added_df.columns:
+                added_df[c] = ""
+        added_df = added_df[base.columns]
+        base = pd.concat([base, added_df], ignore_index=True)
+
+    # محفظة الجدد فقط (من الإهمال بعد الإسناد)
+    new_port = assigned_df.copy() if assigned_df is not None else pd.DataFrame()
+    if not new_port.empty:
+        if "المحصل_القديم" not in new_port.columns:
+            new_port["المحصل_القديم"] = new_port.get(n_sales_col, "")
+            # بعد الإسناد عمود المبيعات بقى الجديد — رجّع القديم من الماب
+            ck_series = _norm_identity(new_port[n_client_col]) if n_client_col in new_port.columns else pd.Series([""] * len(new_port))
+            new_port["المحصل_القديم"] = ck_series.map(old_by_client).fillna("")
+        if "المحصل_الجديد" not in new_port.columns:
+            if n_client_col in new_port.columns:
+                new_port["المحصل_الجديد"] = _norm_identity(new_port[n_client_col]).map(assign_map)
+            else:
+                new_port["المحصل_الجديد"] = new_port.get(n_sales_col, "")
+
+    base = base.drop(columns=["_client_key"], errors="ignore")
+    return base, new_port
+
+
+def _balance_portfolio_among_collectors(
+    portfolio_df,
+    sales_col,
+    client_col,
+    account_col,
+    amount_cols,
+    state_col,
+    balance_collectors,
+    balance_states,
+    amount_weight=1.0,
+    client_weight=1.5,
+    account_weight=1.5,
+    max_rounds=80,
+):
+    """يوازن المحفظة بين المحصلين المختارين فقط بنقل/تبادل عملاء بينهم.
+
+    ضمانات صارمة:
+    - أي صف محصّله الحالي مش ضمن المختارين → ثابت 100% (لا زيادة ولا نقصان).
+    - النقل/التبادل يحصل فقط من مختار → إلى مختار.
+    - الحالات غير المختارة ثابتة حتى لو المحصل مختار.
+    - نبدأ من التوزيع الحالي ونحسّن بالتباديل (مش إعادة توزيع من الصفر على المحفظة كلها).
+    """
+    if portfolio_df is None or portfolio_df.empty or not balance_collectors:
+        return portfolio_df, pd.DataFrame(), ["لا بيانات للموازنة."]
+
+    selected = {str(x).strip() for x in balance_collectors if str(x).strip()}
+    if len(selected) < 2:
+        return portfolio_df, pd.DataFrame(), ["لازم تختار محصلين اثنين على الأقل عشان يحصل تبادل بينهم."]
+
+    work = portfolio_df.copy()
+    if sales_col not in work.columns:
+        return portfolio_df, pd.DataFrame(), [f"عمود المحصل غير موجود: {sales_col}"]
+
+    if "المحصل_القديم" not in work.columns:
+        work["المحصل_القديم"] = work[sales_col].astype(str).str.strip()
+    if "المحصل_الجديد" not in work.columns:
+        work["المحصل_الجديد"] = work[sales_col].astype(str).str.strip()
+
+    work["_sales"] = work[sales_col].astype(str).str.strip()
+    work["_client"] = _norm_identity(work[client_col]) if client_col in work.columns else work.index.astype(str)
+    if account_col and account_col in work.columns:
+        work["_account"] = _norm_identity(work[account_col])
+    else:
+        work["_account"] = work["_client"]
+    if amount_cols:
+        for c in amount_cols:
+            if c in work.columns:
+                work[c] = pd.to_numeric(work[c], errors="coerce").fillna(0)
+        present = [c for c in amount_cols if c in work.columns]
+        work["_amt"] = work[present].sum(axis=1) if present else 0.0
+    else:
+        work["_amt"] = 0.0
+    if state_col and state_col in work.columns:
+        work["_state"] = work[state_col].astype(str).str.strip()
+    else:
+        work["_state"] = ""
+
+    # حماية: صفوف المحصلين غير المختارين — لا تُمس أبدًا
+    frozen_mask = ~work["_sales"].isin(selected)
+    # القابل للحركة: محصل مختار + (حالة مختارة أو مفيش فلتر حالات)
+    movable_mask = work["_sales"].isin(selected)
+    if balance_states and state_col:
+        allowed_states = {str(s).strip() for s in balance_states if str(s).strip()}
+        movable_mask = movable_mask & work["_state"].isin(allowed_states)
+
+    # ثبّت أي عميل عنده صفوف عند محصل غير مختار: متتشلش من غير المختار
+    # (لو نفس مفتاح العميل متقسم — نمنع لمس صفوف غير المختارين فقط)
+    if movable_mask.sum() == 0:
+        return portfolio_df, pd.DataFrame(), ["لا توجد صفوف قابلة للنقل ضمن المحصلين/الحالات المختارة."]
+
+    # تجميع العملاء القابلين للحركة حسب المحصل الحالي (من المختارين فقط)
+    movable = work.loc[movable_mask].copy()
+    cust = (
+        movable.groupby("_client", as_index=False)
+        .agg(
+            amount=("_amt", "sum"),
+            n_accounts=("_account", "nunique"),
+            n_rows=("_amt", "count"),
+            current_sales=("_sales", lambda s: str(s.iloc[0]).strip()),
+        )
+    )
+    cust = cust[cust["_client"].ne("") & cust["_client"].str.lower().ne("nan")]
+    # تأكيد: صاحب العميل الحالي لازم يكون من المختارين
+    cust = cust[cust["current_sales"].isin(selected)]
+    if cust.empty:
+        return portfolio_df, pd.DataFrame(), ["لا يوجد عملاء صالحين للموازنة بين المحصلين المختارين."]
+
+    cust_info = {}
+    for _, row in cust.iterrows():
+        ck = row["_client"]
+        owner = str(row["current_sales"]).strip()
+        if owner not in selected:
+            continue
+        cust_info[ck] = {
+            "amount": float(row["amount"] or 0),
+            "n_accounts": int(row["n_accounts"] or 0),
+            "n_rows": int(row["n_rows"] or 0),
+            "owner": owner,
+        }
+
+    if not cust_info:
+        return portfolio_df, pd.DataFrame(), ["لا يوجد عملاء للحركة بعد التصفية."]
+
+    # الحمل الثابت لكل محصل مختار = صفوفه غير القابلة للحركة (حالات مستبعدة)
+    selected_list = sorted(selected)
+    base_load = {
+        name: {"amount": 0.0, "clients": 0, "accounts": 0, "rows": 0}
+        for name in selected_list
+    }
+    fixed_mask = work["_sales"].isin(selected) & (~movable_mask)
+    if fixed_mask.any():
+        fixed = work.loc[fixed_mask]
+        for name, g in fixed.groupby("_sales"):
+            name = str(name).strip()
+            if name not in base_load:
+                continue
+            base_load[name]["amount"] += float(g["_amt"].sum())
+            base_load[name]["clients"] += int(g["_client"].nunique())
+            base_load[name]["accounts"] += int(g["_account"].nunique())
+            base_load[name]["rows"] += int(len(g))
+
+    # حالة البداية = التوزيع الحالي (من غير إعادة خلط)
+    state = {
+        name: {
+            "amount": float(base_load[name]["amount"]),
+            "clients": int(base_load[name]["clients"]),
+            "accounts": int(base_load[name]["accounts"]),
+            "rows": int(base_load[name]["rows"]),
+            "client_keys": set(),
+        }
+        for name in selected_list
+    }
+    assigned = {}
+    for ck, info in cust_info.items():
+        owner = info["owner"]
+        if owner not in state:
+            continue
+        state[owner]["amount"] += info["amount"]
+        state[owner]["clients"] += 1
+        state[owner]["accounts"] += info["n_accounts"]
+        state[owner]["rows"] += info["n_rows"]
+        state[owner]["client_keys"].add(ck)
+        assigned[ck] = owner
+
+    n = len(selected_list)
+    total_amount = sum(state[nm]["amount"] for nm in selected_list)
+    total_clients = sum(state[nm]["clients"] for nm in selected_list)
+    total_accounts = sum(state[nm]["accounts"] for nm in selected_list)
+    avg_amount = total_amount / max(n, 1)
+    avg_clients = total_clients / max(n, 1)
+    avg_accounts = total_accounts / max(n, 1)
+
+    def _score(s):
+        return (
+            amount_weight * abs(s["amount"] - avg_amount) / max(avg_amount, 1e-9)
+            + client_weight * abs(s["clients"] - avg_clients) / max(avg_clients, 1e-9)
+            + account_weight * abs(s["accounts"] - avg_accounts) / max(avg_accounts, 1e-9)
+        )
+
+    def _total_err():
+        return sum(_score(state[name]) for name in selected_list)
+
+    def _add(name, ck):
+        if name not in selected or ck in assigned:
+            return False
+        info = cust_info[ck]
+        s = state[name]
+        s["amount"] += info["amount"]
+        s["clients"] += 1
+        s["accounts"] += info["n_accounts"]
+        s["rows"] += info["n_rows"]
+        s["client_keys"].add(ck)
+        assigned[ck] = name
+        return True
+
+    def _remove(name, ck):
+        if assigned.get(ck) != name or name not in selected:
+            return False
+        info = cust_info[ck]
+        s = state[name]
+        s["amount"] -= info["amount"]
+        s["clients"] -= 1
+        s["accounts"] -= info["n_accounts"]
+        s["rows"] -= info["n_rows"]
+        s["client_keys"].discard(ck)
+        del assigned[ck]
+        return True
+
+    # تحسين محلي فقط: نقل/تبادل بين المختارين
+    rounds = 0
+    moved = 0
+    swaps = 0
+    improved = True
+    while improved and rounds < max_rounds:
+        improved = False
+        rounds += 1
+        base_err = _total_err()
+
+        # (أ) نقل عميل من محصل مختار لمحصل مختار آخر
+        for donor in selected_list:
+            for ck in list(state[donor]["client_keys"]):
+                best_recv = None
+                best_err = base_err
+                for recv in selected_list:
+                    if recv == donor:
+                        continue
+                    _remove(donor, ck)
+                    _add(recv, ck)
+                    err = _total_err()
+                    if err + 1e-9 < best_err:
+                        best_err = err
+                        best_recv = recv
+                    _remove(recv, ck)
+                    _add(donor, ck)
+                if best_recv is not None:
+                    _remove(donor, ck)
+                    _add(best_recv, ck)
+                    base_err = best_err
+                    moved += 1
+                    improved = True
+
+        # (ب) تبادل 1↔1 بين مختارين فقط
+        for i, a in enumerate(selected_list):
+            for b in selected_list[i + 1:]:
+                keys_a = list(state[a]["client_keys"])[:50]
+                keys_b = list(state[b]["client_keys"])[:50]
+                for ck_a in keys_a:
+                    if assigned.get(ck_a) != a:
+                        continue
+                    swapped = False
+                    for ck_b in keys_b:
+                        if assigned.get(ck_b) != b:
+                            continue
+                        _remove(a, ck_a)
+                        _remove(b, ck_b)
+                        _add(a, ck_b)
+                        _add(b, ck_a)
+                        err = _total_err()
+                        if err + 1e-9 < base_err:
+                            base_err = err
+                            swaps += 1
+                            improved = True
+                            swapped = True
+                            break
+                        else:
+                            _remove(a, ck_b)
+                            _remove(b, ck_a)
+                            _add(a, ck_a)
+                            _add(b, ck_b)
+                    if swapped:
+                        break
+
+    # تطبيق النتائج: نلمس فقط صفوف movable_mask (مختارين + حالات مسموحة)
+    # وأي صف محصله مش من المختارين يفضل كما هو
+    final_map = dict(assigned)
+    changed = 0
+    for idx in work.index[movable_mask]:
+        current_owner = str(work.at[idx, "_sales"]).strip()
+        if current_owner not in selected:
+            # حماية إضافية — لا تُعدَّل
+            continue
+        ck = work.at[idx, "_client"]
+        new_owner = final_map.get(ck)
+        if not new_owner or new_owner not in selected:
+            continue
+        if new_owner == current_owner:
+            continue
+        # سجّل القديم مرة واحدة
+        old_keep = str(work.at[idx, "المحصل_القديم"]).strip()
+        if not old_keep or old_keep.lower() in {"nan", "none", ""}:
+            work.at[idx, "المحصل_القديم"] = current_owner
+        work.at[idx, sales_col] = new_owner
+        work.at[idx, "المحصل_الجديد"] = new_owner
+        work.at[idx, "_sales"] = new_owner
+        changed += 1
+
+    # تحقق نهائي: صفوف غير المختارين لم تتغير
+    # (مقارنة على نسخة المبيعات الأصلية)
+    # ملخص بعد الموازنة — للمختارين فقط + نعرض غير المختارين كـ «ثابت»
+    summary_rows = []
+    for name in selected_list:
+        g = work[work["_sales"] == name]
+        summary_rows.append({
+            "المحصّل": name,
+            "عدد العملاء": int(g["_client"].nunique()) if not g.empty else 0,
+            "عدد الحسابات": int(g["_account"].nunique()) if not g.empty else 0,
+            "عدد المطالبات": int(len(g)),
+            "إجمالي المبلغ": round(float(g["_amt"].sum()) if not g.empty else 0.0, 2),
+            "مستهدف_عملاء": round(avg_clients, 2),
+            "مستهدف_حسابات": round(avg_accounts, 2),
+            "مستهدف_مبلغ": round(avg_amount, 2),
+            "ملاحظة": "ضمن الموازنة",
+        })
+
+    summary = pd.DataFrame(summary_rows)
+    out = work.drop(columns=["_sales", "_client", "_account", "_amt", "_state"], errors="ignore")
+    warnings = [
+        f"الموازنة محصورة بين {len(selected_list)} محصل مختار فقط — باقي المحصلين ثابتين بدون زيادة أو نقصان.",
+        f"جولات {rounds} · نقل {moved} · تبادل {swaps} · صفوف تغيّر محصلها {changed}.",
+        f"المستهدف بين المختارين: عملاء {avg_clients:.1f} · حسابات {avg_accounts:.1f} · مبلغ {avg_amount:,.0f}",
+    ]
+    return out, summary, warnings
+
+
 def _page_distribution_new_collector():
     """سيناريو محصل جديد: محفظة حديثة → أهداف متساوية → سحب من شيت الإهمال."""
     st.markdown("---")
@@ -8592,7 +9020,9 @@ def _page_distribution_new_collector():
     st.caption(
         "1) ارفع محفظة حديثة واكتب أسماء المحصلين الجدد عشان نحسب المستهدف المتساوي "
         "(عملاء · حسابات · حالات · مبالغ). "
-        "2) ارفع شيت الإهمال وحدد المحصلين والحالات اللي هتسحب منها للجدد."
+        "2) ارفع شيت الإهمال وحدد المحصلين والحالات اللي هتسحب منها للجدد. "
+        "3) بعد السحب يتضافوا للمحفظة الأصلية (محصل قديم/جديد) ثم نوازن بين المحصلين المختارين "
+        "ونصدّر Excel كامل + محفظة الجدد منفصلة."
     )
 
     # ---------- 1) المحفظة ----------
@@ -8749,6 +9179,8 @@ def _page_distribution_new_collector():
             "compare_collectors": compare_collectors,
             "filename": portfolio_file.name,
             "df": filtered_portfolio,
+            "full_df": portfolio_df,
+            "all_collectors": all_collectors,
         }
         st.session_state["newc_portfolio_meta"] = portfolio_meta
     else:
@@ -8896,8 +9328,72 @@ def _page_distribution_new_collector():
         "amount": targets["per_amount"],
     }
 
+    # ---------- 3) موازنة المحفظة بعد إضافة الجدد ----------
     st.markdown("---")
-    run = st.button("🚀 سحب وتوزيع عملاء الإهمال على المحصلين الجدد", type="primary", use_container_width=True, key="newc_run")
+    st.markdown("### 3️⃣ موازنة المحفظة بعد إضافة المحصلين الجدد")
+    st.caption(
+        "بعد سحب عملاء الإهمال للجدد هيتضافوا للمحفظة الأصلية بأعمدة "
+        "**المحصل_القديم** و **المحصل_الجديد**، وبعدين نعمل تباديل/نقل بين المحصلين اللي تختارهم "
+        "للحالات اللي تحددها لحد ما المبالغ والعملاء والحسابات تتقارب."
+    )
+
+    full_portfolio = portfolio_meta.get("full_df")
+    if full_portfolio is None:
+        full_portfolio = portfolio_meta.get("df")
+    p_sales_col = portfolio_meta.get("sales_col")
+    p_client_col = portfolio_meta.get("client_col")
+    p_account_col = portfolio_meta.get("account_col")
+    p_amount_cols = portfolio_meta.get("amount_cols") or []
+    p_state_col = portfolio_meta.get("state_col")
+
+    existing_collectors = list(portfolio_meta.get("all_collectors") or portfolio_meta.get("compare_collectors") or [])
+    team_options = sorted(set(existing_collectors + list(new_names)))
+    balance_collectors = st.multiselect(
+        "👥 المحصلين اللي هتساوي بينهم (قدامى + جدد)",
+        options=team_options,
+        default=team_options,
+        key="newc_balance_collectors",
+        help="التباديل تتم بين المختارين فقط. أي محصل مش مختار: محفظته ثابتة 100% بدون زيادة أو نقصان.",
+    )
+
+    balance_states = []
+    if p_state_col and full_portfolio is not None and p_state_col in getattr(full_portfolio, "columns", []):
+        port_states = sorted({
+            str(v).strip()
+            for v in full_portfolio[p_state_col].tolist()
+            if v is not None and str(v).strip() and str(v).lower() not in {"nan", "none", "null"}
+        })
+        # ادمج حالات الإهمال كمان
+        if n_state_col and n_state_col in neglect_df.columns:
+            neg_states = {
+                str(v).strip()
+                for v in neglect_df[n_state_col].tolist()
+                if v is not None and str(v).strip() and str(v).lower() not in {"nan", "none", "null"}
+            }
+            port_states = sorted(set(port_states) | neg_states)
+        balance_states = st.multiselect(
+            "🏷️ الحالات المسموح نقلها/تبديلها أثناء الموازنة",
+            options=port_states,
+            default=port_states,
+            key="newc_balance_states",
+            help="الحالات اللي مش هتختارها هتفضل ثابتة عند محصلها الحالي.",
+        )
+    else:
+        st.caption("لا يوجد عمود حالات في المحفظة — الموازنة هتتم على كل الصفوف للمحصلين المختارين.")
+
+    enable_balance = st.checkbox(
+        "تفعيل موازنة المحفظة بعد إضافة الجدد",
+        value=True,
+        key="newc_enable_balance",
+    )
+
+    st.markdown("---")
+    run = st.button(
+        "🚀 سحب للجدد + دمج في المحفظة + موازنة",
+        type="primary",
+        use_container_width=True,
+        key="newc_run",
+    )
 
     if run:
         assign_map, summary, warnings = _pick_rows_for_new_collectors(
@@ -8920,7 +9416,11 @@ def _page_distribution_new_collector():
         out_df["_client_key"] = _norm_identity(out_df[n_client_col])
         mask = out_df["_client_key"].isin(assign_map.keys())
         assigned_df = out_df.loc[mask].copy()
+        # احتفظ بالمحصل القديم قبل الاستبدال
+        if n_sales_col in assigned_df.columns:
+            assigned_df["المحصل_القديم"] = assigned_df[n_sales_col].astype(str).str.strip()
         assigned_df[n_sales_col] = assigned_df["_client_key"].map(assign_map)
+        assigned_df["المحصل_الجديد"] = assigned_df["_client_key"].map(assign_map)
         assigned_df = assigned_df.drop(columns=["_client_key"], errors="ignore")
 
         detail_rows = []
@@ -8928,18 +9428,61 @@ def _page_distribution_new_collector():
             detail_rows.append({"مفتاح_العميل": ck, "المحصّل_الجديد": new_name})
         detail = pd.DataFrame(detail_rows)
 
+        # دمج في المحفظة الأصلية
+        merged_portfolio, new_port = _merge_assigned_into_portfolio(
+            portfolio_df=full_portfolio if full_portfolio is not None else pd.DataFrame(),
+            assigned_df=assigned_df,
+            assign_map=assign_map,
+            neglect_df=neglect_df,
+            p_sales_col=p_sales_col or n_sales_col,
+            p_client_col=p_client_col or n_client_col,
+            n_sales_col=n_sales_col,
+            n_client_col=n_client_col,
+            n_state_col=n_state_col,
+        )
+
+        balance_summary = pd.DataFrame()
+        balance_warnings = []
+        if enable_balance and balance_collectors:
+            merged_portfolio, balance_summary, balance_warnings = _balance_portfolio_among_collectors(
+                portfolio_df=merged_portfolio,
+                sales_col=p_sales_col or n_sales_col,
+                client_col=p_client_col or n_client_col,
+                account_col=p_account_col or n_account_col,
+                amount_cols=p_amount_cols or n_amount_cols,
+                state_col=p_state_col or n_state_col,
+                balance_collectors=balance_collectors,
+                balance_states=balance_states,
+                amount_weight=amount_weight,
+                client_weight=client_weight,
+                account_weight=account_weight,
+            )
+            # حدّث محفظة الجدد من المحفظة المدمجة بعد الموازنة
+            sales_final = p_sales_col or n_sales_col
+            if sales_final in merged_portfolio.columns:
+                new_port = merged_portfolio[
+                    merged_portfolio[sales_final].astype(str).str.strip().isin(new_names)
+                ].copy()
+
+        warnings = list(warnings or []) + list(balance_warnings or [])
+
         result = {
             "scenario": "new_collector",
             "new_names": new_names,
             "summary": summary,
             "detail": detail,
             "assigned_df": assigned_df,
+            "merged_portfolio": merged_portfolio,
+            "new_collectors_portfolio": new_port,
+            "balance_summary": balance_summary,
+            "balance_collectors": balance_collectors,
+            "balance_states": balance_states,
             "targets_table": portfolio_meta.get("targets_table"),
             "targets": targets,
             "warnings": warnings,
             "n_clients": len(assign_map),
             "total_amount": float(summary["إجمالي المبلغ"].sum()) if summary is not None and not summary.empty else 0.0,
-            "sales_col": n_sales_col,
+            "sales_col": p_sales_col or n_sales_col,
             "neglect_filename": neglect_file.name,
             "portfolio_filename": portfolio_meta.get("filename"),
             "source_collectors": source_collectors,
@@ -9020,28 +9563,105 @@ def _render_new_collector_results(result):
         with st.expander("📋 تفاصيل إسناد كل عميل", expanded=False):
             st.dataframe(detail, use_container_width=True, hide_index=True)
 
+    balance_summary = result.get("balance_summary")
+    if balance_summary is not None and not getattr(balance_summary, "empty", True):
+        st.markdown("#### ⚖️ ملخص المحفظة بعد الموازنة")
+        st.dataframe(balance_summary, use_container_width=True, hide_index=True)
+        if len(balance_summary) > 1:
+            fig_b = px.bar(
+                balance_summary,
+                x="المحصّل",
+                y=["عدد العملاء", "عدد الحسابات"],
+                barmode="group",
+                template=PLOTLY_TEMPLATE,
+                color_discrete_sequence=OPS_SCALE,
+            )
+            _apply_ops_chart_style(fig_b, "بعد الموازنة — عملاء وحسابات", height=380, xaxis_title="", yaxis_title="العدد")
+            st.plotly_chart(fig_b, use_container_width=True, config=PLOTLY_CONFIG, key="newc_balance_cli_chart")
+            fig_b2 = px.bar(
+                balance_summary,
+                x="المحصّل",
+                y="إجمالي المبلغ",
+                template=PLOTLY_TEMPLATE,
+                color="إجمالي المبلغ",
+                color_continuous_scale=OPS_SCALE,
+            )
+            _apply_ops_chart_style(fig_b2, "بعد الموازنة — المبالغ", height=380, xaxis_title="", yaxis_title="المبلغ")
+            st.plotly_chart(fig_b2, use_container_width=True, config=PLOTLY_CONFIG, key="newc_balance_amt_chart")
+
     assigned_df = result.get("assigned_df")
-    if assigned_df is not None and not assigned_df.empty:
-        st.markdown("#### ⬇️ تحميل محفظة المحصلين الجدد")
-        buf = io.BytesIO()
-        with pd.ExcelWriter(buf, engine="openpyxl") as writer:
-            if summary is not None:
-                summary.to_excel(writer, index=False, sheet_name="ملخص_الجدد")
-            assigned_df.to_excel(writer, index=False, sheet_name="محفظة_الجدد")
-            if detail is not None:
-                detail.to_excel(writer, index=False, sheet_name="تفاصيل_الإسناد")
-            tt = result.get("targets_table")
-            if tt is not None:
-                tt.to_excel(writer, index=False, sheet_name="المستهدف_من_المحفظة")
-        st.download_button(
-            "⬇️ تحميل Excel — محفظة المحصلين الجدد",
-            data=buf.getvalue(),
-            file_name=f"محفظة_محصلين_جدد_{datetime.now().strftime('%Y%m%d')}.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            use_container_width=True,
-            type="primary",
-            key="newc_download",
-        )
+    merged_portfolio = result.get("merged_portfolio")
+    new_port = result.get("new_collectors_portfolio")
+    if new_port is None or (hasattr(new_port, "empty") and new_port.empty):
+        new_port = assigned_df
+
+    st.markdown("#### ⬇️ تحميل ملفات Excel")
+    dl1, dl2 = st.columns(2)
+
+    # 1) المحفظة الكاملة بعد الدمج والموازنة
+    with dl1:
+        if merged_portfolio is not None and not getattr(merged_portfolio, "empty", True):
+            buf_full = io.BytesIO()
+            with pd.ExcelWriter(buf_full, engine="openpyxl") as writer:
+                merged_portfolio.to_excel(writer, index=False, sheet_name="المحفظة_الكاملة")
+                if balance_summary is not None and not getattr(balance_summary, "empty", True):
+                    balance_summary.to_excel(writer, index=False, sheet_name="ملخص_الموازنة")
+                if summary is not None:
+                    summary.to_excel(writer, index=False, sheet_name="ملخص_سحب_الجدد")
+                if detail is not None:
+                    detail.to_excel(writer, index=False, sheet_name="تفاصيل_الإسناد")
+                tt = result.get("targets_table")
+                if tt is not None:
+                    tt.to_excel(writer, index=False, sheet_name="المستهدف_من_المحفظة")
+            st.download_button(
+                "⬇️ المحفظة الكاملة (قديم + جديد + موازنة)",
+                data=buf_full.getvalue(),
+                file_name=f"المحفظة_الكاملة_بعد_التوزيع_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                use_container_width=True,
+                type="primary",
+                key="newc_download_full_portfolio",
+            )
+        else:
+            st.info("المحفظة الكاملة غير متاحة بعد.")
+
+    # 2) محفظة المحصلين الجدد منفصلة
+    with dl2:
+        if new_port is not None and not getattr(new_port, "empty", True):
+            buf_new = io.BytesIO()
+            with pd.ExcelWriter(buf_new, engine="openpyxl") as writer:
+                if summary is not None:
+                    summary.to_excel(writer, index=False, sheet_name="ملخص_الجدد")
+                new_port.to_excel(writer, index=False, sheet_name="محفظة_الجدد")
+                if detail is not None:
+                    detail.to_excel(writer, index=False, sheet_name="تفاصيل_الإسناد")
+                tt = result.get("targets_table")
+                if tt is not None:
+                    tt.to_excel(writer, index=False, sheet_name="المستهدف_من_المحفظة")
+            st.download_button(
+                "⬇️ محفظة المحصلين الجدد فقط",
+                data=buf_new.getvalue(),
+                file_name=f"محفظة_محصلين_جدد_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                use_container_width=True,
+                type="primary",
+                key="newc_download",
+            )
+        elif assigned_df is not None and not assigned_df.empty:
+            buf = io.BytesIO()
+            with pd.ExcelWriter(buf, engine="openpyxl") as writer:
+                if summary is not None:
+                    summary.to_excel(writer, index=False, sheet_name="ملخص_الجدد")
+                assigned_df.to_excel(writer, index=False, sheet_name="محفظة_الجدد")
+            st.download_button(
+                "⬇️ محفظة المحصلين الجدد فقط",
+                data=buf.getvalue(),
+                file_name=f"محفظة_محصلين_جدد_{datetime.now().strftime('%Y%m%d')}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                use_container_width=True,
+                type="primary",
+                key="newc_download",
+            )
 
 
 def page_distribution():

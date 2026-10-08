@@ -3255,6 +3255,11 @@ def build_dashboard_html(df, class_col, sales_col, time_col, source_name="", fil
         ))
         chart_specs.append(("pair", "ساعات العمل مقابل الوقت المهدر", eff_fig, "plot_hours_efficiency"))
 
+    # ضمان أن شارتات الترتيب والساعات تبقى متتالية في صف واحد
+    _pair = [c for c in chart_specs if c[0] == "pair"]
+    _rest = [c for c in chart_specs if c[0] != "pair"]
+    chart_specs = _rest + _pair
+
     agent_options = sorted(work["_agent_display"].dropna().astype(str).unique().tolist())
     state_options = sorted({
         str(s).strip()

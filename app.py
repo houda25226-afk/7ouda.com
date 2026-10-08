@@ -6675,11 +6675,6 @@ def _build_wallet_page_html(wallet_df):
 
     parts = []
     parts.append("<div id='page-wallet' class='dash-page'>")
-    parts.append("<header class='hero'>")
-    parts.append("<div class='eyebrow'>WALLET DASHBOARD</div>")
-    parts.append("<h1>تحليل المحفظة الكاملة</h1>")
-    parts.append("<div class='meta'>سلايسرز تفاعلية · كروت وشارتات</div>")
-    parts.append("</header>")
 
     # Filters
     parts.append("<section class='filter-bar'>")
@@ -6782,8 +6777,7 @@ def _build_wallet_page_html(wallet_df):
 
 def _build_payments_page_html(payments_df):
     figs, _work, _c, _a = _build_payments_analysis(payments_df)
-    parts = ["<div id='page-payments' class='dash-page'>",
-             "<header class='hero'><div class='eyebrow'>PAYMENTS</div><h1>تحليل السداد الكامل</h1></header>"]
+    parts = ["<div id='page-payments' class='dash-page'>"]
     parts.append(_fig_html_card(figs["kpi"], "payments", 0))
     if "trend" in figs:
         parts.append("<div class='charts-grid'>" + _fig_html_card(figs["trend"], "payments", 1) + "</div>")
@@ -6796,8 +6790,7 @@ def _build_payments_page_html(payments_df):
 
 
 def _build_link_page_html(activity_df, sales_col, class_col, payments_df):
-    parts = ["<div id='page-link' class='dash-page'>",
-             "<header class='hero'><div class='eyebrow'>ACTIVITY × PAYMENTS</div><h1>ربط نشاط المحصلين بالسداد</h1></header>"]
+    parts = ["<div id='page-link' class='dash-page'>"]
     result = _build_activity_payments_link(activity_df, sales_col, class_col, payments_df)
     if result is None:
         parts.append("<p style='text-align:center'>تعذّر الربط — تأكد إن عمود المحصل موجود في ملفي النشاط والسداد.</p></div>")

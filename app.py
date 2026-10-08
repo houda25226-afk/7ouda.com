@@ -1072,7 +1072,6 @@ html, body, [class*="css"]  {{
   font-family: 'Tajawal', sans-serif !important;
 }}
 
-/* خلفية الصفحة — نفس زخرفة الوطنية بالظبط */
 .stApp {{
   background-color: {t["bg"]} !important;
   background-image: {bg_image} !important;
@@ -1084,7 +1083,6 @@ html, body, [class*="css"]  {{
   image-rendering: high-quality !important;
 }}
 
-/* الحاوية الرئيسية — نازلة في النص + استريتش */
 .block-container {{
   background: {t["surface"]} !important;
   border: 1px solid {t["border"]} !important;
@@ -1101,7 +1099,6 @@ html, body, [class*="css"]  {{
   margin-bottom: 4rem !important;
 }}
 
-/* هيدر Streamlit ظاهر — قائمة ⋮ كاملة */
 header[data-testid="stHeader"] {{
   background: {t["bg"]}ee !important;
   backdrop-filter: blur(8px);
@@ -1130,8 +1127,6 @@ div[data-testid="stDecoration"] {{
   display: inline-flex !important;
 }}
 
-
-/* تمييز هيدر الصفحة بهوية الوطنية */
 div[data-testid="stVerticalBlock"] > div:first-child h1,
 div[data-testid="stVerticalBlock"] > div:first-child h2,
 .block-container h1,
@@ -1140,19 +1135,16 @@ div[data-testid="stVerticalBlock"] > div:first-child h2,
   font-weight: 800 !important;
 }}
 
-/* لون فرعي للهيدر */
 .wq-page-sub {{
   color: #5a6b5d !important;
 }}
 
-/* شريط علوي خفيف تحت عنوان الصفحة */
 .block-container hr {{
   border: none !important;
   border-top: 2px solid {t["accent"]}33 !important;
   margin: 1rem 0 1.25rem 0 !important;
 }}
 
-/* كبسولة تمييز للهيدر الصغير */
 .wq-page-badge {{
   display: inline-block;
   background: linear-gradient(135deg, {t["accent"]}18, {t["accent"]}08);
@@ -1182,7 +1174,7 @@ div[data-testid="stVerticalBlock"] > div:first-child h2,
   direction: ltr;
   text-align: left;
 }}
-/* زخرفة هندسية خفيفة في خلفية عنوان التبويب */
+
 .wq-page-header::before {{
   content: "";
   position: absolute;
@@ -1191,17 +1183,17 @@ div[data-testid="stVerticalBlock"] > div:first-child h2,
   pointer-events: none;
   opacity: 0.55;
   background-image:
-    /* نجوم / معينات */
+
     radial-gradient(circle at 12% 28%, {t["accent"]}22 0 1.5px, transparent 2px),
     radial-gradient(circle at 28% 72%, {t["accent"]}18 0 1.2px, transparent 2px),
     radial-gradient(circle at 48% 22%, {t["accent_gold"]}33 0 1.4px, transparent 2px),
     radial-gradient(circle at 68% 68%, {t["accent"]}16 0 1.3px, transparent 2px),
     radial-gradient(circle at 86% 32%, {t["accent_gold"]}28 0 1.5px, transparent 2px),
     radial-gradient(circle at 92% 78%, {t["accent"]}14 0 1.1px, transparent 2px),
-    /* شبكة معينات ناعمة */
+
     linear-gradient(135deg, {t["accent"]}10 1px, transparent 1px),
     linear-gradient(45deg, {t["accent"]}08 1px, transparent 1px),
-    /* أقواس هندسية خفيفة على اليمين */
+
     radial-gradient(ellipse 55% 90% at 100% 0%, {t["accent"]}12, transparent 55%),
     radial-gradient(ellipse 40% 70% at 100% 100%, {t["accent_gold"]}10, transparent 50%);
   background-size:
@@ -1306,7 +1298,6 @@ div[data-testid="stVerticalBlock"] > div:first-child h2,
   text-align: right !important;
 }}
 
-/* الشريط الجانبي */
 section[data-testid="stSidebar"] {{
   background: {t["sidebar_bg"]} !important;
   border-left: 1px solid {t["border_soft"]} !important;
@@ -1317,7 +1308,6 @@ section[data-testid="stSidebar"] .block-container {{
   box-shadow: none !important;
 }}
 
-/* أزرار Primary — أخضر الوطنية */
 div.stButton > button[kind="primary"],
 div.stButton > button[data-testid="baseButton-primary"],
 button[kind="primary"] {{
@@ -1335,7 +1325,6 @@ button[kind="primary"]:hover {{
   box-shadow: 0 4px 14px rgba(18, 109, 60, 0.35) !important;
 }}
 
-/* أزرار Secondary */
 div.stButton > button[kind="secondary"],
 button[kind="secondary"] {{
   background: {t["surface"]} !important;
@@ -1348,7 +1337,6 @@ div.stButton > button[kind="secondary"]:hover {{
   background: {t["accent_surface"]} !important;
 }}
 
-/* حقول الإدخال */
 div[data-baseweb="select"] > div,
 div[data-baseweb="input"] > div,
 .stTextInput input, .stNumberInput input, .stDateInput input {{
@@ -1357,7 +1345,6 @@ div[data-baseweb="input"] > div,
   background: {t["input_bg"]} !important;
 }}
 
-/* تبويبات / شرائح */
 .stTabs [data-baseweb="tab-list"] {{
   gap: 0.25rem;
   background: {t["surface_2"]};
@@ -1373,14 +1360,12 @@ div[data-baseweb="input"] > div,
   color: {t["on_accent"]} !important;
 }}
 
-/* بطاقات الحاويات */
 div[data-testid="stVerticalBlockBorderWrapper"] {{
   border-radius: 14px !important;
   border-color: {t["border"]} !important;
   background: {t["surface"]} !important;
 }}
 
-/* Metrics */
 div[data-testid="stMetric"] {{
   background: {t["surface_2"]};
   border: 1px solid {t["border_soft"]};
@@ -1391,14 +1376,12 @@ div[data-testid="stMetricValue"] {{
   color: {t["accent_strong"]} !important;
 }}
 
-/* جداول */
 div[data-testid="stDataFrame"] {{
   border-radius: 12px !important;
   overflow: hidden;
   border: 1px solid {t["border_soft"]};
 }}
 
-/* عناوين */
 h1, h2, h3 {{
   color: {t["text"]} !important;
   font-weight: 800 !important;
@@ -1407,18 +1390,15 @@ p, span, label {{
   color: {t["text"]};
 }}
 
-/* شريط التحميل / Progress */
 .stProgress > div > div > div > div {{
   background-color: {t["accent_strong"]} !important;
 }}
 
-/* Download buttons */
 div.stDownloadButton > button {{
   border-radius: 999px !important;
   font-weight: 700 !important;
 }}
 
-/* ===== هوية إيجادة في السايدبار ===== */
 .ejada-side-brand {{
   text-align: center;
   padding: 0.6rem 0.4rem 0.9rem;
@@ -2867,14 +2847,14 @@ def build_dashboard_html(df, class_col, sales_col, time_col, source_name="", fil
     import json
 
     # لوحة HTML موحّدة: لونان تيل + درجة ثالثة أقرب فقط
-    background = "#F3F7F7"
+    background = "#E8F1F3"
     surface = "#FFFFFF"
-    border = "#D5E3E4"
-    text = "#1F2A2B"
-    text_dim = "#5A6F71"
-    export_dark = "#2F6F73"      # أساسي غامق
-    export_mid = "#5A9093"       # متوسط
-    export_light = "#8FB4B7"     # فاتح
+    border = "#D0E0E2"
+    text = "#1A2C2E"
+    text_dim = "#5A7275"
+    export_dark = "#0E6B6F"      # أساسي غامق (مرجع الصورة)
+    export_mid = "#1A8A8E"       # متوسط
+    export_light = "#7EB8BB"     # فاتح
     export_success = export_dark
     export_fail = export_light
     export_accent = export_mid
@@ -3008,11 +2988,14 @@ def build_dashboard_html(df, class_col, sales_col, time_col, source_name="", fil
         export_date_min = timed_source.min().strftime("%Y-%m-%d")
         export_date_max = timed_source.max().strftime("%Y-%m-%d")
 
-    def metric_card(card_id, label, value, color):
+    def metric_card(card_id, label, value, color, icon="●"):
         return (
             f'<div class="kpi" id="{card_id}">'
+            f'<div class="kpi-icon" style="color:{color};border-color:{color}33;background:{color}14">{icon}</div>'
+            f'<div class="kpi-body">'
             f'<div class="label">{label}</div>'
-            f'<div class="value" data-role="value" style="color:{color}">{value}</div></div>'
+            f'<div class="value" data-role="value" style="color:{color}">{value}</div>'
+            f'</div></div>'
         )
 
     # ---- بناء الشارتات بـ IDs ثابتة وتنسيق نظيف (بدون ليجند مزدحم) ----
@@ -3255,6 +3238,11 @@ def build_dashboard_html(df, class_col, sales_col, time_col, source_name="", fil
         ))
         chart_specs.append(("pair", "ساعات العمل مقابل الوقت المهدر", eff_fig, "plot_hours_efficiency"))
 
+    # ضمان أن شارتات الترتيب والساعات تبقى متتالية في صف واحد
+    _pair = [c for c in chart_specs if c[0] == "pair"]
+    _rest = [c for c in chart_specs if c[0] != "pair"]
+    chart_specs = _rest + _pair
+
     agent_options = sorted(work["_agent_display"].dropna().astype(str).unique().tolist())
     state_options = sorted({
         str(s).strip()
@@ -3284,6 +3272,11 @@ def build_dashboard_html(df, class_col, sales_col, time_col, source_name="", fil
         "<div class='topbar-name'>إجادة</div>"
         "<div class='topbar-tag'>EJADA · لتحصيل الديون</div>"
         "</div></div>"
+        "<div class='topbar-title-block'>"
+        "<div class='topbar-eyebrow'>المنصة الذكية</div>"
+        "<div class='topbar-page-title'>داشبورد تحليل نشاط المحصلين</div>"
+        f"<div class='topbar-source'>مصدر البيانات: {escape(source_name or 'ملف النشاط')}</div>"
+        "</div>"
         "<nav id='dash-page-nav' class='topbar-nav'>"
         f"{_nav_buttons}"
         "</nav>"
@@ -3304,91 +3297,93 @@ def build_dashboard_html(df, class_col, sales_col, time_col, source_name="", fil
         "<meta name='viewport' content='width=device-width, initial-scale=1'>",
         "<title>داشبورد تحليل نشاط المحصلين</title>",
         "<style>",
-        f"body{{margin:0;background:{background};color:{text};font-family:Tahoma,'Segoe UI',Arial,sans-serif;line-height:1.65}}",
-        "main{max-width:1400px;margin:0 auto;padding:24px 18px 48px}",
-        f"header.hero{{background:{surface};border:1px solid {border};border-radius:18px;padding:16px 20px;margin-bottom:16px;box-shadow:0 6px 18px rgba(15,23,42,.04)}}",
-        ".hero-row{display:flex;align-items:center;justify-content:space-between;gap:18px;flex-wrap:wrap}",
-        ".hero-brand{display:flex;align-items:center;gap:12px;min-width:160px}",
-        ".hero-logo{width:56px;height:56px;object-fit:contain;border-radius:12px;background:#fff;border:1px solid #D5E3E4}",
-        f".hero-brand-name{{font-size:18px;font-weight:700;color:{export_dark};line-height:1.2}}",
-        f".hero-brand-tag{{font-size:11px;color:{text_dim};letter-spacing:.3px}}",
-        ".hero-title-block{flex:1 1 auto;text-align:center;min-width:220px}",
-        f".eyebrow{{font-size:12px;letter-spacing:1.5px;color:{export_accent};margin-bottom:4px}}",
-        f"header.hero h1{{margin:0 0 4px;font-size:22px;color:{text}}}",
-        f".meta{{color:{text_dim};font-size:12px}}",
-        f".panel{{background:{surface};border:1px solid {border};border-radius:16px;padding:16px 16px 12px;margin-bottom:16px}}",
-        f"h2.section-title{{margin:4px 0 12px;text-align:center;font-size:17px;color:{text}}}",
-        "#interactive-filters,.filters-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px;align-items:end}",
-        ".kpi-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin:10px 0 12px}",
-        ".charts-grid-2{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:28px;margin:0 0 28px;align-items:stretch}",".charts-grid-2 > .panel,.charts-grid-2 > .chart-card{display:flex;flex-direction:column;min-height:100%;margin:0;box-shadow:0 6px 18px rgba(15,23,42,.07)}",".charts-grid-2 .js-plotly-plot,.charts-grid-2 .plotly-graph-div{width:100% !important}",".wallet-charts-row{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:28px;margin:0 0 28px;align-items:stretch}",".wallet-charts-row > .panel{margin:0 !important;min-width:0;box-shadow:0 6px 18px rgba(15,23,42,.07)}","@media (max-width:900px){.wallet-charts-row{grid-template-columns:1fr}}",
-        "@media (max-width:900px){.charts-grid-2{grid-template-columns:1fr}}",
-        f".filter-field{{display:flex;flex-direction:column;gap:6px;color:{text_dim};font-size:12px}}",
-        f".filter-field input,.filter-field select,.filter-field button.multi-trigger{{background:{background};color:{text};border:1px solid {border};border-radius:10px;padding:9px 10px;font-size:13px;text-align:right}}",
-        f".multi-menu{{display:none;position:absolute;z-index:200;top:calc(100% + 4px);right:0;left:0;background:#fff;border:1px solid {border};border-radius:10px;padding:8px;box-shadow:0 10px 24px rgba(15,23,42,.14);max-height:240px;overflow:auto}}",
-        f".filter-field{{position:relative;z-index:1}}",
-        f".panel{{overflow:visible}}",
-        f".filters-grid,.charts-grid-2,.charts-grid{{overflow:visible}}",
-        f"button.multi-trigger{{cursor:pointer;width:100%;display:flex;justify-content:space-between;align-items:center}}",
-        f"#kpi-grid{{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin:16px 0}}",
-        f".kpi{{background:{surface};border:1px solid {border};border-radius:14px;padding:16px 10px;text-align:center;min-height:100px}}",
-        f".kpi .label{{color:{text_dim};font-size:13px;margin-bottom:8px}}",
-        f".kpi .value{{font-size:24px;font-weight:700}}",
-        f"#filter-status{{text-align:center;color:{text_dim};font-size:12px;margin-top:10px}}",
-        ".charts-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(480px,1fr));gap:20px;margin:14px 0 24px}",
-        f".chart-card{{background:{surface};border:1px solid {border};border-radius:16px;padding:18px 16px 14px;min-width:0;overflow:visible;box-shadow:0 4px 14px rgba(15,23,42,.05)}}",
+        f"body{{margin:0;background:{background};color:{text};font-family:Tahoma,'Segoe UI',Arial,sans-serif;line-height:1.55}}",
+        "*,*::before,*::after{box-sizing:border-box}",
+        "main{max-width:100%;width:100%;margin:0 auto;padding:10px 14px 28px}",
+        ".export-hint{text-align:center;color:#5A7275;font-size:11px;margin:0 0 6px}",
+
+        f".app-topbar{{position:sticky;top:0;z-index:100;background:{surface};border-bottom:1px solid {border};box-shadow:0 2px 12px rgba(14,107,111,.08)}}",
+        ".topbar-inner{display:flex;align-items:center;justify-content:space-between;gap:12px;max-width:100%;width:100%;margin:0 auto;padding:8px 16px;flex-wrap:nowrap}",
+        ".topbar-brand{display:flex;align-items:center;gap:10px;flex:0 0 auto}",
+        ".topbar-logo{width:42px;height:42px;object-fit:contain;border-radius:10px;background:#fff}",
+        f".topbar-name{{font-size:15px;font-weight:700;color:{export_dark};line-height:1.15}}",
+        f".topbar-tag{{font-size:10px;color:{text_dim}}}",
+        ".topbar-title-block{flex:1 1 auto;text-align:center;min-width:0;padding:0 6px}",
+        f".topbar-eyebrow{{font-size:10px;letter-spacing:1px;color:{export_mid};margin:0;font-weight:600}}",
+        f".topbar-page-title{{font-size:16px;font-weight:700;color:{text};line-height:1.2;margin:0}}",
+        f".topbar-source{{font-size:10px;color:{text_dim};margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}}",
+        ".topbar-nav{display:flex;align-items:center;gap:6px;flex:0 0 auto}",
+        f".top-nav-btn{{display:inline-flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;min-width:68px;padding:6px 10px;background:transparent;color:{text};border:1px solid transparent;border-radius:10px;cursor:pointer;font-family:inherit;font-size:11px;transition:all .15s ease}}",
+        f".top-nav-btn:hover{{background:#E7F3F3;border-color:{border}}}",
+        f".top-nav-btn.active-page{{background:{export_dark};color:#fff;border-color:{export_dark};box-shadow:0 4px 12px rgba(14,107,111,.28)}}",
+        ".top-nav-btn .nav-ico{display:flex;align-items:center;justify-content:center}",
+        ".top-nav-btn .nav-svg{width:20px;height:20px;display:block}",
+        ".top-nav-btn .nav-lbl{font-size:11px;font-weight:600}",
+        ".top-nav-btn.active-page .nav-svg{stroke:#fff}",
+        ".topbar-filters{display:none}",
+
+        f".filter-bar{{background:linear-gradient(135deg,{export_dark} 0%,{export_mid} 100%);border-radius:14px;padding:12px 14px 10px;margin-bottom:12px;box-shadow:0 6px 18px rgba(14,107,111,.18)}}",
+        ".filter-bar-inner,.filters-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:8px;align-items:end}",
+        f".filter-field{{display:flex;flex-direction:column;gap:3px;color:#E8F6F6;font-size:11px;font-weight:600}}",
+        f".filter-field input,.filter-field select,.filter-field button.multi-trigger{{background:{surface};color:{text};border:0;border-radius:20px;padding:7px 12px;font-size:12px;text-align:right;box-shadow:0 1px 3px rgba(0,0,0,.06)}}",
+        "button.multi-trigger{cursor:pointer;width:100%;display:flex;justify-content:space-between;align-items:center}",
+        f".multi-menu{{display:none;position:absolute;z-index:200;top:calc(100% + 4px);right:0;left:0;background:{surface};border:1px solid {border};border-radius:10px;padding:8px;box-shadow:0 10px 24px rgba(15,23,42,.14);max-height:220px;overflow:auto;color:{text}}}",
+        ".filter-field{position:relative;z-index:1}",
+        f".btn-reset,.btn-apply{{background:{surface};color:{export_dark};border:0;border-radius:20px;padding:7px 14px;font-size:12px;font-weight:700;cursor:pointer;white-space:nowrap;box-shadow:0 1px 3px rgba(0,0,0,.08)}}",
+        f".btn-reset:hover,.btn-apply:hover{{background:#F0FAFA}}",
+        f".filter-status,#filter-status,#wallet-filter-status{{text-align:center;color:#D7EEEE;font-size:11px;margin-top:8px}}",
+
+        f".panel{{background:{surface};border:1px solid {border};border-radius:14px;padding:12px;margin-bottom:12px;box-shadow:0 2px 10px rgba(14,107,111,.04)}}",
+        f"h2.section-title,.filters-head-title{{margin:0 0 10px;text-align:center;font-size:14px;font-weight:700;color:{text}}}",
+        ".filters-head{display:flex;align-items:center;justify-content:center;gap:6px;margin:0 0 8px}",
+
+        f"#kpi-grid,.kpi-grid{{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin:0 0 12px}}",
+        f".kpi{{background:{surface};border:1px solid {border};border-radius:14px;padding:12px 12px 10px;display:flex;align-items:flex-start;gap:10px;min-height:84px;box-shadow:0 2px 10px rgba(14,107,111,.05);transition:box-shadow .15s}}",
+        f".kpi:hover{{box-shadow:0 6px 16px rgba(14,107,111,.1)}}",
+        ".kpi{flex-direction:column;align-items:center;text-align:center}",
+        ".kpi:has(.kpi-icon){flex-direction:row;align-items:flex-start;text-align:right}",
+        f".kpi-icon{{width:36px;height:36px;border-radius:50%;border:1.5px solid;display:flex;align-items:center;justify-content:center;font-size:15px;flex:0 0 auto}}",
+        ".kpi-body{flex:1 1 auto;min-width:0;text-align:right}",
+        f".kpi .label{{color:{text_dim};font-size:11px;margin-bottom:4px;font-weight:600}}",
+        f".kpi .value{{font-size:20px;font-weight:800;line-height:1.15;color:{text}}}",
+
+        ".charts-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(400px,1fr));gap:12px;margin:0 0 12px}",
+        ".charts-grid-2{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin:0 0 12px;align-items:stretch}",
+        ".charts-grid-2 > .panel,.charts-grid-2 > .chart-card{display:flex;flex-direction:column;min-height:100%;margin:0;box-shadow:0 2px 10px rgba(14,107,111,.05)}",
+        ".charts-grid-2 .js-plotly-plot,.charts-grid-2 .plotly-graph-div{width:100% !important}",
+        ".wallet-charts-row{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin:0 0 12px;align-items:stretch}",
+        ".wallet-charts-row > .panel{margin:0 !important;min-width:0;box-shadow:0 2px 10px rgba(14,107,111,.05)}",
+        f".chart-card{{background:{surface};border:1px solid {border};border-radius:14px;padding:10px 12px;min-width:0;overflow:visible;box-shadow:0 2px 10px rgba(14,107,111,.05)}}",
+        f".chart-card h3{{margin:2px 4px 4px;text-align:center;font-size:13px;font-weight:700;color:{text}}}",
+
+        f".table-wrap{{overflow-x:auto;border:1px solid {border};border-radius:12px;background:{surface}}}",
+        "table.data-table{width:100%;border-collapse:separate;border-spacing:0;font-size:12px}",
+        f"table.data-table thead th{{position:sticky;top:0;background:{export_dark};color:#fff;font-weight:600;padding:10px 8px;text-align:center;border-bottom:2px solid {export_mid};white-space:nowrap}}",
+        f"table.data-table tbody td{{padding:9px 8px;border-bottom:1px solid {border};text-align:center;white-space:nowrap;color:{text}}}",
+        f"table.data-table tbody td:first-child{{text-align:right;font-weight:600;color:{export_dark}}}",
+        "table.data-table tbody tr:nth-child(even){background:#F3F9F9}",
+        "table.data-table tbody tr:hover{background:#E5F3F3}",
+        "table.data-table tbody tr:last-child td{border-bottom:none}",
+
         ".dash-page{display:none}",
         ".dash-page.active{display:block}",
-        # ===== هيدر علوي بهوية إجادة (شبيه بالصورة المرجعية) =====
-        f".app-topbar{{position:sticky;top:0;z-index:100;background:{surface};border-bottom:1px solid {border};box-shadow:0 2px 10px rgba(15,23,42,.06)}}",
-        ".topbar-inner{display:flex;align-items:center;justify-content:space-between;gap:16px;max-width:1400px;margin:0 auto;padding:10px 18px;flex-wrap:wrap}",
-        ".topbar-brand{display:flex;align-items:center;gap:12px;min-width:180px}",
-        ".topbar-logo{width:52px;height:52px;object-fit:contain;border-radius:10px;background:#fff}",
-        f".topbar-name{{font-size:18px;font-weight:700;color:{export_dark};line-height:1.2}}",
-        f".topbar-tag{{font-size:11px;color:{text_dim};letter-spacing:.3px}}",
-        ".topbar-nav{display:flex;align-items:center;gap:8px;flex-wrap:wrap;justify-content:center;flex:1}",
-        f".top-nav-btn{{display:inline-flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;min-width:88px;padding:8px 12px;background:transparent;color:{text};border:1px solid transparent;border-radius:12px;cursor:pointer;font-family:inherit;font-size:13px;transition:all .15s ease}}",
-        f".top-nav-btn:hover{{background:#F0F6F6;border-color:{border}}}",
-        f".top-nav-btn.active-page{{background:{export_dark};color:#fff;border-color:{export_dark};box-shadow:0 4px 12px rgba(47,111,115,.28)}}",
-        ".top-nav-btn .nav-ico{display:flex;align-items:center;justify-content:center;line-height:1}",
-        ".top-nav-btn .nav-svg{width:22px;height:22px;display:block}",
-        ".top-nav-btn .nav-lbl{font-size:12px;font-weight:600}",
-        ".top-nav-btn.active-page .nav-svg{stroke:#fff}",
-        ".topbar-filters{display:flex;align-items:center;gap:10px;flex-wrap:wrap;min-width:120px;justify-content:flex-end}",
-        f".topbar-filters .tb-filter{{display:flex;flex-direction:column;gap:3px;font-size:11px;color:{text_dim}}}",
-        f".topbar-filters select{{min-width:120px;padding:7px 10px;border:1px solid {border};border-radius:10px;background:#fff;color:{text};font-family:inherit;font-size:12px}}",
-        f".chart-card h3{{margin:6px 8px 4px;text-align:center;font-size:15px;color:{text}}}",
-        f".table-wrap{{overflow-x:auto;border:1px solid {border};border-radius:14px;background:{surface}}}",
-        f"table.data-table{{width:100%;border-collapse:separate;border-spacing:0;font-size:13px}}",
-        f"table.data-table thead th{{position:sticky;top:0;background:{export_dark};color:#FFFFFF;font-weight:600;padding:12px 10px;text-align:center;border-bottom:2px solid {export_mid};white-space:nowrap}}",
-        f"table.data-table tbody td{{padding:11px 10px;border-bottom:1px solid {border};text-align:center;white-space:nowrap;color:{text}}}",
-        f"table.data-table tbody td:first-child{{text-align:right;font-weight:600;color:{export_dark}}}",
-        f"table.data-table tbody tr:nth-child(even){{background:#F3F8F8}}",
-        f"table.data-table tbody tr:hover{{background:#E7F1F1}}",
-        f"table.data-table tbody tr:last-child td{{border-bottom:none}}",
-        f"footer{{color:{text_dim};font-size:12px;text-align:center;margin-top:22px}}",
-        f".btn-reset{{background:{export_dark};color:#fff;border:0;border-radius:10px;padding:10px 12px;font-size:13px;cursor:pointer}}",
-        f".btn-reset:hover{{background:{export_mid}}}",
-        "@media (max-width:900px){.charts-grid{grid-template-columns:1fr}.topbar-inner{justify-content:center}.topbar-filters{width:100%;justify-content:center}}",
+        f"header.hero{{background:{surface};border:1px solid {border};border-radius:14px;padding:12px 16px;margin-bottom:10px;box-shadow:0 2px 10px rgba(14,107,111,.04);text-align:center}}",
+        f"header.hero h1{{margin:0 0 4px;font-size:18px;color:{text}}}",
+        f".eyebrow{{font-size:10px;letter-spacing:1px;color:{export_mid};margin-bottom:2px}}",
+        f".meta{{color:{text_dim};font-size:11px}}",
+        f"footer{{color:{text_dim};font-size:11px;text-align:center;margin-top:16px}}",
+        ".panel,.filters-grid,.charts-grid-2,.charts-grid,.filter-bar{overflow:visible}",
+        "@media (max-width:900px){.charts-grid,.charts-grid-2,.wallet-charts-row{grid-template-columns:1fr}.topbar-inner{flex-wrap:wrap;justify-content:center}.topbar-title-block{order:3;width:100%;padding:4px 0}}",
         "</style></head><body>",
         nav_html,
         "<main id='page-activity' class='dash-page active'>",
-        "<header class='hero hero-compact'>",
-        "<div class='hero-row'>",
-        f"<div class='hero-brand'><img class='hero-logo' src='data:image/png;base64,{_ejada_logo_b64}' alt='إجادة' />"
-        "<div class='hero-brand-text'><div class='hero-brand-name'>إجادة</div>"
-        "<div class='hero-brand-tag'>EJADA · لتحصيل الديون</div></div></div>",
-        "<div class='hero-title-block'>",
-        "<div class='eyebrow'>ACTIVITY DASHBOARD</div>",
-        "<h1>تحليل نشاط المحصلين</h1>",
-        f"<div class='meta'>مصدر البيانات: {escape(source_name or 'ملف النشاط')}</div>",
     ]
     if filter_hint:
-        parts.append(f"<div class='meta' style='margin-top:4px'>الفلاتر عند التصدير: {escape(filter_hint)}</div>")
-    parts.append("</div></div></header>")
+        parts.append(f"<div class='export-hint'>الفلاتر عند التصدير: {escape(filter_hint)}</div>")
 
-    # فلاتر
-    parts.append("<section class='panel'><h2 class='section-title'>🎚️ فلاتر التقرير</h2>")
-    parts.append("<div id='interactive-filters'>")
+    # شريط فلاتر بتصميم المنصة الذكية
+    parts.append("<section class='filter-bar'>")
+    parts.append("<div class='filter-bar-inner' id='interactive-filters'>")
     # agents
     parts.append("<div class='filter-field' style='position:relative'><span>👤 المحصلون</span>")
     parts.append("<button type='button' class='multi-trigger' data-target='agent-menu'><span id='agent-label'>كل المحصلين</span> ⌄</button>")
@@ -3417,15 +3412,15 @@ def build_dashboard_html(df, class_col, sales_col, time_col, source_name="", fil
         f"<input id='filter-date-to' type='date' value='{export_date_max}' min='{export_date_min}' max='{export_date_max}'></div>"
     )
     parts.append("<div class='filter-field'><span>&nbsp;</span><button id='reset-filters' class='btn-reset' type='button'>↺ إعادة ضبط</button></div>")
-    parts.append("</div><div id='filter-status'>عرض كل البيانات</div></section>")
+    parts.append("</div><div id='filter-status' class='filter-status'>عرض كل البيانات</div></section>")
 
     # KPI
     parts.append("<section id='kpi-grid'>")
-    parts.append(metric_card("kpi-agents", "👥 عدد المحصلين", f"{agent_count:,}", text))
-    parts.append(metric_card("kpi-total", "📞 إجمالي المكالمات", f"{total:,}", text))
-    parts.append(metric_card("kpi-success", "✅ المكالمات الناجحة", f"{success:,}", export_success))
-    parts.append(metric_card("kpi-rate", "📈 نسبة النجاح", f"{rate:.1f}%", export_accent))
-    parts.append(metric_card("kpi-wasted", "⏱️ الوقت المهدر", f"{wasted:,.1f} د", export_warn))
+    parts.append(metric_card("kpi-agents", "إجمالي المحصلين", f"{agent_count:,}", export_dark, "👤"))
+    parts.append(metric_card("kpi-total", "إجمالي المكالمات", f"{total:,}", export_mid, "📞"))
+    parts.append(metric_card("kpi-success", "المكالمات الناجحة", f"{success:,}", export_success, "✅"))
+    parts.append(metric_card("kpi-rate", "نسبة النجاح", f"{rate:.1f}%", export_accent, "%"))
+    parts.append(metric_card("kpi-wasted", "الوقت المهدر", f"{wasted:,.1f} د", export_warn, "⏱️"))
     parts.append("</section>")
 
     # بدون عناوين أقسام وسيطة — كل شارت له عنوانه الخاص
@@ -6680,16 +6675,15 @@ def _build_wallet_page_html(wallet_df):
 
     parts = []
     parts.append("<div id='page-wallet' class='dash-page'>")
-    parts.append("<header class='hero' style='margin-bottom:18px'>")
+    parts.append("<header class='hero'>")
     parts.append("<div class='eyebrow'>WALLET DASHBOARD</div>")
-    parts.append("<h1 style='margin:0 0 8px;font-size:24px'>تحليل المحفظة الكاملة</h1>")
-    parts.append("<div class='meta'>سلايسرز تفاعلية · كروت وشارتات بنفس تنسيق نشاط المحصلين</div>")
+    parts.append("<h1>تحليل المحفظة الكاملة</h1>")
+    parts.append("<div class='meta'>سلايسرز تفاعلية · كروت وشارتات</div>")
     parts.append("</header>")
 
     # Filters
-    parts.append("<section class='panel'>")
-    parts.append("<h2 class='section-title'>🎚️ فلاتر المحفظة</h2>")
-    parts.append("<div class='filters-grid' id='wallet-interactive-filters'>")
+    parts.append("<section class='filter-bar'>")
+    parts.append("<div class='filters-grid filter-bar-inner' id='wallet-interactive-filters'>")
     parts.append(_multi("👤 المحصل", "wallet-agent-menu", "wallet-agent-label", "wallet-select-all-agent", "wallet-agent-option", agents, "كل المحصلين"))
     parts.append(_multi("🌍 الجنسية", "wallet-nation-menu", "wallet-nation-label", "wallet-select-all-nation", "wallet-nation-option", nations, "كل الجنسيات"))
     parts.append(_multi("🏷️ حالة العميل", "wallet-cstate-menu", "wallet-cstate-label", "wallet-select-all-cstate", "wallet-cstate-option", cust_states, "كل الحالات"))
@@ -6789,7 +6783,7 @@ def _build_wallet_page_html(wallet_df):
 def _build_payments_page_html(payments_df):
     figs, _work, _c, _a = _build_payments_analysis(payments_df)
     parts = ["<div id='page-payments' class='dash-page'>",
-             "<h2 class='section-title'>💰 تحليل السداد الكامل</h2>"]
+             "<header class='hero'><div class='eyebrow'>PAYMENTS</div><h1>تحليل السداد الكامل</h1></header>"]
     parts.append(_fig_html_card(figs["kpi"], "payments", 0))
     if "trend" in figs:
         parts.append("<div class='charts-grid'>" + _fig_html_card(figs["trend"], "payments", 1) + "</div>")
@@ -6803,7 +6797,7 @@ def _build_payments_page_html(payments_df):
 
 def _build_link_page_html(activity_df, sales_col, class_col, payments_df):
     parts = ["<div id='page-link' class='dash-page'>",
-             "<h2 class='section-title'>🔗 ربط نشاط المحصلين بالسداد</h2>"]
+             "<header class='hero'><div class='eyebrow'>ACTIVITY × PAYMENTS</div><h1>ربط نشاط المحصلين بالسداد</h1></header>"]
     result = _build_activity_payments_link(activity_df, sales_col, class_col, payments_df)
     if result is None:
         parts.append("<p style='text-align:center'>تعذّر الربط — تأكد إن عمود المحصل موجود في ملفي النشاط والسداد.</p></div>")

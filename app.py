@@ -3289,6 +3289,11 @@ def build_dashboard_html(df, class_col, sales_col, time_col, source_name="", fil
         "<div class='topbar-name'>إجادة</div>"
         "<div class='topbar-tag'>EJADA · لتحصيل الديون</div>"
         "</div></div>"
+        "<div class='topbar-title-block'>"
+        "<div class='topbar-eyebrow'>ACTIVITY DASHBOARD</div>"
+        "<div class='topbar-page-title'>تحليل نشاط المحصلين</div>"
+        f"<div class='topbar-source'>مصدر البيانات: {escape(source_name or 'ملف النشاط')}</div>"
+        "</div>"
         "<nav id='dash-page-nav' class='topbar-nav'>"
         f"{_nav_buttons}"
         "</nav>"
@@ -3310,7 +3315,8 @@ def build_dashboard_html(df, class_col, sales_col, time_col, source_name="", fil
         "<title>داشبورد تحليل نشاط المحصلين</title>",
         "<style>",
         f"body{{margin:0;background:{background};color:{text};font-family:Tahoma,'Segoe UI',Arial,sans-serif;line-height:1.65}}",
-        "main{max-width:1400px;margin:0 auto;padding:24px 18px 48px}",
+        "main{max-width:100%;width:100%;margin:0 auto;padding:12px 16px 32px;box-sizing:border-box}",
+        ".export-hint{text-align:center;color:#5A6F71;font-size:11px;margin:0 0 8px}",
         f"header.hero{{background:{surface};border:1px solid {border};border-radius:18px;padding:16px 20px;margin-bottom:16px;box-shadow:0 6px 18px rgba(15,23,42,.04)}}",
         ".hero-row{display:flex;align-items:center;justify-content:space-between;gap:18px;flex-wrap:wrap}",
         ".hero-brand{display:flex;align-items:center;gap:12px;min-width:160px}",
@@ -3321,37 +3327,45 @@ def build_dashboard_html(df, class_col, sales_col, time_col, source_name="", fil
         f".eyebrow{{font-size:12px;letter-spacing:1.5px;color:{export_accent};margin-bottom:4px}}",
         f"header.hero h1{{margin:0 0 4px;font-size:22px;color:{text}}}",
         f".meta{{color:{text_dim};font-size:12px}}",
-        f".panel{{background:{surface};border:1px solid {border};border-radius:16px;padding:16px 16px 12px;margin-bottom:16px}}",
-        f"h2.section-title{{margin:4px 0 12px;text-align:center;font-size:17px;color:{text}}}",
-        "#interactive-filters,.filters-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px;align-items:end}",
+        f".panel{{background:{surface};border:1px solid {border};border-radius:14px;padding:12px 12px 10px;margin-bottom:12px}}",
+        f".panel-filters{{padding:10px 12px 8px;margin-bottom:10px}}",
+        ".filters-head{display:flex;align-items:center;justify-content:center;gap:6px;margin:0 0 8px}",
+        f".filters-head-title{{font-size:13px;font-weight:700;color:{text}}}",
+        ".filters-head-icon{font-size:14px;line-height:1}",
+        f"h2.section-title{{margin:4px 0 10px;text-align:center;font-size:15px;color:{text}}}",
+        "#interactive-filters,.filters-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:8px;align-items:end}",
         ".kpi-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin:10px 0 12px}",
-        ".charts-grid-2{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:28px;margin:0 0 28px;align-items:stretch}",".charts-grid-2 > .panel,.charts-grid-2 > .chart-card{display:flex;flex-direction:column;min-height:100%;margin:0;box-shadow:0 6px 18px rgba(15,23,42,.07)}",".charts-grid-2 .js-plotly-plot,.charts-grid-2 .plotly-graph-div{width:100% !important}",".wallet-charts-row{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:28px;margin:0 0 28px;align-items:stretch}",".wallet-charts-row > .panel{margin:0 !important;min-width:0;box-shadow:0 6px 18px rgba(15,23,42,.07)}","@media (max-width:900px){.wallet-charts-row{grid-template-columns:1fr}}",
+        ".charts-grid-2{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px;margin:0 0 16px;align-items:stretch}",".charts-grid-2 > .panel,.charts-grid-2 > .chart-card{display:flex;flex-direction:column;min-height:100%;margin:0;box-shadow:0 6px 18px rgba(15,23,42,.07)}",".charts-grid-2 .js-plotly-plot,.charts-grid-2 .plotly-graph-div{width:100% !important}",".wallet-charts-row{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:28px;margin:0 0 28px;align-items:stretch}",".wallet-charts-row > .panel{margin:0 !important;min-width:0;box-shadow:0 6px 18px rgba(15,23,42,.07)}","@media (max-width:900px){.wallet-charts-row{grid-template-columns:1fr}}",
         "@media (max-width:900px){.charts-grid-2{grid-template-columns:1fr}}",
-        f".filter-field{{display:flex;flex-direction:column;gap:6px;color:{text_dim};font-size:12px}}",
-        f".filter-field input,.filter-field select,.filter-field button.multi-trigger{{background:{background};color:{text};border:1px solid {border};border-radius:10px;padding:9px 10px;font-size:13px;text-align:right}}",
+        f".filter-field{{display:flex;flex-direction:column;gap:3px;color:{text_dim};font-size:11px}}",
+        f".filter-field input,.filter-field select,.filter-field button.multi-trigger{{background:{background};color:{text};border:1px solid {border};border-radius:8px;padding:6px 8px;font-size:12px;text-align:right}}",
         f".multi-menu{{display:none;position:absolute;z-index:200;top:calc(100% + 4px);right:0;left:0;background:#fff;border:1px solid {border};border-radius:10px;padding:8px;box-shadow:0 10px 24px rgba(15,23,42,.14);max-height:240px;overflow:auto}}",
         f".filter-field{{position:relative;z-index:1}}",
         f".panel{{overflow:visible}}",
         f".filters-grid,.charts-grid-2,.charts-grid{{overflow:visible}}",
         f"button.multi-trigger{{cursor:pointer;width:100%;display:flex;justify-content:space-between;align-items:center}}",
-        f"#kpi-grid{{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin:16px 0}}",
-        f".kpi{{background:{surface};border:1px solid {border};border-radius:14px;padding:16px 10px;text-align:center;min-height:100px}}",
-        f".kpi .label{{color:{text_dim};font-size:13px;margin-bottom:8px}}",
-        f".kpi .value{{font-size:24px;font-weight:700}}",
-        f"#filter-status{{text-align:center;color:{text_dim};font-size:12px;margin-top:10px}}",
-        ".charts-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(480px,1fr));gap:20px;margin:14px 0 24px}",
-        f".chart-card{{background:{surface};border:1px solid {border};border-radius:16px;padding:18px 16px 14px;min-width:0;overflow:visible;box-shadow:0 4px 14px rgba(15,23,42,.05)}}",
+        f"#kpi-grid{{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px;margin:10px 0}}",
+        f".kpi{{background:{surface};border:1px solid {border};border-radius:12px;padding:12px 8px;text-align:center;min-height:78px}}",
+        f".kpi .label{{color:{text_dim};font-size:12px;margin-bottom:4px}}",
+        f".kpi .value{{font-size:20px;font-weight:700}}",
+        f"#filter-status{{text-align:center;color:{text_dim};font-size:11px;margin-top:6px}}",
+        ".charts-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(420px,1fr));gap:14px;margin:10px 0 16px}",
+        f".chart-card{{background:{surface};border:1px solid {border};border-radius:14px;padding:12px 12px 10px;min-width:0;overflow:visible;box-shadow:0 4px 14px rgba(15,23,42,.05)}}",
         ".dash-page{display:none}",
         ".dash-page.active{display:block}",
         # ===== هيدر علوي بهوية إجادة (شبيه بالصورة المرجعية) =====
         f".app-topbar{{position:sticky;top:0;z-index:100;background:{surface};border-bottom:1px solid {border};box-shadow:0 2px 10px rgba(15,23,42,.06)}}",
-        ".topbar-inner{display:flex;align-items:center;justify-content:space-between;gap:16px;max-width:1400px;margin:0 auto;padding:10px 18px;flex-wrap:wrap}",
-        ".topbar-brand{display:flex;align-items:center;gap:12px;min-width:180px}",
-        ".topbar-logo{width:52px;height:52px;object-fit:contain;border-radius:10px;background:#fff}",
-        f".topbar-name{{font-size:18px;font-weight:700;color:{export_dark};line-height:1.2}}",
-        f".topbar-tag{{font-size:11px;color:{text_dim};letter-spacing:.3px}}",
-        ".topbar-nav{display:flex;align-items:center;gap:8px;flex-wrap:wrap;justify-content:center;flex:1}",
-        f".top-nav-btn{{display:inline-flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;min-width:88px;padding:8px 12px;background:transparent;color:{text};border:1px solid transparent;border-radius:12px;cursor:pointer;font-family:inherit;font-size:13px;transition:all .15s ease}}",
+        ".topbar-inner{display:flex;align-items:center;justify-content:space-between;gap:12px;max-width:100%;width:100%;margin:0 auto;padding:8px 16px;flex-wrap:nowrap;box-sizing:border-box}",
+        ".topbar-brand{display:flex;align-items:center;gap:10px;min-width:0;flex:0 0 auto}",
+        ".topbar-logo{width:44px;height:44px;object-fit:contain;border-radius:10px;background:#fff}",
+        f".topbar-name{{font-size:16px;font-weight:700;color:{export_dark};line-height:1.15}}",
+        f".topbar-tag{{font-size:10px;color:{text_dim};letter-spacing:.3px}}",
+        ".topbar-title-block{flex:1 1 auto;text-align:center;min-width:0;padding:0 8px}",
+        f".topbar-eyebrow{{font-size:10px;letter-spacing:1.2px;color:{export_accent};margin:0 0 1px;font-weight:600}}",
+        f".topbar-page-title{{font-size:17px;font-weight:700;color:{text};line-height:1.2;margin:0}}",
+        f".topbar-source{{font-size:11px;color:{text_dim};margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}}",
+        ".topbar-nav{display:flex;align-items:center;gap:6px;flex-wrap:nowrap;justify-content:flex-end;flex:0 0 auto}",
+        f".top-nav-btn{{display:inline-flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;min-width:72px;padding:6px 10px;background:transparent;color:{text};border:1px solid transparent;border-radius:10px;cursor:pointer;font-family:inherit;font-size:12px;transition:all .15s ease}}",
         f".top-nav-btn:hover{{background:#F0F6F6;border-color:{border}}}",
         f".top-nav-btn.active-page{{background:{export_dark};color:#fff;border-color:{export_dark};box-shadow:0 4px 12px rgba(47,111,115,.28)}}",
         ".top-nav-btn .nav-ico{display:flex;align-items:center;justify-content:center;line-height:1}",
@@ -3361,7 +3375,7 @@ def build_dashboard_html(df, class_col, sales_col, time_col, source_name="", fil
         ".topbar-filters{display:flex;align-items:center;gap:10px;flex-wrap:wrap;min-width:120px;justify-content:flex-end}",
         f".topbar-filters .tb-filter{{display:flex;flex-direction:column;gap:3px;font-size:11px;color:{text_dim}}}",
         f".topbar-filters select{{min-width:120px;padding:7px 10px;border:1px solid {border};border-radius:10px;background:#fff;color:{text};font-family:inherit;font-size:12px}}",
-        f".chart-card h3{{margin:6px 8px 4px;text-align:center;font-size:15px;color:{text}}}",
+        f".chart-card h3{{margin:2px 4px 2px;text-align:center;font-size:14px;color:{text}}}",
         f".table-wrap{{overflow-x:auto;border:1px solid {border};border-radius:14px;background:{surface}}}",
         f"table.data-table{{width:100%;border-collapse:separate;border-spacing:0;font-size:13px}}",
         f"table.data-table thead th{{position:sticky;top:0;background:{export_dark};color:#FFFFFF;font-weight:600;padding:12px 10px;text-align:center;border-bottom:2px solid {export_mid};white-space:nowrap}}",
@@ -3371,28 +3385,19 @@ def build_dashboard_html(df, class_col, sales_col, time_col, source_name="", fil
         f"table.data-table tbody tr:hover{{background:#E7F1F1}}",
         f"table.data-table tbody tr:last-child td{{border-bottom:none}}",
         f"footer{{color:{text_dim};font-size:12px;text-align:center;margin-top:22px}}",
-        f".btn-reset{{background:{export_dark};color:#fff;border:0;border-radius:10px;padding:10px 12px;font-size:13px;cursor:pointer}}",
+        f".btn-reset{{background:{export_dark};color:#fff;border:0;border-radius:8px;padding:7px 10px;font-size:12px;cursor:pointer;white-space:nowrap}}",
         f".btn-reset:hover{{background:{export_mid}}}",
-        "@media (max-width:900px){.charts-grid{grid-template-columns:1fr}.topbar-inner{justify-content:center}.topbar-filters{width:100%;justify-content:center}}",
+        "@media (max-width:900px){.charts-grid{grid-template-columns:1fr}.topbar-inner{flex-wrap:wrap;justify-content:center}.topbar-title-block{order:3;width:100%;padding:4px 0}.topbar-filters{width:100%;justify-content:center}}",
         "</style></head><body>",
         nav_html,
         "<main id='page-activity' class='dash-page active'>",
-        "<header class='hero hero-compact'>",
-        "<div class='hero-row'>",
-        f"<div class='hero-brand'><img class='hero-logo' src='data:image/png;base64,{_ejada_logo_b64}' alt='إجادة' />"
-        "<div class='hero-brand-text'><div class='hero-brand-name'>إجادة</div>"
-        "<div class='hero-brand-tag'>EJADA · لتحصيل الديون</div></div></div>",
-        "<div class='hero-title-block'>",
-        "<div class='eyebrow'>ACTIVITY DASHBOARD</div>",
-        "<h1>تحليل نشاط المحصلين</h1>",
-        f"<div class='meta'>مصدر البيانات: {escape(source_name or 'ملف النشاط')}</div>",
     ]
     if filter_hint:
-        parts.append(f"<div class='meta' style='margin-top:4px'>الفلاتر عند التصدير: {escape(filter_hint)}</div>")
-    parts.append("</div></div></header>")
+        parts.append(f"<div class='export-hint'>الفلاتر عند التصدير: {escape(filter_hint)}</div>")
 
-    # فلاتر
-    parts.append("<section class='panel'><h2 class='section-title'>🎚️ فلاتر التقرير</h2>")
+    # فلاتر — مدمجة ومضغوطة
+    parts.append("<section class='panel panel-filters'>")
+    parts.append("<div class='filters-head'><span class='filters-head-icon'>🎚️</span><span class='filters-head-title'>فلاتر التقرير</span></div>")
     parts.append("<div id='interactive-filters'>")
     # agents
     parts.append("<div class='filter-field' style='position:relative'><span>👤 المحصلون</span>")

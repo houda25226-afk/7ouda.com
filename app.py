@@ -1229,7 +1229,7 @@ div[data-testid="stVerticalBlock"] > div:first-child h2,
 .wq-page-header .wq-page-sub {{
   position: relative;
   z-index: 1;
-  text-align: right !important;
+  text-align: left !important;
 }}
 
 .wq-page-title {{
@@ -1246,56 +1246,59 @@ div[data-testid="stVerticalBlock"] > div:first-child h2,
   margin: 0 !important;
 }}
 .wq-page-header-row {{
-  padding: 14px 20px !important;
+  padding: 14px 22px !important;
 }}
 .wq-page-header-inner {{
   position: relative;
   z-index: 1;
   display: flex;
   align-items: center;
-  gap: 18px;
-  direction: rtl;
-  text-align: right;
+  justify-content: space-between;
+  gap: 20px;
+  direction: ltr;
+  text-align: left;
 }}
 .wq-page-logo-wrap {{
   flex: 0 0 auto;
-  width: 64px;
-  height: 64px;
-  border-radius: 14px;
+  width: 76px;
+  height: 76px;
+  border-radius: 16px;
   background: #fff;
-  border: 1px solid rgba(47,111,115,.18);
-  box-shadow: 0 4px 12px rgba(15,23,42,.06);
+  border: 1px solid rgba(47,111,115,.22);
+  box-shadow: 0 6px 16px rgba(15,23,42,.08);
   display: flex;
   align-items: center;
   justify-content: center;
   overflow: hidden;
+  order: 2;
 }}
 .wq-page-logo {{
-  width: 54px;
-  height: 54px;
+  width: 64px;
+  height: 64px;
   object-fit: contain;
 }}
 .wq-page-header-text {{
   flex: 1 1 auto;
   min-width: 0;
-  text-align: right !important;
+  text-align: left !important;
+  order: 1;
 }}
 .wq-page-header-row .wq-page-badge {{
   margin-bottom: 4px !important;
 }}
 .wq-page-header-row .wq-page-title {{
   margin: 0 0 4px !important;
-  font-size: 1.45rem !important;
-  line-height: 1.25 !important;
-  text-align: right !important;
+  font-size: 1.5rem !important;
+  line-height: 1.3 !important;
+  text-align: left !important;
 }}
 .wq-page-header-row .wq-page-sub {{
-  text-align: right !important;
+  text-align: left !important;
 }}
 .wq-page-header .wq-page-badge,
 .wq-page-header .wq-page-title,
 .wq-page-header .wq-page-sub {{
-  text-align: right !important;
+  text-align: left !important;
 }}
 
 section[data-testid="stSidebar"] {{
@@ -1461,7 +1464,7 @@ _inject_wataniya_identity_css()
 # Plotly receives the matching palette below; custom CSS applies Wataniya identity.
 
 def page_header(eyebrow: str, title: str, subtitle: str, centered: bool = False):
-    """هيدر مدمج بهوية إجادة — لوجو + عنوان في صف واحد لاستغلال المساحة."""
+    """هيدر مدمج بهوية إجادة — عنوان من الشمال ولوجو واضح على اليمين."""
     badge = f"<div class='wq-page-badge'>{eyebrow.upper()}</div>" if eyebrow else ""
     # لوجو الختم من السايدبار (نفس الـ base64 العام إن وُجد)
     logo_html = ""
@@ -1476,12 +1479,12 @@ def page_header(eyebrow: str, title: str, subtitle: str, centered: bool = False)
         f"""
 <div class="wq-page-header wq-page-header-row">
   <div class="wq-page-header-inner">
-    {logo_html}
     <div class="wq-page-header-text">
       {badge}
       <h1 class="wq-page-title">{title}</h1>
       <p class="wq-page-sub">{subtitle}</p>
     </div>
+    {logo_html}
   </div>
 </div>
 """,

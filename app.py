@@ -1241,12 +1241,12 @@ div[data-testid="stVerticalBlock"] > div:first-child h2,
 
 .wq-page-sub {{
   color: #5a6b5d !important;
-  font-size: 0.92rem !important;
-  opacity: 0.9;
+  font-size: 0.95rem !important;
+  opacity: 0.92;
   margin: 0 !important;
 }}
 .wq-page-header-row {{
-  padding: 14px 22px !important;
+  padding: 16px 24px !important;
 }}
 .wq-page-header-inner {{
   position: relative;
@@ -1254,18 +1254,18 @@ div[data-testid="stVerticalBlock"] > div:first-child h2,
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 20px;
+  gap: 24px;
   direction: ltr;
   text-align: left;
 }}
 .wq-page-logo-wrap {{
   flex: 0 0 auto;
-  width: 76px;
-  height: 76px;
-  border-radius: 16px;
+  width: 96px;
+  height: 96px;
+  border-radius: 20px;
   background: #fff;
-  border: 1px solid rgba(47,111,115,.22);
-  box-shadow: 0 6px 16px rgba(15,23,42,.08);
+  border: 2px solid rgba(47,111,115,.25);
+  box-shadow: 0 8px 22px rgba(15,23,42,.12);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1273,8 +1273,8 @@ div[data-testid="stVerticalBlock"] > div:first-child h2,
   order: 2;
 }}
 .wq-page-logo {{
-  width: 64px;
-  height: 64px;
+  width: 82px;
+  height: 82px;
   object-fit: contain;
 }}
 .wq-page-header-text {{
@@ -1284,11 +1284,11 @@ div[data-testid="stVerticalBlock"] > div:first-child h2,
   order: 1;
 }}
 .wq-page-header-row .wq-page-badge {{
-  margin-bottom: 4px !important;
+  margin-bottom: 6px !important;
 }}
 .wq-page-header-row .wq-page-title {{
-  margin: 0 0 4px !important;
-  font-size: 1.5rem !important;
+  margin: 0 0 6px !important;
+  font-size: 1.65rem !important;
   line-height: 1.3 !important;
   text-align: left !important;
 }}
@@ -1464,7 +1464,7 @@ _inject_wataniya_identity_css()
 # Plotly receives the matching palette below; custom CSS applies Wataniya identity.
 
 def page_header(eyebrow: str, title: str, subtitle: str, centered: bool = False):
-    """هيدر مدمج بهوية إجادة — عنوان من الشمال ولوجو واضح على اليمين."""
+    """هيدر مدمج بهوية إجادة — عنوان من الشمال ولوجو كبير واضح على اليمين."""
     badge = f"<div class='wq-page-badge'>{eyebrow.upper()}</div>" if eyebrow else ""
     # لوجو الختم من السايدبار (نفس الـ base64 العام إن وُجد)
     logo_html = ""

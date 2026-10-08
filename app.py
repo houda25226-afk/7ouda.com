@@ -1229,7 +1229,7 @@ div[data-testid="stVerticalBlock"] > div:first-child h2,
 .wq-page-header .wq-page-sub {{
   position: relative;
   z-index: 1;
-  text-align: right !important;
+  text-align: left !important;
 }}
 
 .wq-page-title {{
@@ -1241,61 +1241,64 @@ div[data-testid="stVerticalBlock"] > div:first-child h2,
 
 .wq-page-sub {{
   color: #5a6b5d !important;
-  font-size: 0.92rem !important;
-  opacity: 0.9;
+  font-size: 0.95rem !important;
+  opacity: 0.92;
   margin: 0 !important;
 }}
 .wq-page-header-row {{
-  padding: 14px 20px !important;
+  padding: 16px 24px !important;
 }}
 .wq-page-header-inner {{
   position: relative;
   z-index: 1;
   display: flex;
   align-items: center;
-  gap: 18px;
-  direction: rtl;
-  text-align: right;
+  justify-content: space-between;
+  gap: 24px;
+  direction: ltr;
+  text-align: left;
 }}
 .wq-page-logo-wrap {{
   flex: 0 0 auto;
-  width: 64px;
-  height: 64px;
-  border-radius: 14px;
+  width: 96px;
+  height: 96px;
+  border-radius: 20px;
   background: #fff;
-  border: 1px solid rgba(47,111,115,.18);
-  box-shadow: 0 4px 12px rgba(15,23,42,.06);
+  border: 2px solid rgba(47,111,115,.25);
+  box-shadow: 0 8px 22px rgba(15,23,42,.12);
   display: flex;
   align-items: center;
   justify-content: center;
   overflow: hidden;
+  order: 2;
 }}
 .wq-page-logo {{
-  width: 54px;
-  height: 54px;
+  width: 82px;
+  height: 82px;
   object-fit: contain;
 }}
 .wq-page-header-text {{
   flex: 1 1 auto;
   min-width: 0;
-  text-align: right !important;
+  text-align: left !important;
+  order: 1;
 }}
 .wq-page-header-row .wq-page-badge {{
-  margin-bottom: 4px !important;
+  margin-bottom: 6px !important;
 }}
 .wq-page-header-row .wq-page-title {{
-  margin: 0 0 4px !important;
-  font-size: 1.45rem !important;
-  line-height: 1.25 !important;
-  text-align: right !important;
+  margin: 0 0 6px !important;
+  font-size: 1.65rem !important;
+  line-height: 1.3 !important;
+  text-align: left !important;
 }}
 .wq-page-header-row .wq-page-sub {{
-  text-align: right !important;
+  text-align: left !important;
 }}
 .wq-page-header .wq-page-badge,
 .wq-page-header .wq-page-title,
 .wq-page-header .wq-page-sub {{
-  text-align: right !important;
+  text-align: left !important;
 }}
 
 section[data-testid="stSidebar"] {{
@@ -1461,7 +1464,7 @@ _inject_wataniya_identity_css()
 # Plotly receives the matching palette below; custom CSS applies Wataniya identity.
 
 def page_header(eyebrow: str, title: str, subtitle: str, centered: bool = False):
-    """هيدر مدمج بهوية إجادة — لوجو + عنوان في صف واحد لاستغلال المساحة."""
+    """هيدر مدمج بهوية إجادة — عنوان من الشمال ولوجو كبير واضح على اليمين."""
     badge = f"<div class='wq-page-badge'>{eyebrow.upper()}</div>" if eyebrow else ""
     # لوجو الختم من السايدبار (نفس الـ base64 العام إن وُجد)
     logo_html = ""
@@ -1476,12 +1479,12 @@ def page_header(eyebrow: str, title: str, subtitle: str, centered: bool = False)
         f"""
 <div class="wq-page-header wq-page-header-row">
   <div class="wq-page-header-inner">
-    {logo_html}
     <div class="wq-page-header-text">
       {badge}
       <h1 class="wq-page-title">{title}</h1>
       <p class="wq-page-sub">{subtitle}</p>
     </div>
+    {logo_html}
   </div>
 </div>
 """,
@@ -3287,8 +3290,6 @@ def build_dashboard_html(df, class_col, sales_col, time_col, source_name="", fil
         "var page=document.getElementById(id);if(page)page.classList.add('active');"
         "document.querySelectorAll('#dash-page-nav .top-nav-btn').forEach(function(b){b.classList.remove('active-page');});"
         "if(btn)btn.classList.add('active-page');"
-        "var titleMap={'page-activity':'داشبورد تحليل نشاط المحصلين','page-wallet':'داشبورد تحليل المحفظة','page-payments':'داشبورد تحليل السدادات','page-link':'داشبورد تحليل النشاط والسداد'};"
-        "var t=document.querySelector('.topbar-page-title');if(t&&titleMap[id])t.textContent=titleMap[id];"
         "setTimeout(function(){document.querySelectorAll('.js-plotly-plot').forEach(function(div){"
         "try{Plotly.Plots.resize(div);}catch(e){}});},80);"
         "}</script>"
@@ -3340,12 +3341,14 @@ def build_dashboard_html(df, class_col, sales_col, time_col, source_name="", fil
         ".filters-head{display:flex;align-items:center;justify-content:center;gap:6px;margin:0 0 8px}",
 
         f"#kpi-grid,.kpi-grid{{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin:0 0 12px}}",
-        f".kpi{{background:{surface};border:1px solid {border};border-radius:14px;padding:14px 12px 12px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;min-height:96px;text-align:center;box-shadow:0 2px 10px rgba(14,107,111,.05);transition:box-shadow .15s}}",
+        f".kpi{{background:{surface};border:1px solid {border};border-radius:14px;padding:12px 12px 10px;display:flex;align-items:flex-start;gap:10px;min-height:84px;box-shadow:0 2px 10px rgba(14,107,111,.05);transition:box-shadow .15s}}",
         f".kpi:hover{{box-shadow:0 6px 16px rgba(14,107,111,.1)}}",
-        f".kpi-icon{{width:40px;height:40px;border-radius:50%;border:1.5px solid;display:flex;align-items:center;justify-content:center;font-size:16px;flex:0 0 auto;margin:0 auto 2px}}",
-        ".kpi-body{flex:0 1 auto;min-width:0;width:100%;text-align:center}",
-        f".kpi .label{{color:{text_dim};font-size:11px;margin-bottom:4px;font-weight:600;text-align:center}}",
-        f".kpi .value{{font-size:22px;font-weight:800;line-height:1.2;color:{text};text-align:center}}",
+        ".kpi{flex-direction:column;align-items:center;text-align:center}",
+        ".kpi:has(.kpi-icon){flex-direction:row;align-items:flex-start;text-align:right}",
+        f".kpi-icon{{width:36px;height:36px;border-radius:50%;border:1.5px solid;display:flex;align-items:center;justify-content:center;font-size:15px;flex:0 0 auto}}",
+        ".kpi-body{flex:1 1 auto;min-width:0;text-align:right}",
+        f".kpi .label{{color:{text_dim};font-size:11px;margin-bottom:4px;font-weight:600}}",
+        f".kpi .value{{font-size:20px;font-weight:800;line-height:1.15;color:{text}}}",
 
         ".charts-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(400px,1fr));gap:12px;margin:0 0 12px}",
         ".charts-grid-2{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin:0 0 12px;align-items:stretch}",
@@ -6675,6 +6678,11 @@ def _build_wallet_page_html(wallet_df):
 
     parts = []
     parts.append("<div id='page-wallet' class='dash-page'>")
+    parts.append("<header class='hero'>")
+    parts.append("<div class='eyebrow'>WALLET DASHBOARD</div>")
+    parts.append("<h1>تحليل المحفظة الكاملة</h1>")
+    parts.append("<div class='meta'>سلايسرز تفاعلية · كروت وشارتات</div>")
+    parts.append("</header>")
 
     # Filters
     parts.append("<section class='filter-bar'>")
@@ -6777,7 +6785,8 @@ def _build_wallet_page_html(wallet_df):
 
 def _build_payments_page_html(payments_df):
     figs, _work, _c, _a = _build_payments_analysis(payments_df)
-    parts = ["<div id='page-payments' class='dash-page'>"]
+    parts = ["<div id='page-payments' class='dash-page'>",
+             "<header class='hero'><div class='eyebrow'>PAYMENTS</div><h1>تحليل السداد الكامل</h1></header>"]
     parts.append(_fig_html_card(figs["kpi"], "payments", 0))
     if "trend" in figs:
         parts.append("<div class='charts-grid'>" + _fig_html_card(figs["trend"], "payments", 1) + "</div>")
@@ -6790,7 +6799,8 @@ def _build_payments_page_html(payments_df):
 
 
 def _build_link_page_html(activity_df, sales_col, class_col, payments_df):
-    parts = ["<div id='page-link' class='dash-page'>"]
+    parts = ["<div id='page-link' class='dash-page'>",
+             "<header class='hero'><div class='eyebrow'>ACTIVITY × PAYMENTS</div><h1>ربط نشاط المحصلين بالسداد</h1></header>"]
     result = _build_activity_payments_link(activity_df, sales_col, class_col, payments_df)
     if result is None:
         parts.append("<p style='text-align:center'>تعذّر الربط — تأكد إن عمود المحصل موجود في ملفي النشاط والسداد.</p></div>")

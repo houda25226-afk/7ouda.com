@@ -7437,6 +7437,7 @@ def _build_payments_page_html(payments_df):
 
 
 def _build_link_page_html(activity_df, sales_col, class_col, payments_df):
+    from html import escape
     parts = ["<div id='page-link' class='dash-page'>"]
     result = _build_activity_payments_link(activity_df, sales_col, class_col, payments_df)
     if result is None:
@@ -7445,32 +7446,70 @@ def _build_link_page_html(activity_df, sales_col, class_col, payments_df):
     figs, merged = result
     parts.append(_fig_html_card(figs["kpi"], "link", 0))
     parts.append("<div class='charts-grid'>")
-    parts.append(_fig_html_card(figs["compare_bar"], "link", 1))
-    parts.append(_fig_html_card(figs["scatter"], "link", 2))
+    if "compare_bar" in figs:
+        parts.append(_fig_html_card(figs["compare_bar"], "link", 1))
+    if "effectiveness" in figs:
+        parts.append(_fig_html_card(figs["effectiveness"], "link", 2))
+    elif "conversion" in figs:
+        parts.append(_fig_html_card(figs["conversion"], "link", 2))
     parts.append("</div>")
-    columns = ["المحصّل", "عدد_المكالمات", "عدد_الناجحة", "نسبة_النجاح", "عدد_السدادات", "إجمالي_التحصيل", "الفعالية"]
-    columns = [c for c in columns if c in merged.columns]
-    parts.append("<section class='panel'><h2 class='section-title'>📋 جدول النشاط مقابل السداد</h2>"
-                  "<div class='table-wrap'><table class='data-table'><thead><tr>")
-    for column in columns:
-        parts.append(f"<th>{column}</th>")
-    parts.append("</tr></thead><tbody>")
-    for _, row in merged.sort_values("إجمالي_التحصيل", ascending=False).iterrows():
-        parts.append("<tr>")
+    parts.append("<div class='charts-grid'>")
+    if "conversion" in figs and "effectiveness" in figs:
+        parts.append(_fig_html_card(figs["conversion"], "link", 3))
+    if "claim_daily" in figs:
+        parts.append(_fig_html_card(figs["claim_daily"], "link", 4))
+    parts.append("</div>")
+
+    # جدول تتبع المطالبات إن وُجد، وإلا ملخص المحصلين
+    claim_timeline = figs.get("_claim_timeline")
+    if claim_timeline is not None and not claim_timeline.empty:
+        display = claim_timeline.copy()
+        # اعرض المطالبات المحصّلة أولاً، بحد أقصى 500 صف للـ HTML
+        if "حصّل" in display.columns:
+            paid = display[display["حصّل"] == "✅"]
+            if not paid.empty:
+                display = paid
+        display = display.head(500)
+        columns = [c for c in display.columns.tolist()]
+        parts.append(
+            "<section class='panel'><h2 class='section-title'>📋 تتبع إفادات المطالبات حتى التحصيل (يومي)</h2>"
+            "<div class='meta' style='text-align:center;margin-bottom:8px'>كل صف = إفادة لمطالبة في يوم معيّن</div>"
+            "<div class='table-wrap'><table class='data-table'><thead><tr>"
+        )
         for column in columns:
-            value = row[column]
-            if isinstance(value, float):
-                value = f"{value:,.1f}"
-            parts.append(f"<td>{value}</td>")
-        parts.append("</tr>")
-    parts.append("</tbody></table></div></section></div>")
+            parts.append(f"<th>{escape(str(column))}</th>")
+        parts.append("</tr></thead><tbody>")
+        for _, row in display.iterrows():
+            parts.append("<tr>")
+            for column in columns:
+                value = row[column]
+                if isinstance(value, float):
+                    value = f"{value:,.1f}"
+                parts.append(f"<td>{escape(str(value))}</td>")
+            parts.append("</tr>")
+        parts.append("</tbody></table></div></section>")
+    else:
+        columns = ["المحصّل", "عدد_المكالمات", "عدد_الناجحة", "نسبة_النجاح", "عدد_السدادات", "إجمالي_التحصيل", "الفعالية", "تحويل_النجاح_لسداد"]
+        columns = [c for c in columns if c in merged.columns]
+        parts.append("<section class='panel'><h2 class='section-title'>📋 ملخص النشاط مقابل السداد</h2>"
+                      "<div class='table-wrap'><table class='data-table'><thead><tr>")
+        for column in columns:
+            parts.append(f"<th>{escape(str(column))}</th>")
+        parts.append("</tr></thead><tbody>")
+        sort_col = "إجمالي_التحصيل" if "إجمالي_التحصيل" in merged.columns else columns[0]
+        for _, row in merged.sort_values(sort_col, ascending=False).iterrows():
+            parts.append("<tr>")
+            for column in columns:
+                value = row[column]
+                if isinstance(value, float):
+                    value = f"{value:,.1f}"
+                parts.append(f"<td>{escape(str(value))}</td>")
+            parts.append("</tr>")
+        parts.append("</tbody></table></div></section>")
+
+    parts.append("</div>")
     return "".join(parts)
 
-
-# ==========================================================
-# ==========================================================
-# تويب الجدولة المتعثرة
-# ==========================================================
 
 def _build_last_payment_map(payments_df, debitor_col, date_col):
     """يرجع dict: Debitor -> أحدث تاريخ سداد (date)."""

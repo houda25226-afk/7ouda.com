@@ -10977,6 +10977,615 @@ def _render_distribution_results(result):
             )
 
 
+# ==========================================================
+# تويب التدوير — تدوير العملاء بين المحصلين
+# ==========================================================
+# الفكرة: كل عميل في الحالات اللي بتختارها يتنقل لمحصل غير كل المحصلين اللي كانوا
+# معاه قبل كده، والعميل كله (بكل حساباته) يروح لمحصل واحد بس، مع موازنة عدد
+# العملاء وعدد الحسابات وإجمالي المبالغ بين المحصلين.
+import numpy as np
+
+ROTATION_RESULT_KEY = "rotation_result"
+ROTATION_UPLOAD_KEY = "rotation_upload"
+ROTATION_CACHE_SCOPE = "rotation_upload"
+ROTATION_PREV_COL = "المحصل_السابق"
+ROTATION_FLAG_COL = "تم_التدوير"
+ROTATION_MAX_PASSES = 6
+ROTATION_BLANK_VALUES = {"", "nan", "none", "null"}
+
+
+def _rotation_client_table(work, participants, state_used, selected_states, eligibility_mode):
+    """جدول على مستوى العميل + تحديد مين مؤهل للتدوير ومين مستبعد وليه."""
+    key = work["_client"]
+    in_scope = work["_sales"].isin(participants)
+    if state_used:
+        sel_row = work["_state"].isin(selected_states)
+    else:
+        sel_row = pd.Series(True, index=work.index)
+
+    g = work.groupby("_client", sort=False)
+    clients = pd.DataFrame({
+        "accounts": g["_account"].nunique(),
+        "rows": g.size(),
+        "amount": g["_amt"].sum(),
+        "all_in_scope": in_scope.groupby(key, sort=False).all(),
+        "any_selected": sel_row.groupby(key, sort=False).any(),
+        "all_selected": sel_row.groupby(key, sort=False).all(),
+    })
+    pairs = work[["_client", "_sales"]].drop_duplicates()
+    clients["prev"] = pairs.groupby("_client", sort=False)["_sales"].apply(
+        lambda s: tuple(sorted(set(s)))
+    )
+
+    selected_ok = clients["all_selected"] if eligibility_mode == "all" else clients["any_selected"]
+    clients["eligible"] = clients["all_in_scope"] & selected_ok
+    clients["mixed_states"] = clients["any_selected"] & ~clients["all_selected"]
+
+    reason = pd.Series("", index=clients.index, dtype=object)
+    out_of_scope = clients["any_selected"] & ~clients["all_in_scope"]
+    mixed_skipped = clients["any_selected"] & clients["all_in_scope"] & ~selected_ok
+    reason[out_of_scope] = "عنده حسابات عند محصل خارج التدوير"
+    reason[mixed_skipped] = "حالات مختلطة (بعض حساباته خارج الحالات المختارة)"
+    clients["skip_reason"] = reason
+    return clients
+
+
+def _rotation_assign(eligible, collectors, loads0):
+    """يوزّع العملاء المؤهلين على المحصلين.
+
+    - ممنوع محصل ياخد عميل كان عنده قبل كده.
+    - كل عميل بيروح لمحصل واحد (العميل وحدة واحدة).
+    - الهدف: أقل انحراف عن المتوسط في (عدد العملاء، عدد الحسابات، إجمالي المبلغ).
+    يرجّع (assign, loads) — assign[i] = رقم المحصل أو -1 لو مفيش محصل مسموح.
+    """
+    k = len(collectors)
+    n = len(eligible)
+    idx = {c: i for i, c in enumerate(collectors)}
+
+    V = np.column_stack([
+        np.ones(n),
+        eligible["accounts"].to_numpy(dtype=float),
+        eligible["amount"].to_numpy(dtype=float),
+    ])
+    loads = np.array(loads0, dtype=float).reshape(k, 3).copy()
+    target = (V.sum(axis=0) + loads.sum(axis=0)) / k
+    scale = np.where(target > 0, target, 1.0)
+
+    forbidden = []
+    for prev in eligible["prev"]:
+        forbidden.append([idx[p] for p in prev if p in idx])
+
+    def cost(L):
+        return (((L - target) / scale) ** 2).sum(axis=-1)
+
+    # الأكبر مبلغًا الأول (ثم الأكثر حسابات) — أفضل لتوازن المبالغ
+    order = np.lexsort((-V[:, 1], -V[:, 2]))
+    assign = np.full(n, -1, dtype=int)
+    cur = cost(loads)
+
+    for i in order:
+        v = V[i]
+        delta = cost(loads + v) - cur
+        if forbidden[i]:
+            delta[forbidden[i]] = np.inf
+        j = int(np.argmin(delta))
+        if not np.isfinite(delta[j]):
+            continue
+        assign[i] = j
+        loads[j] += v
+        cur[j] = cost(loads[j])
+
+    # تحسين محلي: نقل عميل لمحصل تاني لو ده بيقلل الانحراف الكلي
+    for _ in range(ROTATION_MAX_PASSES):
+        moved = 0
+        for i in order:
+            s = assign[i]
+            if s < 0:
+                continue
+            v = V[i]
+            remove_delta = cost(loads[s] - v) - cur[s]
+            total = remove_delta + (cost(loads + v) - cur)
+            total[s] = np.inf
+            if forbidden[i]:
+                total[forbidden[i]] = np.inf
+            j = int(np.argmin(total))
+            if total[j] < -1e-9:
+                loads[s] -= v
+                loads[j] += v
+                cur[s] = cost(loads[s])
+                cur[j] = cost(loads[j])
+                assign[i] = j
+                moved += 1
+        if not moved:
+            break
+
+    return assign, loads
+
+
+def _rotation_excel_bytes(sheets):
+    buf = io.BytesIO()
+    with pd.ExcelWriter(buf, engine="openpyxl") as writer:
+        for name, frame in sheets.items():
+            if frame is None:
+                continue
+            if getattr(frame, "empty", False):
+                frame = pd.DataFrame({"ملاحظة": ["لا توجد بيانات"]})
+            frame.to_excel(writer, index=False, sheet_name=str(name)[:31])
+    return buf.getvalue()
+
+
+def _rotation_prepare_work(df, sales_col, client_col, account_col, amount_cols, state_col):
+    """يجهّز جدول العمل (محصل/عميل/حساب/مبلغ/حالة) ويعالج العملاء الفاضيين."""
+    _, work = _agg_portfolio_metrics(df, sales_col, client_col, account_col, amount_cols, state_col)
+    blank = work["_client"].str.strip().str.lower().isin(ROTATION_BLANK_VALUES)
+    blank_count = int(blank.sum())
+    if blank_count:
+        # صف من غير هوية عميل = عميل لوحده (عشان ما يتجمعوش مع بعض بالغلط)
+        work.loc[blank, "_client"] = "ROW_" + work.index[blank].astype(str)
+    return work, blank_count
+
+
+def _run_rotation(
+    df, sales_col, client_col, account_col, amount_cols, state_col,
+    participants, selected_states, eligibility_mode, balance_mode, filename,
+):
+    participants = list(participants)
+    work, blank_count = _rotation_prepare_work(
+        df, sales_col, client_col, account_col, amount_cols, state_col
+    )
+    state_used = bool(state_col)
+    clients = _rotation_client_table(work, participants, state_used, selected_states, eligibility_mode)
+    eligible = clients[clients["eligible"]].copy()
+
+    result = {
+        "filename": filename,
+        "sales_col": sales_col,
+        "participants": participants,
+        "selected_states": list(selected_states) if state_used else [],
+        "eligibility_mode": eligibility_mode,
+        "balance_mode": balance_mode,
+        "blank_clients": blank_count,
+        "clients_in_selection": int(clients["any_selected"].sum()),
+        "mixed_clients": int((clients["eligible"] & clients["mixed_states"]).sum()),
+        "empty": eligible.empty,
+    }
+    if eligible.empty:
+        return result
+
+    k = len(participants)
+    pidx = {c: i for i, c in enumerate(participants)}
+
+    # الحمل الأولي: في وضع "مساواة المحفظة النهائية" بنحسب اللي فضل عند كل محصل
+    loads0 = np.zeros((k, 3))
+    kept = work[~work["_client"].isin(eligible.index) & work["_sales"].isin(participants)]
+    kept_stats = pd.DataFrame({
+        "clients": kept.groupby("_sales")["_client"].nunique(),
+        "accounts": kept.groupby("_sales")["_account"].nunique(),
+        "amount": kept.groupby("_sales")["_amt"].sum(),
+    }).reindex(participants).fillna(0)
+    if balance_mode == "final":
+        loads0 = kept_stats[["clients", "accounts", "amount"]].to_numpy(dtype=float)
+
+    assign, _ = _rotation_assign(eligible, participants, loads0)
+    eligible["new_collector"] = [participants[a] if a >= 0 else None for a in assign]
+    assigned = eligible[eligible["new_collector"].notna()].copy()
+    unassigned = eligible[eligible["new_collector"].isna()].copy()
+    assign_map = assigned["new_collector"].to_dict()
+
+    # ---- تحقق: محدش استلم عميل كان عنده / كل عميل عند محصل واحد ----
+    violations = int(sum(1 for c, row in assigned.iterrows() if row["new_collector"] in row["prev"]))
+    new_series = work["_client"].map(assign_map)
+    rotated_mask = new_series.notna()
+    per_client_collectors = new_series[rotated_mask].groupby(work.loc[rotated_mask, "_client"]).nunique()
+    not_single = int((per_client_collectors > 1).sum())
+    pre_split = int(((clients["prev"].apply(len) > 1) & ~clients.index.isin(assigned.index)).sum())
+
+    # ---- المحفظة بعد التدوير (صف صف) ----
+    out = df.copy()
+    out[ROTATION_PREV_COL] = out[sales_col]
+    out[ROTATION_FLAG_COL] = "لا"
+    rot_idx = new_series.index[rotated_mask]
+    out.loc[rot_idx, sales_col] = new_series[rotated_mask].values
+    out.loc[rot_idx, ROTATION_FLAG_COL] = "نعم"
+    rotated_rows = out.loc[rot_idx].copy()
+
+    # ---- ملخص كل محصل ----
+    rot_work = work[rotated_mask]
+    given = pd.DataFrame({
+        "clients": rot_work.groupby("_sales")["_client"].nunique(),
+        "accounts": rot_work.groupby("_sales")["_account"].nunique(),
+        "amount": rot_work.groupby("_sales")["_amt"].sum(),
+    }).reindex(participants).fillna(0)
+    recv = pd.DataFrame({
+        "clients": assigned.groupby("new_collector").size(),
+        "accounts": assigned.groupby("new_collector")["accounts"].sum(),
+        "amount": assigned.groupby("new_collector")["amount"].sum(),
+    }).reindex(participants).fillna(0)
+    final = kept_stats + recv
+
+    summary = pd.DataFrame({
+        "المحصّل": participants,
+        "عملاء خرجوا": given["clients"].astype(int).values,
+        "حسابات خرجت": given["accounts"].astype(int).values,
+        "مبلغ خرج": given["amount"].round(2).values,
+        "عملاء استلم": recv["clients"].astype(int).values,
+        "حسابات استلم": recv["accounts"].astype(int).values,
+        "مبلغ استلم": recv["amount"].round(2).values,
+        "عملاء بعد التدوير": final["clients"].astype(int).values,
+        "حسابات بعد التدوير": final["accounts"].astype(int).values,
+        "مبلغ بعد التدوير": final["amount"].round(2).values,
+    })
+
+    basis = final if balance_mode == "final" else recv
+    tgt = basis.sum() / k
+    balance_rows = []
+    for name in participants:
+        row = {"المحصّل": name}
+        for label, col in (("عملاء", "clients"), ("حسابات", "accounts"), ("مبلغ", "amount")):
+            actual = float(basis.loc[name, col])
+            target_v = float(tgt[col])
+            row[f"مستهدف {label}"] = round(target_v, 2)
+            row[f"فعلي {label}"] = round(actual, 2)
+            row[f"فرق {label} %"] = round((actual - target_v) / target_v * 100, 1) if target_v > 0 else 0.0
+        balance_rows.append(row)
+    balance = pd.DataFrame(balance_rows)
+
+    # ---- تفاصيل العملاء ----
+    detail = pd.DataFrame({
+        "العميل": assigned.index,
+        "المحصل السابق": assigned["prev"].apply(lambda t: " | ".join(t)).values,
+        "المحصل الجديد": assigned["new_collector"].values,
+        "عدد الحسابات": assigned["accounts"].astype(int).values,
+        "عدد الصفوف": assigned["rows"].astype(int).values,
+        "المبلغ": assigned["amount"].round(2).values,
+    }).sort_values(["المحصل الجديد", "المبلغ"], ascending=[True, False]).reset_index(drop=True)
+
+    unassigned_df = pd.DataFrame({
+        "العميل": unassigned.index,
+        "المحصل السابق": unassigned["prev"].apply(lambda t: " | ".join(t)).values,
+        "عدد الحسابات": unassigned["accounts"].astype(int).values,
+        "المبلغ": unassigned["amount"].round(2).values,
+        "السبب": "مفيش محصل مسموح (كل المحصلين المشاركين كانوا معاه قبل كده)",
+    })
+
+    skipped = clients[(clients["skip_reason"] != "")]
+    skipped_df = pd.DataFrame({
+        "العميل": skipped.index,
+        "المحصل الحالي": skipped["prev"].apply(lambda t: " | ".join(t)).values,
+        "عدد الحسابات": skipped["accounts"].astype(int).values,
+        "المبلغ": skipped["amount"].round(2).values,
+        "السبب": skipped["skip_reason"].values,
+    })
+
+    totals = {
+        "clients": int(len(assigned)),
+        "accounts": int(assigned["accounts"].sum()),
+        "rows": int(assigned["rows"].sum()),
+        "amount": float(assigned["amount"].sum()),
+    }
+    sheets_full = {
+        "ملخص_التدوير": summary,
+        "الموازنة": balance,
+        "إسناد_العملاء": detail,
+        "المطالبات_المدوّرة_فقط": rotated_rows,
+        "عملاء_مستبعدون": skipped_df,
+        "تعذر_تدويرهم": unassigned_df,
+        "المحفظة_بعد_التدوير": out,
+    }
+    sheets_report = {
+        "ملخص_التدوير": summary,
+        "الموازنة": balance,
+        "إسناد_العملاء": detail,
+        "المطالبات_المدوّرة_فقط": rotated_rows,
+    }
+    result.update({
+        "summary": summary,
+        "balance": balance,
+        "detail": detail,
+        "unassigned": unassigned_df,
+        "skipped": skipped_df,
+        "totals": totals,
+        "checks": {
+            "violations": violations,
+            "not_single": not_single,
+            "pre_split": pre_split,
+        },
+        "excel_full": _rotation_excel_bytes(sheets_full),
+        "excel_report": _rotation_excel_bytes(sheets_report),
+    })
+    return result
+
+
+def _render_rotation_results(result):
+    st.markdown("---")
+    st.subheader("📊 نتيجة التدوير")
+    mode_txt = (
+        "مساواة المدوَّر فقط" if result.get("balance_mode") == "pool" else "مساواة المحفظة النهائية"
+    )
+    states_txt = "، ".join(result.get("selected_states") or []) or "كل الحالات"
+    st.caption(
+        f"الملف: **{result.get('filename', '—')}** · الحالات: **{states_txt}** · "
+        f"الموازنة: **{mode_txt}** · عدد المحصلين المشاركين: **{len(result.get('participants', []))}**"
+    )
+
+    if result.get("blank_clients"):
+        st.info(
+            f"ℹ️ في {result['blank_clients']:,} صف من غير هوية عميل — اتعاملوا كل صف كعميل لوحده."
+        )
+
+    if result.get("empty"):
+        st.warning(
+            "مفيش عملاء مؤهلين للتدوير بالإعدادات دي. جرّب تختار حالات تانية أو تغيّر شرط اختيار العميل."
+        )
+        return
+
+    totals = result["totals"]
+    checks = result["checks"]
+    k1, k2, k3, k4 = st.columns(4)
+    k1.metric("🧍 عملاء اتدوّروا", f"{totals['clients']:,}")
+    k2.metric("🏦 حسابات", f"{totals['accounts']:,}")
+    k3.metric("📋 مطالبات (صفوف)", f"{totals['rows']:,}")
+    k4.metric("💰 إجمالي المبالغ", f"{totals['amount']:,.0f}")
+
+    st.markdown("#### ✅ فحوصات الصحة")
+    if checks["violations"] == 0:
+        st.success("✅ ولا محصل استلم عميل كان عنده قبل كده.")
+    else:
+        st.error(f"❌ في {checks['violations']:,} عميل راجع لمحصل كان معاه قبل كده!")
+    if checks["not_single"] == 0:
+        st.success("✅ كل عميل اتدوّر راح لمحصل واحد بس (بكل حساباته).")
+    else:
+        st.error(f"❌ في {checks['not_single']:,} عميل اتقسم على أكتر من محصل!")
+    if checks["pre_split"]:
+        st.warning(
+            f"⚠️ في {checks['pre_split']:,} عميل (من غير اللي اتدوّروا) كان أصلاً عند أكتر من محصل في الملف — "
+            "الأداة ما لمستهمش."
+        )
+    if result.get("mixed_clients"):
+        st.info(
+            f"ℹ️ {result['mixed_clients']:,} عميل عنده حالات مختلطة اتنقلوا بكل حساباتهم عشان يفضلوا عند محصل واحد."
+        )
+
+    summary = result["summary"]
+    balance = result["balance"]
+    st.markdown("#### 📋 ملخص كل محصل")
+    st.dataframe(summary, use_container_width=True, hide_index=True)
+    st.markdown("#### ⚖️ الموازنة (المستهدف مقابل الفعلي)")
+    st.dataframe(balance, use_container_width=True, hide_index=True)
+
+    if len(summary) > 1:
+        basis_cols = (
+            ["عملاء بعد التدوير", "حسابات بعد التدوير"]
+            if result.get("balance_mode") == "final"
+            else ["عملاء استلم", "حسابات استلم"]
+        )
+        amount_col = "مبلغ بعد التدوير" if result.get("balance_mode") == "final" else "مبلغ استلم"
+        fig = px.bar(
+            summary, x="المحصّل", y=basis_cols, barmode="group",
+            template=PLOTLY_TEMPLATE, color_discrete_sequence=OPS_SCALE,
+        )
+        _apply_ops_chart_style(fig, "العملاء والحسابات لكل محصل بعد التدوير", height=380, xaxis_title="", yaxis_title="العدد")
+        st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG, key="rot_cli_chart")
+        fig2 = px.bar(
+            summary, x="المحصّل", y=amount_col,
+            template=PLOTLY_TEMPLATE, color=amount_col, color_continuous_scale=OPS_SCALE,
+        )
+        _apply_ops_chart_style(fig2, "المبالغ لكل محصل بعد التدوير", height=380, xaxis_title="", yaxis_title="المبلغ")
+        st.plotly_chart(fig2, use_container_width=True, config=PLOTLY_CONFIG, key="rot_amt_chart")
+
+    with st.expander("📋 إسناد كل عميل (كان عند مين → راح لمين)", expanded=False):
+        st.dataframe(result["detail"], use_container_width=True, hide_index=True)
+    if not result["skipped"].empty:
+        with st.expander(f"⏭️ عملاء مستبعدين ({len(result['skipped']):,})", expanded=False):
+            st.dataframe(result["skipped"], use_container_width=True, hide_index=True)
+    if not result["unassigned"].empty:
+        st.warning(f"⚠️ {len(result['unassigned']):,} عميل تعذر تدويرهم وفضلوا عند محصلهم.")
+        with st.expander("عملاء تعذر تدويرهم", expanded=False):
+            st.dataframe(result["unassigned"], use_container_width=True, hide_index=True)
+
+    stamp = datetime.now().strftime("%Y%m%d")
+    d1, d2 = st.columns(2)
+    with d1:
+        st.download_button(
+            "📥 تحميل المحفظة الكاملة بعد التدوير",
+            data=result["excel_full"],
+            file_name=f"محفظة_بعد_التدوير_{stamp}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            use_container_width=True,
+            type="primary",
+            key="rot_dl_full",
+        )
+    with d2:
+        st.download_button(
+            "📥 تحميل تقرير التدوير فقط",
+            data=result["excel_report"],
+            file_name=f"تقرير_التدوير_{stamp}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            use_container_width=True,
+            key="rot_dl_report",
+        )
+
+
+def page_rotation():
+    """تدوير العملاء بين المحصلين: كل محصل ياخد عملاء ما كانوش عنده، وكل عميل عند محصل واحد."""
+    page_header(
+        "ROTATION",
+        "🔄 التدوير",
+        "تدوير العملاء على المحصلين: كل محصل ياخد عملاء عمرهم ما كانوا عنده، وكل عميل عند محصل واحد بس، "
+        "مع مساواة العملاء والحسابات والمبالغ",
+    )
+
+    st.subheader("1️⃣ رفع المحفظة")
+    uploaded = st.file_uploader(
+        "📂 ارفع ملف المحفظة (فيها كل المحصلين والعملاء) — Excel أو CSV",
+        type=["xlsx", "xls", "csv"],
+        key=ROTATION_UPLOAD_KEY,
+        on_change=sync_file_cache,
+        args=(ROTATION_UPLOAD_KEY, ROTATION_CACHE_SCOPE, [ROTATION_RESULT_KEY]),
+    )
+
+    if uploaded is None:
+        cached = st.session_state.get(ROTATION_RESULT_KEY)
+        if cached:
+            st.success(f"✅ نتيجة تدوير محفوظة من: {cached.get('filename', '—')}")
+            _render_rotation_results(cached)
+        else:
+            st.info("📂 ارفع ملف المحفظة لبدء التدوير.")
+        return
+
+    try:
+        raw_df = read_uploaded_dataframe(uploaded)
+    except Exception as e:
+        st.error(f"تعذر قراءة الملف: {e}")
+        return
+
+    # حذف أول صف بعد العناوين لو موجود (نمط باقي التطبيق)
+    df = raw_df.iloc[1:].copy() if len(raw_df) > 1 else raw_df.copy()
+    df = df.reset_index(drop=True)
+    col_options = list(df.columns)
+
+    det_sales = find_column(df, SALES_PERSON_CANDIDATES)
+    det_client = find_column(df, WALLET_CUSTOMER_ID_CANDIDATES) or find_column(df, ID_CANDIDATES)
+    det_account = find_column(df, ACCOUNT_NUMBER_CANDIDATES) or det_client
+    det_net = find_column(df, PROMISE_NET_AMOUNT_CANDIDATES)
+    det_state = find_column(df, PROMISE_SUB_STATE_CANDIDATES)
+    numeric_cols = _distribution_find_numeric_cols(df)
+
+    st.markdown("##### 🔧 تحديد الأعمدة")
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        sales_col = st.selectbox(
+            "👤 عمود المحصّل", options=col_options,
+            index=col_options.index(det_sales) if det_sales in col_options else 0,
+            key="rot_sales_col",
+        )
+    with c2:
+        client_col = st.selectbox(
+            "🧍 عمود العميل / الهوية", options=col_options,
+            index=col_options.index(det_client) if det_client in col_options else 0,
+            key="rot_client_col",
+            help="العمود اللي بيحدد العميل — كل صفوف نفس القيمة بتتنقل مع بعض لمحصل واحد",
+        )
+    with c3:
+        account_col = st.selectbox(
+            "🏦 عمود الحساب", options=col_options,
+            index=col_options.index(det_account) if det_account in col_options else 0,
+            key="rot_account_col",
+        )
+    c4, c5 = st.columns(2)
+    with c4:
+        amount_opts = list(numeric_cols) if numeric_cols else list(col_options)
+        if det_net and det_net not in amount_opts:
+            amount_opts = [det_net] + amount_opts
+        amount_cols = st.multiselect(
+            "💰 أعمدة المبالغ", options=amount_opts,
+            default=[det_net] if det_net and det_net in amount_opts else (amount_opts[:1] if amount_opts else []),
+            key="rot_amount_cols",
+        )
+    with c5:
+        state_opts = ["— بدون عمود حالات (تدوير كل العملاء) —"] + col_options
+        state_choice = st.selectbox(
+            "🏷️ عمود الحالات (Sub State)", options=state_opts,
+            index=state_opts.index(det_state) if det_state in state_opts else 0,
+            key="rot_state_col",
+        )
+        state_col = None if str(state_choice).startswith("—") else state_choice
+
+    if sales_col not in df.columns or client_col not in df.columns:
+        st.error("تعذر استخدام الأعمدة المختارة.")
+        return
+
+    sales_vals = df[sales_col].astype(str).str.strip()
+    all_collectors = sorted({v for v in sales_vals.tolist() if v.lower() not in ROTATION_BLANK_VALUES})
+    if len(all_collectors) < 2:
+        st.warning("الملف فيه محصل واحد أو أقل — التدوير محتاج محصلين اتنين على الأقل.")
+        return
+
+    st.markdown("---")
+    st.subheader("2️⃣ اختيار المحصلين والحالات")
+    system_accounts = {s.lower() for s in PROMISE_EXCLUDED_SALES}
+    default_participants = [c for c in all_collectors if c.lower() not in system_accounts]
+    participants = st.multiselect(
+        "👥 المحصلين المشاركين في التدوير",
+        options=all_collectors,
+        default=default_participants,
+        key="rot_participants",
+        help="العملاء دول بس هيتدوّروا بينهم. حسابات النظام (Archive / Closed / Hold / قانوني) مستبعدة افتراضيًا.",
+    )
+    if len(default_participants) < len(all_collectors):
+        st.caption("ℹ️ استبعدت تلقائيًا حسابات النظام (Archive / Closed / Hold / Op / قانوني) — تقدر تضيفها من القائمة لو عايز.")
+    if len(participants) < 2:
+        st.warning("اختار محصلين اتنين على الأقل.")
+        return
+
+    selected_states = []
+    if state_col:
+        state_series = df[state_col].astype(str).str.strip()
+        counts = state_series[~state_series.str.lower().isin(ROTATION_BLANK_VALUES)].value_counts()
+        state_options = list(counts.index)
+        selected_states = st.multiselect(
+            "🏷️ الحالات اللي هتتدوّر (اختار حالة أو أكتر)",
+            options=state_options,
+            default=[],
+            format_func=lambda s: f"{s}  ({int(counts.get(s, 0)):,} صف)",
+            key="rot_states",
+        )
+        if not selected_states:
+            st.info("🏷️ اختار الحالات اللي عايز تدوّرها عشان نكمّل.")
+            return
+
+    mode_labels = {
+        "any": "🔓 العميل يتدوّر لو أي حساب له في الحالات المختارة (بيتنقل بكل حساباته)",
+        "all": "🔒 العميل يتدوّر بس لو كل حساباته في الحالات المختارة",
+    }
+    elig_choice = st.radio(
+        "شرط اختيار العميل (مهم لو العميل عنده حسابات بحالات مختلفة)",
+        options=list(mode_labels.values()),
+        index=0,
+        key="rot_elig_mode",
+        help="العميل لازم يفضل عند محصل واحد، فلو عنده حسابات في حالات مختلفة بيتنقل كله أو بيتساب كله.",
+    )
+    eligibility_mode = next(k for k, v in mode_labels.items() if v == elig_choice)
+
+    balance_labels = {
+        "pool": "⚖️ مساواة المدوَّر فقط: كل محصل يستلم نفس العملاء/الحسابات/المبالغ",
+        "final": "⚖️ مساواة المحفظة النهائية: (اللي فضل عنده + اللي استلمه) متساوي بين المحصلين",
+    }
+    bal_choice = st.radio(
+        "طريقة المساواة", options=list(balance_labels.values()), index=0, key="rot_balance_mode",
+    )
+    balance_mode = next(k for k, v in balance_labels.items() if v == bal_choice)
+
+    # ---- معاينة قبل التشغيل ----
+    work_prev, _ = _rotation_prepare_work(df, sales_col, client_col, account_col, amount_cols, state_col)
+    prev_clients = _rotation_client_table(
+        work_prev, participants, bool(state_col), selected_states, eligibility_mode
+    )
+    elig_prev = prev_clients[prev_clients["eligible"]]
+    m1, m2, m3, m4 = st.columns(4)
+    m1.metric("🧍 عملاء هيتدوّروا", f"{len(elig_prev):,}")
+    m2.metric("🏦 حساباتهم", f"{int(elig_prev['accounts'].sum()):,}")
+    m3.metric("💰 مبالغهم", f"{float(elig_prev['amount'].sum()):,.0f}")
+    m4.metric("👥 محصلين مشاركين", f"{len(participants)}")
+    n_skipped = int((prev_clients["skip_reason"] != "").sum())
+    if n_skipped:
+        st.caption(f"⏭️ {n_skipped:,} عميل هيتستبعدوا (حالات مختلطة أو عند محصل خارج التدوير).")
+
+    st.markdown("---")
+    if st.button("🔄 ابدأ التدوير", type="primary", use_container_width=True, key="rot_run"):
+        with st.spinner("جارٍ تدوير العملاء وموازنة المحصلين..."):
+            st.session_state[ROTATION_RESULT_KEY] = _run_rotation(
+                df, sales_col, client_col, account_col, amount_cols, state_col,
+                participants, selected_states, eligibility_mode, balance_mode, uploaded.name,
+            )
+
+    cached = st.session_state.get(ROTATION_RESULT_KEY)
+    if cached:
+        _render_rotation_results(cached)
+    else:
+        st.info("اضغط **ابدأ التدوير** بعد ما تظبط الإعدادات.")
+
+
 PAGES = {
     "🎯 تصنيف المكالمات": page_classification,
     "📚 الوعود": page_promises,
@@ -10984,6 +11593,7 @@ PAGES = {
     "📅 الجدولة المتعثرة": page_schedule_stalled,
     "🧾 أخطاء الحالات": page_case_errors,
     "⚖️ التوزيع": page_distribution,
+    "🔄 التدوير": page_rotation,
     "📊 تحليل نشاط المحصّلين": page_dashboard,
 }
 

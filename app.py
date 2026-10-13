@@ -955,7 +955,7 @@ st.set_page_config(
     },
 )
 
-# إظهار قائمة Streamlit كاملة (⋮ + Deploy + GitHub)
+# إظهار قائمة Streamlit كاملة (وضع المطوّر)
 try:
     st.set_option("client.toolbarMode", "developer")
 except Exception:
@@ -1117,54 +1117,32 @@ html, body, [class*="css"]  {{
   margin-bottom: 4rem !important;
 }}
 
-/* شريط Streamlit العلوي: قائمة ⋮ + Deploy + GitHub */
-header[data-testid="stHeader"],
-.stApp > header {{
+header[data-testid="stHeader"] {{
   background: {t["bg"]}ee !important;
   backdrop-filter: blur(8px);
   visibility: visible !important;
-  opacity: 1 !important;
-  height: auto !important;
-  min-height: 3rem !important;
-  z-index: 999999 !important;
-  display: flex !important;
-  pointer-events: auto !important;
+  z-index: 999990 !important;
+}}
+.stApp > header {{
+  background-color: {t["bg"]}ee !important;
+  visibility: visible !important;
 }}
 div[data-testid="stDecoration"] {{
   display: none !important;
 }}
-/* إظهار الأدوات بدون كسر layout (ممنوع display:inline-flex على #MainMenu) */
-[data-testid="stToolbar"],
-[data-testid="stToolbarActions"],
-[data-testid="stMainMenu"],
 #MainMenu,
+[data-testid="stMainMenu"],
+[data-testid="stToolbar"],
+[data-testid="stHeader"] button,
+[data-testid="baseButton-header"],
 [data-testid="stAppDeployButton"],
 [data-testid="stStatusWidget"],
-[data-testid="stHeaderActionElements"],
-header[data-testid="stHeader"] [data-testid="stToolbar"],
-header[data-testid="stHeader"] ul,
-header[data-testid="stHeader"] li {{
-  visibility: visible !important;
-  opacity: 1 !important;
-  pointer-events: auto !important;
-}}
-header[data-testid="stHeader"] button,
-header[data-testid="stHeader"] a,
-[data-testid="baseButton-header"],
 [data-testid="stBaseButton-headerNoPadding"],
-[data-testid="stBaseButton-header"],
 [kind="header"] {{
   visibility: visible !important;
   opacity: 1 !important;
   pointer-events: auto !important;
-  color: {t["text"]} !important;
-}}
-header[data-testid="stHeader"] svg,
-header[data-testid="stHeader"] span {{
-  visibility: visible !important;
-  opacity: 1 !important;
-  color: {t["text"]} !important;
-  fill: {t["text"]} !important;
+  display: inline-flex !important;
 }}
 
 div[data-testid="stVerticalBlock"] > div:first-child h1,

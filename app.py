@@ -5970,6 +5970,26 @@ def _wallet_prepare_frame(df):
     return work, cols
 
 
+def _wallet_clean_option_values(series):
+    """يستخرج قيم نصية نظيفة للسلايسرز بدون NaN/None وبدون AttributeError."""
+    if series is None:
+        return []
+    cleaned = []
+    for raw in series.tolist():
+        if raw is None or (isinstance(raw, float) and pd.isna(raw)):
+            continue
+        try:
+            if pd.isna(raw):
+                continue
+        except (TypeError, ValueError):
+            pass
+        text = str(raw).strip()
+        if not text or text.lower() in {"nan", "none", "null"}:
+            continue
+        cleaned.append(text)
+    return sorted(set(cleaned))
+
+
 def _wallet_apply_slicers(work, cols):
     """سلايسرز صفحة المحفظة: محصل / تاريخ إسناد / تاريخ حادث / جنسية / حالة العميل."""
     filtered = work
@@ -5977,10 +5997,7 @@ def _wallet_apply_slicers(work, cols):
 
     sales_col = cols.get("sales_col")
     if sales_col and sales_col in filtered.columns:
-        agents = sorted({
-            v for v in filtered[sales_col].astype(str).str.strip().tolist()
-            if v and v.lower() not in {"nan", "none", "null", ""}
-        })
+        agents = _wallet_clean_option_values(filtered[sales_col])
         selected_agents = st.multiselect(
             "👤 المحصل", options=agents, default=[], key="wallet_slicer_agent"
         )
@@ -6036,10 +6053,7 @@ def _wallet_apply_slicers(work, cols):
 
     nationality_col = cols.get("nationality_col")
     if nationality_col and nationality_col in filtered.columns:
-        nations = sorted({
-            v for v in filtered[nationality_col].astype(str).str.strip().tolist()
-            if v and v.lower() not in {"nan", "none", "null", ""}
-        })
+        nations = _wallet_clean_option_values(filtered[nationality_col])
         selected_nations = st.multiselect(
             "🌍 جنسية العميل", options=nations, default=[], key="wallet_slicer_nationality"
         )
@@ -6049,10 +6063,7 @@ def _wallet_apply_slicers(work, cols):
 
     customer_state_col = cols.get("customer_state_col")
     if customer_state_col and customer_state_col in filtered.columns:
-        states = sorted({
-            v for v in filtered[customer_state_col].astype(str).str.strip().tolist()
-            if v and v.lower() not in {"nan", "none", "null", ""}
-        })
+        states = _wallet_clean_option_values(filtered[customer_state_col])
         selected_states = st.multiselect(
             "🏷️ حالة العميل", options=states, default=[], key="wallet_slicer_customer_state"
         )

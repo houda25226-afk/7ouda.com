@@ -1470,6 +1470,143 @@ section[data-testid="stSidebar"] img {{
   margin: 0.85rem 0.4rem 0.2rem;
 }}
 
+/* ——— اختيار شركة التصنيف ——— */
+.company-select-section {{
+  margin: 0.35rem 0 1rem 0;
+  direction: rtl;
+  text-align: right;
+}}
+.company-select-title {{
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  font-size: 1.2rem;
+  font-weight: 800;
+  color: {t["accent_strong"]};
+  margin-bottom: 0.25rem;
+}}
+.company-select-icon {{
+  font-size: 1.25rem;
+}}
+.company-select-hint {{
+  color: {t["text_muted"]};
+  font-size: 0.88rem;
+  margin: 0 0 0.85rem 0;
+  opacity: 0.95;
+}}
+.company-card {{
+  border-radius: 16px;
+  padding: 1.05rem 1.15rem 0.95rem;
+  margin-bottom: 0.55rem;
+  border: 1.5px solid {t["border"]};
+  background: linear-gradient(145deg, {t["surface"]} 0%, {t["surface_2"]} 100%);
+  box-shadow: 0 4px 14px rgba(10, 40, 24, 0.06);
+  transition: border-color 0.2s ease, box-shadow 0.2s ease, transform 0.15s ease;
+  direction: rtl;
+  text-align: right;
+  min-height: 128px;
+}}
+.company-card-idle:hover {{
+  border-color: {t["accent"]}55;
+  box-shadow: 0 6px 18px rgba(18, 109, 60, 0.10);
+}}
+.company-card-active {{
+  border-color: {t["accent"]};
+  background: linear-gradient(145deg, {t["accent_surface"]} 0%, {t["surface"]} 100%);
+  box-shadow:
+    0 0 0 1px {t["accent"]}33,
+    0 8px 22px rgba(18, 109, 60, 0.14);
+}}
+.company-card-top {{
+  display: flex;
+  align-items: center;
+  gap: 0.85rem;
+  margin-bottom: 0.55rem;
+}}
+.company-card-badge {{
+  width: 44px;
+  height: 44px;
+  border-radius: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 800;
+  font-size: 1.15rem;
+  color: {t["on_accent"]};
+  background: linear-gradient(135deg, {t["accent"]} 0%, {t["accent_strong"]} 100%);
+  box-shadow: 0 3px 10px {t["accent"]}40;
+  flex-shrink: 0;
+}}
+.company-card-active .company-card-badge {{
+  background: linear-gradient(135deg, {t["accent_gold"]} 0%, {t["accent"]} 100%);
+  color: #1a2e22;
+}}
+.company-card-meta {{
+  min-width: 0;
+}}
+.company-card-name {{
+  font-weight: 800;
+  font-size: 1.05rem;
+  color: {t["text"]};
+  line-height: 1.35;
+}}
+.company-card-short {{
+  font-size: 0.82rem;
+  color: {t["text_muted"]};
+  font-weight: 600;
+  margin-top: 0.1rem;
+}}
+.company-card-hint {{
+  font-size: 0.84rem;
+  color: {t["text_dim"]};
+  margin-bottom: 0.55rem;
+  line-height: 1.45;
+}}
+.company-card-status {{
+  display: inline-block;
+  font-size: 0.78rem;
+  font-weight: 700;
+  padding: 0.22rem 0.65rem;
+  border-radius: 999px;
+  background: {t["accent"]}18;
+  color: {t["accent_strong"]};
+  border: 1px solid {t["accent"]}30;
+}}
+.company-card-status.muted {{
+  background: {t["surface_2"]};
+  color: {t["text_muted"]};
+  border-color: {t["border_soft"]};
+  font-weight: 600;
+}}
+.company-selected-banner {{
+  direction: rtl;
+  text-align: right;
+  margin-top: 0.85rem;
+  margin-bottom: 0.35rem;
+  padding: 0.7rem 1rem;
+  border-radius: 12px;
+  background: linear-gradient(90deg, {t["accent_surface"]} 0%, {t["surface"]} 100%);
+  border: 1px solid {t["accent"]}35;
+  color: {t["text"]};
+  font-size: 0.95rem;
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  flex-wrap: wrap;
+}}
+.company-selected-banner strong {{
+  color: {t["accent_strong"]};
+  font-weight: 800;
+}}
+.company-selected-dot {{
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: {t["accent"]};
+  box-shadow: 0 0 0 3px {t["accent"]}28;
+  flex-shrink: 0;
+}}
+
 </style>
 """,
         unsafe_allow_html=True,
@@ -3909,12 +4046,64 @@ def init_activity_state():
 
 
 def render_company_selector():
-    st.subheader("🏢 اختر شركة التصنيف")
-    c1, c2 = st.columns(2)
+    """اختيار الشركة — عرض أغنى: كروت + أيقونة + وصف + حالة اختيار واضحة."""
+    company_meta = {
+        "الوطنية للتأمين": {
+            "icon": "🟢",
+            "short": "Wataniya",
+            "hint": "تصنيف إفادات مكالمات محفظة الوطنية",
+            "badge": "W",
+        },
+        "تري للتأمين": {
+            "icon": "🔵",
+            "short": "Tary",
+            "hint": "تصنيف إفادات مكالمات محفظة تري",
+            "badge": "T",
+        },
+    }
+
+    st.markdown(
+        """
+<div class="company-select-section">
+  <div class="company-select-title">
+    <span class="company-select-icon">🏢</span>
+    <span>اختر شركة التصنيف</span>
+  </div>
+  <p class="company-select-hint">اضغط على الشركة لبدء مسار التصنيف الخاص بها — الفترة، المواعيد، ورفع الملف</p>
+</div>
+""",
+        unsafe_allow_html=True,
+    )
+
+    c1, c2 = st.columns(2, gap="large")
+    current = st.session_state.get("selected_company")
     for col, company_name in zip((c1, c2), COMPANIES):
+        meta = company_meta.get(company_name, {})
+        selected = current == company_name
+        active_cls = "company-card-active" if selected else "company-card-idle"
+        status_html = (
+            '<span class="company-card-status">✓ مختارة</span>'
+            if selected
+            else '<span class="company-card-status muted">اضغط للاختيار</span>'
+        )
         with col:
-            selected = st.session_state.get("selected_company") == company_name
-            button_label = f"✓ {company_name}" if selected else company_name
+            st.markdown(
+                f"""
+<div class="company-card {active_cls}">
+  <div class="company-card-top">
+    <div class="company-card-badge">{meta.get("badge", "?")}</div>
+    <div class="company-card-meta">
+      <div class="company-card-name">{company_name}</div>
+      <div class="company-card-short">{meta.get("icon", "")} {meta.get("short", "")}</div>
+    </div>
+  </div>
+  <div class="company-card-hint">{meta.get("hint", "")}</div>
+  {status_html}
+</div>
+""",
+                unsafe_allow_html=True,
+            )
+            button_label = f"✓ اختيار {company_name}" if selected else f"اختيار {company_name}"
             if st.button(
                 button_label,
                 key=f"company_{company_name}",
@@ -3924,9 +4113,18 @@ def render_company_selector():
                 st.session_state["selected_company"] = company_name
                 st.session_state["selected_period"] = None
                 st.rerun()
-    company = st.session_state.get("selected_company")
-    if company:
-        st.success(f"الشركة المختارة: {company}")
+
+    if current:
+        st.markdown(
+            f"""
+<div class="company-selected-banner">
+  <span class="company-selected-dot"></span>
+  الشركة النشطة للتصنيف:
+  <strong>{current}</strong>
+</div>
+""",
+            unsafe_allow_html=True,
+        )
 
 
 def render_period_selector():

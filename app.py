@@ -102,6 +102,25 @@ def _promises_exclusion_token():
     return hashlib.sha256("|".join(sorted(_promises_excluded_sales())).encode("utf-8")).hexdigest()[:16]
 
 
+
+def _unique_nonblank_strings(values, blank={"nan", "none", "null", ""}):
+    """استخراج قيم نصية فريدة وغير فارغة من عمود/سلسلة — آمن ضد أنواع غير string."""
+    out = set()
+    for v in values:
+        if v is None:
+            continue
+        try:
+            if pd.isna(v):
+                continue
+        except (TypeError, ValueError):
+            pass
+        s = str(v).strip()
+        if not s or s.lower() in blank:
+            continue
+        out.add(s)
+    return sorted(out)
+
+
 def _extract_promises_sales_from_upload(uploaded):
     """قراءة أسماء المحصلين من ملف المحفظة بدون تطبيق فلاتر الوعود."""
     if uploaded is None:
@@ -115,7 +134,7 @@ def _extract_promises_sales_from_upload(uploaded):
     if not sales_col:
         return []
     vals = df[sales_col].astype(str).str.strip()
-    return sorted({v for v in vals.tolist() if v and v.lower() not in {"nan", "none", "null", ""}})
+    return _unique_nonblank_strings(vals.tolist())
 
 
 def _sync_promises_available_sales(uploaded=None, result_keys=None):
@@ -134,7 +153,7 @@ def _sync_promises_available_sales(uploaded=None, result_keys=None):
             sales_col = cached.get("sales_col")
             if df is not None and sales_col and sales_col in getattr(df, "columns", []):
                 vals = df[sales_col].astype(str).str.strip()
-                found = sorted({v for v in vals.tolist() if v and v.lower() not in {"nan", "none", "null", ""}})
+                found = _unique_nonblank_strings(vals.tolist())
                 if found:
                     break
     if found:
@@ -418,7 +437,7 @@ def _run_promises_pipeline(
 
     # 2) فلترة Salesperson — حسب قائمة الاستبعاد القابلة للتعديل من الواجهة
     sales_vals = df[sales_col].astype(str).str.strip()
-    available_sales = sorted({v for v in sales_vals.tolist() if v and v.lower() not in {"nan", "none", "null"}})
+    available_sales = _unique_nonblank_strings(sales_vals.tolist())
     merged_available = sorted(set(st.session_state.get(PROMISES_AVAILABLE_SALES_KEY, [])) | set(available_sales))
     st.session_state[PROMISES_AVAILABLE_SALES_KEY] = merged_available
 
@@ -7091,10 +7110,9 @@ def render_payments_page(df):
 
         collector_col = find_column(filtered, COLLECTED_BY_CANDIDATES) or find_column(filtered, SALES_PERSON_CANDIDATES)
         if collector_col and collector_col in filtered.columns:
-            agents = sorted({
-                v for v in filtered[collector_col].astype(str).str.strip().tolist()
-                if v and v.lower() not in {"nan", "none", "null", ""}
-            })
+            agents = _unique_nonblank_strings(
+                filtered[collector_col].astype(str).str.strip().tolist()
+            )
             selected = st.multiselect("👤 المحصل", options=agents, default=[], key="payments_agent_filter")
             if selected:
                 filtered = filtered[filtered[collector_col].astype(str).str.strip().isin(selected)]
@@ -10162,7 +10180,7 @@ def _page_distribution_new_collector():
             p_state_col = None if str(p_state_choice).startswith("—") else p_state_choice
 
         sales_vals = portfolio_df[p_sales_col].astype(str).str.strip()
-        all_collectors = sorted({v for v in sales_vals.tolist() if v and v.lower() not in {"nan", "none", "null", ""}})
+        all_collectors = _unique_nonblank_strings(sales_vals.tolist())
         compare_collectors = st.multiselect(
             "👥 المحصلين اللي هنقارن بيهم في حساب المستهدف (افتراضي: الكل)",
             options=all_collectors,
@@ -10345,7 +10363,7 @@ def _page_distribution_new_collector():
     )
 
     n_sales_vals = neglect_work["_sales"]
-    n_all_collectors = sorted({v for v in n_sales_vals.tolist() if v and v.lower() not in {"nan", "none", "null", ""}})
+    n_all_collectors = _unique_nonblank_strings(n_sales_vals.tolist())
     source_collectors = st.multiselect(
         "👤 المحصلين اللي هتسحب منهم (من شيت الإهمال)",
         options=n_all_collectors,
@@ -10757,7 +10775,7 @@ def _extract_collector_names_from_file(uploaded):
     if not sales_col:
         return []
     vals = df[sales_col].astype(str).str.strip()
-    return sorted({v for v in vals.tolist() if v and v.lower() not in {"nan", "none", "null", ""}})
+    return _unique_nonblank_strings(vals.tolist())
 
 
 def _page_distribution_new_assignment():
@@ -11204,12 +11222,7 @@ def page_distribution():
 
     if team_col and team_col in df.columns:
         team_vals = df[team_col].astype(str).str.strip()
-        team_choices = sorted(
-            {
-                v for v in team_vals.tolist()
-                if v and v.lower() not in {"nan", "none", "null", ""}
-            }
-        )
+        team_choices = _unique_nonblank_strings(team_vals.tolist())
         if team_choices:
             selected_teams = st.multiselect(
                 "فلترة حسب Sales Team (اختياري — فاضي = كل الفرق)",
@@ -11247,7 +11260,7 @@ def page_distribution():
 
     # قائمة المحصلين
     sales_vals = df[sales_col].astype(str).str.strip()
-    all_collectors = sorted({v for v in sales_vals.tolist() if v and v.lower() not in {"nan", "none", "null", ""}})
+    all_collectors = _unique_nonblank_strings(sales_vals.tolist())
 
     if len(all_collectors) < 2:
         st.warning("الملف يحتوي على محصل واحد فقط أو لا يوجد محصلين — لا يمكن التوزيع.")
@@ -12194,7 +12207,7 @@ def page_rotation():
         return
 
     sales_vals = df[sales_col].astype(str).str.strip()
-    all_collectors = sorted({v for v in sales_vals.tolist() if v.lower() not in ROTATION_BLANK_VALUES})
+    all_collectors = _unique_nonblank_strings(sales_vals.tolist(), blank=set(ROTATION_BLANK_VALUES) | {"nan", "none", "null", ""})
     if len(all_collectors) < 2:
         st.warning("الملف فيه محصل واحد أو أقل — التدوير محتاج محصلين اتنين على الأقل.")
         return

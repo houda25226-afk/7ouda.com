@@ -7,10 +7,18 @@
 """
 from __future__ import annotations
 import base64
+import http.client
+import re
 import xmlrpc.client
 from urllib.parse import urlparse
 
 import pandas as pd
+
+
+def base_url(url: str) -> str:
+    """بيشيل أي مسار زيادة من الرابط (/web/login أو /web#action=…) ويسيب العنوان الأساسي بس."""
+    url = re.split(r"[#?]", url.strip())[0].rstrip("/")
+    return re.split(r"/web(?:/|$)", url)[0].rstrip("/")
 
 
 class _TimeoutMixin:
@@ -31,22 +39,35 @@ class _HTTPS(_TimeoutMixin, xmlrpc.client.SafeTransport):
 
 
 class OdooClient:
+    """كل استدعاء بيفتح اتصال جديد (من غير اتصال مشترك)، فمفيش تعارض بين الجلسات أو الـ reruns في Streamlit."""
+
+    RETRY_ERRORS = (http.client.CannotSendRequest, http.client.RemoteDisconnected,
+                    http.client.ResponseNotReady, BrokenPipeError, ConnectionResetError)
+
     def __init__(self, url: str, db: str, user: str, api_key: str, timeout: int = 60):
-        self.url, self.db, self.user, self._key = url.rstrip("/"), db, user, api_key
-        transport = (_HTTPS if urlparse(self.url).scheme == "https" else _HTTP)()
-        transport.timeout = timeout
-        self._common = xmlrpc.client.ServerProxy(f"{self.url}/xmlrpc/2/common", transport=transport, allow_none=True)
-        self._models = xmlrpc.client.ServerProxy(f"{self.url}/xmlrpc/2/object", transport=transport, allow_none=True)
-        self.uid = self._common.authenticate(db, user, api_key, {})
+        self.url, self.db, self.user, self._key = base_url(url), db.strip(), user.strip(), api_key.strip()
+        self._timeout = timeout
+        self.uid = self._rpc("common", "authenticate", self.db, self.user, self._key, {})
         if not self.uid:
             raise PermissionError("فشل تسجيل الدخول لـ Odoo: راجع اسم قاعدة البيانات واليوزر والـ API key")
 
+    def _rpc(self, service: str, method: str, *args):
+        for attempt in (1, 2):
+            transport = (_HTTPS if urlparse(self.url).scheme == "https" else _HTTP)()
+            transport.timeout = self._timeout
+            proxy = xmlrpc.client.ServerProxy(f"{self.url}/xmlrpc/2/{service}", transport=transport, allow_none=True)
+            try:
+                return getattr(proxy, method)(*args)
+            except self.RETRY_ERRORS:
+                if attempt == 2:
+                    raise
+
     # ---------- استدعاء عام ----------
     def call(self, model: str, method: str, *args, **kwargs):
-        return self._models.execute_kw(self.db, self.uid, self._key, model, method, list(args), kwargs)
+        return self._rpc("object", "execute_kw", self.db, self.uid, self._key, model, method, list(args), kwargs)
 
     def version(self) -> dict:
-        return self._common.version()
+        return self._rpc("common", "version")
 
     # ---------- استكشاف ----------
     def fields(self, model: str) -> pd.DataFrame:

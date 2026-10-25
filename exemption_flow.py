@@ -112,3 +112,17 @@ def run_review(df: pd.DataFrame) -> pd.DataFrame:
                     "الحالة": {"ok": "✅ جاهز", "review": "🟡 مراجعة", "no_attachment": "⚪ بدون مرفق"}[res["status"]],
                     "سبب المراجعة": " ؛ ".join(res["flags"])})
     return pd.DataFrame(out)
+
+
+def build_domain(domain_text: str, claim_field: str, claims_text: str, partial: bool = False) -> list:
+    """فلتر Odoo: الفلتر اليدوي + أرقام المطالبات (تطابق تام، أو «يحتوي على» لو partial)."""
+    import ast
+    domain = list(ast.literal_eval(domain_text or "[]"))
+    claims = [c.strip() for c in (claims_text or "").splitlines() if c.strip()]
+    if claims:
+        if partial:
+            leaves = [(claim_field, "ilike", c) for c in claims]
+            domain += ["|"] * (len(leaves) - 1) + leaves
+        else:
+            domain.append((claim_field, "in", claims))
+    return domain

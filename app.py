@@ -12297,6 +12297,16 @@ def page_rotation():
         st.info("اضغط **ابدأ التدوير** بعد ما تظبط الإعدادات.")
 
 
+# تبويب الإعفاءات (ملفات exemption_*.py و odoo_*.py جنب app.py)
+try:
+    from exemptions_page import page_exemptions
+except Exception as _e:   # لو مكتبة ناقصة، باقي التطبيق يفضل شغال
+    _EXEMPT_ERR = str(_e)
+
+    def page_exemptions(page_header=None):
+        st.error(f"تبويب الإعفاءات محتاج مكتبات ناقصة: {_EXEMPT_ERR}")
+
+
 PAGES = {
     "🎯 تصنيف المكالمات": page_classification,
     "📚 الوعود": page_promises,
@@ -12305,6 +12315,7 @@ PAGES = {
     "🧾 أخطاء الحالات": page_case_errors,
     "⚖️ التوزيع": page_distribution,
     "🔄 التدوير": page_rotation,
+    "🛡️ الإعفاءات": lambda: page_exemptions(page_header),
     "📊 تحليل نشاط المحصّلين": page_dashboard,
 }
 

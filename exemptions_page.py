@@ -15,13 +15,14 @@ import ast
 import io
 import os
 import re
+import xmlrpc.client
 import zipfile
 
 import pandas as pd
 import streamlit as st
 
 from exemption_extract import DOC_LABELS, analyze_claim, to_images
-from exemption_flow import AR_HEADERS, ROW_COLS, build_row, run_review
+from exemption_flow import AR_HEADERS, ROW_COLS, build_domain, build_row, run_review
 from odoo_client import OdooClient
 from odoo_export import fetch_attachments_by_lead, zip_files_by_claim
 
@@ -39,8 +40,8 @@ def _odoo_secrets():
         return None
 
 
-@st.cache_resource(show_spinner=False)
 def _client(url, db, user, key) -> OdooClient:
+    # من غير cache: العميل خفيف (كل استدعاء باتصال جديد)، وكدا مفيش نسخة قديمة عالقة بعد تحديث الكود
     return OdooClient(url, db, user, key)
 
 
@@ -73,6 +74,14 @@ def _files_from_uploads(uploads) -> dict:
     return out
 
 
+def _short_err(e) -> str:
+    """رسالة خطأ Odoo قصيرة (آخر سطر من الـ traceback) بدل الصفحة كلها."""
+    if isinstance(e, xmlrpc.client.Fault):
+        lines = [x for x in str(e.faultString).strip().splitlines() if x.strip()]
+        return lines[-1] if lines else str(e)
+    return str(e)
+
+
 def _norm(v) -> str:
     return str(v).strip().upper()
 
@@ -89,29 +98,42 @@ def _source_odoo():
     except Exception as e:
         st.error(f"تعذر الاتصال بـ Odoo: {e}")
         return None
-    st.caption(f"متصل ✅ | إصدار Odoo: {client.version().get('server_version')}")
-    with st.expander("استكشاف حقول crm.lead (عشان تعرف تختار الحقول)"):
-        st.dataframe(client.fields(MODEL), use_container_width=True, height=260)
+    if "ex_odoo_version" not in st.session_state:
+        st.session_state["ex_odoo_version"] = client.version().get("server_version")
+    st.caption(f"متصل ✅ | إصدار Odoo: {st.session_state['ex_odoo_version']}")
+    if "ex_fields_df" not in st.session_state:
+        st.session_state["ex_fields_df"] = client.fields(MODEL)
+    fdf = st.session_state["ex_fields_df"]
+    fdf = fdf[fdf["type"] != "binary"]
+    label = {r.field: f"{r.field} — {r.string}" for r in fdf.itertuples()}
+    with st.expander("استكشاف حقول crm.lead (الاسم التقني + الاسم الظاهر + النوع)"):
+        st.dataframe(fdf[["field", "string", "type"]], use_container_width=True, height=260)
+    textual = [r.field for r in fdf.itertuples() if r.type in ("char", "text", "integer")]
+    guess = next((r.field for r in fdf.itertuples()
+                  if r.type in ("char", "text") and re.search(r"claim|مطالب", str(r.string), re.I)), "name")
     c1, c2 = st.columns(2)
-    claim_field = c1.text_input("حقل رقم المطالبة في Odoo", "name", key="ex_claim_field")
-    fields_text = c2.text_input("الحقول المطلوب سحبها (بفاصلة)", "name,partner_id,stage_id,create_date", key="ex_fields",
-                                help="ضيف هنا حقول الهوية واللوحة وتاريخ الحادث لو موجودة عندكم في crm.lead")
+    claim_field = c1.selectbox("حقل رقم المطالبة في Odoo", textual, key="ex_claim_field", format_func=label.get,
+                               index=textual.index(guess) if guess in textual else 0,
+                               help="اختار الحقل اللي فيه رقم المطالبة (ابدأ اكتب جزء من اسمه أو اسمه الظاهر)")
+    wanted = [f for f in ("name", "partner_id", "stage_id", "create_date") if f in label]
+    if claim_field not in wanted:
+        wanted.insert(0, claim_field)
+    fields_sel = c2.multiselect("الحقول المطلوب سحبها", list(label), default=wanted, format_func=label.get,
+                                key=f"ex_fields_{claim_field}",
+                                help="ضيف حقول الهوية واللوحة وتاريخ الحادث لو موجودة في crm.lead")
     claims_text = st.text_area("أرقام مطالبات محددة (اختياري، كل رقم في سطر)", height=80, key="ex_claims")
+    partial = st.checkbox("بحث جزئي (الرقم يكون جزء من الحقل)", key="ex_partial")
     domain_text = st.text_input("فلتر إضافي (Domain)", "[]", key="ex_domain",
                                 help='مثال: [("create_date", ">=", "2026-10-01")]')
     limit = st.number_input("أقصى عدد مطالبات (0 = الكل)", min_value=0, value=200, step=50, key="ex_limit")
     if st.button("سحب المطالبات", key="ex_btn_pull", type="primary"):
         try:
-            domain = list(ast.literal_eval(domain_text or "[]"))
-            claims = [c.strip() for c in claims_text.splitlines() if c.strip()]
-            if claims:
-                domain.append((claim_field, "in", claims))
-            fields = [f.strip() for f in fields_text.split(",") if f.strip()]
-            st.session_state["ex_leads"] = client.search_read_df(MODEL, domain, fields, limit=int(limit) or None)
+            domain = build_domain(domain_text, claim_field, claims_text, partial)
+            st.session_state["ex_leads"] = client.search_read_df(MODEL, domain, list(fields_sel), limit=int(limit) or None)
             st.session_state["ex_client_key"] = "odoo"
             st.session_state.pop("ex_rows", None)
         except Exception as e:
-            st.error(f"خطأ في السحب: {e}")
+            st.error(f"خطأ في السحب: {_short_err(e)}")
     return st.session_state.get("ex_leads")
 
 
@@ -221,7 +243,7 @@ def page_exemptions(page_header=None):
         try:
             _run_analysis(leads, mapping, int(max_claims))
         except Exception as e:
-            st.error(f"خطأ أثناء القراءة: {e}")
+            st.error(f"خطأ أثناء القراءة: {_short_err(e)}")
 
     rows = st.session_state.get("ex_rows")
     if rows is None:

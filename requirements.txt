@@ -4,3 +4,7 @@ torch
 pandas
 openpyxl
 plotly
+pymupdf
+pytesseract
+hijridate
+pillow

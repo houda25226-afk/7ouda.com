@@ -8861,26 +8861,61 @@ def _greedy_assign_customers(
     client_weight=1.0,
     amount_weight=1.0,
     account_weight=1.0,
+    state_weight=0.0,
+    max_diff_states=None,
 ):
     """
     توزيع مطالبات/عملاء المحصل المستقيل فقط على المستهدفين.
-    الهدف: أقرب تساوي ممكن في (المبلغ، عدد العملاء، عدد الحسابات/المطالبات)
+    الهدف: أقرب تساوي ممكن في (المبلغ، عدد العملاء، عدد الحسابات/المطالبات، وتوزيع الحالات)
     بين المحصلين المستهدفين — مش موازنة المحفظة الأصلية بتاعتهم.
+
+    موازنة الحالات (اختيارية): لو customers_df فيه عمود "state_counts"
+    (dict: حالة -> عدد مطالبات العميل في الحالة دي) و state_weight > 0،
+    الخوارزمية بتحاول كل حالة (Sub State) تتوزع بالتساوي بين المحصلين.
+    max_diff_states = أقصى فرق مسموح في عدد مطالبات أي حالة بين أعلى وأقل محصل.
 
     مراحل:
     1) إسناد أولي: كل عميل يروح للأقل حملاً حسب score مطبّع.
     2) بحث محلي مكثّف: نقل + تبادل عملاء كاملين لحد ثبات التحسين.
     """
+    import numpy as _np
+
     if customers_df.empty or not target_collectors:
         return {}, pd.DataFrame(), []
+
+    use_states = bool(
+        state_weight and state_weight > 0 and "state_counts" in customers_df.columns
+    )
+
+    # ---- فهرس الحالات (للمصفوفة) ----
+    state_names = []
+    if use_states:
+        seen_states = set()
+        for sc in customers_df["state_counts"]:
+            if isinstance(sc, dict):
+                for k in sc:
+                    if k not in seen_states:
+                        seen_states.add(k)
+                        state_names.append(k)
+        if not state_names:
+            use_states = False
+    state_idx = {s: i for i, s in enumerate(state_names)}
+    n_states = len(state_names)
 
     cust_info = {}
     for _, row in customers_df.iterrows():
         ck = row["client_key"]
+        vec = None
+        if use_states:
+            vec = _np.zeros(n_states, dtype=float)
+            sc = row["state_counts"] if isinstance(row["state_counts"], dict) else {}
+            for k, v in sc.items():
+                vec[state_idx[k]] += float(v)
         cust_info[ck] = {
             "amount": float(row["amount"] or 0),
             "n_accounts": int(row["n_accounts"] or 0),
             "n_rows": int(row["n_rows"] or 0),
+            "svec": vec,
         }
 
     n_targets = len(target_collectors)
@@ -8898,6 +8933,27 @@ def _greedy_assign_customers(
         name: {"amount": 0.0, "clients": 0, "accounts": 0, "rows": 0, "client_keys": []}
         for name in target_collectors
     }
+    # مصفوفة الحالات: صف لكل محصل × عمود لكل حالة (عدد المطالبات)
+    t_idx = {name: i for i, name in enumerate(target_collectors)}
+    smat = _np.zeros((n_targets, max(n_states, 1)), dtype=float)
+
+    def _shift(name, ck, sign):
+        """يضيف (sign=+1) أو يشيل (sign=-1) عميل من محصل — في كل الأبعاد بما فيها الحالات."""
+        info = cust_info[ck]
+        s = state[name]
+        s["amount"] += sign * info["amount"]
+        s["clients"] += sign
+        s["accounts"] += sign * info["n_accounts"]
+        s["rows"] += sign * info["n_rows"]
+        if use_states:
+            smat[t_idx[name]] += sign * info["svec"]
+
+    def _state_spreads():
+        """(مجموع فروق كل الحالات، أكبر فرق في حالة واحدة)."""
+        if not use_states:
+            return 0.0, 0.0
+        sp = smat.max(axis=0) - smat.min(axis=0)
+        return float(sp.sum()), float(sp.max())
 
     ordered = customers_df.sort_values(
         ["amount", "n_accounts", "n_rows"], ascending=[False, False, False]
@@ -8916,7 +8972,7 @@ def _greedy_assign_customers(
         )
 
     def _cost(st):
-        """تكلفة: تقليل فروقات المبالغ والعملاء والحسابات والمطالبات للمطالبات الموزّعة فقط."""
+        """تكلفة: تقليل فروقات المبالغ والعملاء والحسابات والمطالبات والحالات للمطالبات الموزّعة فقط."""
         a, c, k, r = _ranges(st)
         # عقوبات لو عدّينا الـ tolerance
         pen = 0.0
@@ -8938,6 +8994,13 @@ def _greedy_assign_customers(
         cli_var = sum((st[n]["clients"] - avg_clients) ** 2 for n in target_collectors) / (avg_clients ** 2)
         acc_var = sum((st[n]["accounts"] - avg_accounts) ** 2 for n in target_collectors) / (avg_accounts ** 2)
         base += 0.15 * (amount_weight * amt_var + client_weight * cli_var + account_weight * acc_var)
+
+        # موازنة الحالات (Sub State)
+        if use_states:
+            s_tot, s_max = _state_spreads()
+            if max_diff_states is not None and s_max > max_diff_states:
+                pen += 2000.0 * (s_max - max_diff_states) / max(avg_rows, 1.0)
+            base += state_weight * (s_tot / avg_rows)
         return (pen + base, a, c, k, r)
 
     def _imbalance_assign(st):
@@ -8946,35 +9009,27 @@ def _greedy_assign_customers(
         accs = [st[n]["accounts"] / avg_accounts for n in target_collectors]
         def _r(v):
             return max(v) - min(v)
-        return amount_weight * _r(amts) + client_weight * _r(clis) + account_weight * _r(accs)
+        score = amount_weight * _r(amts) + client_weight * _r(clis) + account_weight * _r(accs)
+        if use_states:
+            score += state_weight * (_state_spreads()[0] / avg_rows)
+        return score
 
     # ----- 1) إسناد أولي -----
     for _, row in ordered.iterrows():
         ck = row["client_key"]
-        info = cust_info[ck]
-        amt, nacc, nrows = info["amount"], info["n_accounts"], info["n_rows"]
 
         best, best_score = None, None
         for name in target_collectors:
-            state[name]["amount"] += amt
-            state[name]["clients"] += 1
-            state[name]["accounts"] += nacc
-            state[name]["rows"] += nrows
+            _shift(name, ck, +1)
             score = _imbalance_assign(state)
             # بعد الإضافة: فضّل الأقل مبلغاً ثم عملاء
             tie = (score, state[name]["amount"], state[name]["clients"], state[name]["accounts"], name)
             if best_score is None or tie < best_score:
                 best_score = tie
                 best = name
-            state[name]["amount"] -= amt
-            state[name]["clients"] -= 1
-            state[name]["accounts"] -= nacc
-            state[name]["rows"] -= nrows
+            _shift(name, ck, -1)
 
-        state[best]["amount"] += amt
-        state[best]["clients"] += 1
-        state[best]["accounts"] += nacc
-        state[best]["rows"] += nrows
+        _shift(best, ck, +1)
         state[best]["client_keys"].append(ck)
 
     # ----- 2) بحث محلي: نقل + تبادل -----
@@ -8983,17 +9038,10 @@ def _greedy_assign_customers(
     max_rounds = max(400, len(customers_df) * 6)
 
     def _transfer(src, dst, ck):
-        info = cust_info[ck]
         state[src]["client_keys"].remove(ck)
-        state[src]["amount"] -= info["amount"]
-        state[src]["clients"] -= 1
-        state[src]["accounts"] -= info["n_accounts"]
-        state[src]["rows"] -= info["n_rows"]
         state[dst]["client_keys"].append(ck)
-        state[dst]["amount"] += info["amount"]
-        state[dst]["clients"] += 1
-        state[dst]["accounts"] += info["n_accounts"]
-        state[dst]["rows"] += info["n_rows"]
+        _shift(src, ck, -1)
+        _shift(dst, ck, +1)
 
     for _round in range(max_rounds):
         cur = _cost(state)
@@ -9012,29 +9060,19 @@ def _greedy_assign_customers(
                 continue
             src_keys = sorted(state[src]["client_keys"], key=lambda ck: cust_info[ck]["amount"])
             for dst in poor_list:
-                if src == dst or state[src]["amount"] <= state[dst]["amount"]:
+                if src == dst:
+                    continue
+                # من غير موازنة حالات: ننقل من الأغنى للأفقر بس. معاها: نسيب التكلفة تحكم.
+                if not use_states and state[src]["amount"] <= state[dst]["amount"]:
                     continue
                 for ck in src_keys:
-                    info = cust_info[ck]
                     # مؤقت
-                    state[src]["amount"] -= info["amount"]
-                    state[src]["clients"] -= 1
-                    state[src]["accounts"] -= info["n_accounts"]
-                    state[src]["rows"] -= info["n_rows"]
-                    state[dst]["amount"] += info["amount"]
-                    state[dst]["clients"] += 1
-                    state[dst]["accounts"] += info["n_accounts"]
-                    state[dst]["rows"] += info["n_rows"]
+                    _shift(src, ck, -1)
+                    _shift(dst, ck, +1)
                     new = _cost(state)
-                    state[src]["amount"] += info["amount"]
-                    state[src]["clients"] += 1
-                    state[src]["accounts"] += info["n_accounts"]
-                    state[src]["rows"] += info["n_rows"]
-                    state[dst]["amount"] -= info["amount"]
-                    state[dst]["clients"] -= 1
-                    state[dst]["accounts"] -= info["n_accounts"]
-                    state[dst]["rows"] -= info["n_rows"]
-                    if new[0] < cur_cost - 1e-12:
+                    _shift(src, ck, +1)
+                    _shift(dst, ck, -1)
+                    if new[0] < cur_cost - 1e-9:
                         if best_transfer is None or new[0] < best_transfer[0][0]:
                             best_transfer = (new, src, dst, ck)
 
@@ -9052,6 +9090,11 @@ def _greedy_assign_customers(
             for b in poor_list:
                 if a != b:
                     pairs.append((a, b))
+        if use_states and n_targets <= 12:
+            # الحالات ممكن تبقى مش متوازنة بين محصلين متوسطين في المبلغ → جرّب كل الأزواج
+            for i_a in range(n_targets):
+                for i_b in range(i_a + 1, n_targets):
+                    pairs.append((target_collectors[i_a], target_collectors[i_b]))
         seen = set()
         uniq = []
         for a, b in pairs:
@@ -9065,30 +9108,23 @@ def _greedy_assign_customers(
             keys_b = sorted(state[b_name]["client_keys"], key=lambda ck: cust_info[ck]["amount"], reverse=True)
             if not keys_a or not keys_b:
                 continue
-            cand_a = list(dict.fromkeys(keys_a[:15] + keys_a[-15:]))
-            cand_b = list(dict.fromkeys(keys_b[:15] + keys_b[-15:]))
+            # مع موازنة الحالات: مرشحين أقل لكل زوج عشان السرعة (الأزواج أكتر)
+            _k = 6 if use_states else 15
+            cand_a = list(dict.fromkeys(keys_a[:_k] + keys_a[-_k:]))
+            cand_b = list(dict.fromkeys(keys_b[:_k] + keys_b[-_k:]))
             for ck_a in cand_a:
-                ia = cust_info[ck_a]
                 for ck_b in cand_b:
-                    ib = cust_info[ck_b]
-                    # فرق المبلغ بعد التبادل على a: +ib -ia
-                    da = ib["amount"] - ia["amount"]
-                    dk = ib["n_accounts"] - ia["n_accounts"]
-                    dr = ib["n_rows"] - ia["n_rows"]
-                    state[a_name]["amount"] += da
-                    state[a_name]["accounts"] += dk
-                    state[a_name]["rows"] += dr
-                    state[b_name]["amount"] -= da
-                    state[b_name]["accounts"] -= dk
-                    state[b_name]["rows"] -= dr
+                    # تبادل مؤقت: a يشيل ck_a ويأخذ ck_b — وb العكس
+                    _shift(a_name, ck_a, -1)
+                    _shift(a_name, ck_b, +1)
+                    _shift(b_name, ck_b, -1)
+                    _shift(b_name, ck_a, +1)
                     new = _cost(state)
-                    state[a_name]["amount"] -= da
-                    state[a_name]["accounts"] -= dk
-                    state[a_name]["rows"] -= dr
-                    state[b_name]["amount"] += da
-                    state[b_name]["accounts"] += dk
-                    state[b_name]["rows"] += dr
-                    if new[0] < cur_cost - 1e-12:
+                    _shift(a_name, ck_b, -1)
+                    _shift(a_name, ck_a, +1)
+                    _shift(b_name, ck_a, -1)
+                    _shift(b_name, ck_b, +1)
+                    if new[0] < cur_cost - 1e-9:
                         if best_swap is None or new[0] < best_swap[0][0]:
                             best_swap = (new, a_name, ck_a, b_name, ck_b)
 
@@ -9104,7 +9140,7 @@ def _greedy_assign_customers(
             break
 
     # ----- 3) مرحلة أخيرة: ركّز على تقليل فرق المبالغ فقط لو لسه فوق الـ tolerance -----
-    # مع السماح بفرق عملاء/حسابات في حدود الـ tolerance
+    # مع السماح بفرق عملاء/حسابات في حدود الـ tolerance (وبدون ما نبوّظ توازن الحالات)
     if max_diff_amount is not None:
         for _round in range(max_rounds // 2):
             a_spread, c_spread, k_spread, _ = _ranges(state)
@@ -9116,6 +9152,10 @@ def _greedy_assign_customers(
             dst = by_amt_asc[0]
             if src == dst or state[src]["amount"] <= state[dst]["amount"]:
                 break
+
+            # أكبر فرق حالة حالي — ممنوع نزوّده فوق الـ tolerance
+            _, cur_s_max = _state_spreads()
+            s_limit = max(max_diff_states, cur_s_max) if max_diff_states is not None else cur_s_max
 
             best_ck = None
             best_new_spread = a_spread
@@ -9142,6 +9182,14 @@ def _greedy_assign_customers(
                 if max_diff_accounts is not None and new_k_sp > max(max_diff_accounts, k_spread):
                     continue
                 if new_spread < best_new_spread - 1e-6:
+                    if use_states:
+                        _shift(src, ck, -1)
+                        _shift(dst, ck, +1)
+                        _, s_max_after = _state_spreads()
+                        _shift(src, ck, +1)
+                        _shift(dst, ck, -1)
+                        if s_max_after > s_limit + 1e-9:
+                            continue
                     best_new_spread = new_spread
                     best_ck = ck
 
@@ -9160,6 +9208,14 @@ def _greedy_assign_customers(
                         others_min = min((state[n]["amount"] for n in target_collectors if n not in (src, dst)), default=new_src)
                         new_spread = max(others_max, new_src, new_dst) - min(others_min, new_src, new_dst)
                         if new_spread < a_spread - 1e-6:
+                            if use_states:
+                                _shift(src, ck_a, -1); _shift(src, ck_b, +1)
+                                _shift(dst, ck_b, -1); _shift(dst, ck_a, +1)
+                                _, s_max_after = _state_spreads()
+                                _shift(src, ck_b, -1); _shift(src, ck_a, +1)
+                                _shift(dst, ck_a, -1); _shift(dst, ck_b, +1)
+                                if s_max_after > s_limit + 1e-9:
+                                    continue
                             _transfer(src, dst, ck_a)
                             _transfer(dst, src, ck_b)
                             swap_count += 1
@@ -9220,6 +9276,13 @@ def _greedy_assign_customers(
             "clients": client_spread,
             "accounts": account_spread,
         }
+        if use_states:
+            _, s_max_final = _state_spreads()
+            summary.attrs["spreads"]["states"] = s_max_final
+            if max_diff_states is not None and s_max_final > max_diff_states:
+                warnings.append(
+                    f"فرق عدد الحالات ({s_max_final:,.0f}) أكبر من المسموح ({max_diff_states})"
+                )
         summary.attrs["moved_count"] = moved_count
         summary.attrs["swap_count"] = swap_count
         summary.attrs["avg_amount"] = avg_amount
@@ -11349,9 +11412,19 @@ def page_distribution():
             default=default_amount,
             key="dist_amount_cols",
         )
+        detected_state = find_column(df, PROMISE_SUB_STATE_CANDIDATES)
+        state_opts = ["— بدون موازنة حالات —"] + list(df.columns)
+        state_choice = st.selectbox(
+            "🏷️ عمود الحالات (Sub State) — كل حالة تتوزع بالتساوي",
+            options=state_opts,
+            index=state_opts.index(detected_state) if detected_state in state_opts else 0,
+            key="dist_state_col",
+            help="لو اخترت عمود، الخوارزمية هتوازن عدد مطالبات كل حالة بين المحصلين (زي المبالغ والعملاء والحسابات)",
+        )
+        state_col = None if str(state_choice).startswith("—") else state_choice
 
     st.markdown("**⚖️ أوزان الموازنة** — كلّما زوّدت وزن بُعد، الخوارزمية هتهتم تقلل فرقه أكتر:")
-    w1, w2, w3 = st.columns(3)
+    w1, w2, w3, w4 = st.columns(4)
     with w1:
         amount_weight = st.slider("وزن المبالغ", 0.0, 3.0, 1.0, 0.1, key="dist_w_amt")
     with w2:
@@ -11360,9 +11433,15 @@ def page_distribution():
     with w3:
         account_weight = st.slider("وزن عدد الحسابات", 0.0, 3.0, 1.5, 0.1, key="dist_w_acc",
                                    help="افتراضي أعلى شوية عشان الحسابات متتهملش")
+    with w4:
+        state_weight = st.slider(
+            "وزن الحالات", 0.0, 3.0, 1.5, 0.1, key="dist_w_state",
+            disabled=state_col is None,
+            help="بيشتغل بس لو اخترت عمود الحالات",
+        )
 
     st.markdown("**أقصى فرق مسموح بعد التوزيع (Tolerance):**")
-    t1, t2, t3 = st.columns(3)
+    t1, t2, t3, t4 = st.columns(4)
     with t1:
         max_diff_amount = st.number_input(
             "أقصى فرق في المبالغ",
@@ -11387,6 +11466,16 @@ def page_distribution():
             value=3,
             step=1,
             key="dist_max_diff_acc",
+        )
+    with t4:
+        max_diff_states = st.number_input(
+            "أقصى فرق في الحالة الواحدة",
+            min_value=0,
+            value=2,
+            step=1,
+            key="dist_max_diff_state",
+            disabled=state_col is None,
+            help="أقصى فرق في عدد مطالبات نفس الحالة بين أعلى وأقل محصل",
         )
 
     # ---- تشغيل التوزيع ----
@@ -11424,6 +11513,12 @@ def page_distribution():
         )
         grouped = grouped.rename(columns={"_client_key": "client_key"})
 
+        # عدد مطالبات كل حالة لكل عميل (لموازنة الحالات)
+        if state_col and state_col in work.columns:
+            work["_state_val"] = work[state_col].astype(str).str.strip()
+            _sc_map = {k: g.value_counts().to_dict() for k, g in work.groupby("_client_key")["_state_val"]}
+            grouped["state_counts"] = grouped["client_key"].map(_sc_map)
+
         if grouped.empty:
             st.error("لا توجد سجلات صالحة للتوزيع بعد تنظيف المفاتيح.")
             return
@@ -11438,6 +11533,8 @@ def page_distribution():
             amount_weight=amount_weight,
             client_weight=client_weight,
             account_weight=account_weight,
+            state_weight=state_weight if state_col else 0.0,
+            max_diff_states=max_diff_states if state_col else None,
         )
 
         # --- تطبيق الإسناد على الملف ---
@@ -11498,6 +11595,19 @@ def page_distribution():
         # استبدال ملخص الخوارزمية بالملخص الفعلي من البيانات المكتوبة
         summary = actual_summary
 
+        # توزيع الحالات الفعلي (محصل × حالة) من الشيت بعد الإسناد
+        state_matrix = None
+        state_spread_max = None
+        if state_col and state_col in distributed_df.columns:
+            _st_vals = distributed_df[state_col].astype(str).str.strip()
+            state_matrix = pd.crosstab(distributed_df[sales_col], _st_vals)
+            state_matrix = state_matrix.reindex(selected_targets).fillna(0).astype(int)
+            state_matrix.index.name = "المحصّل"
+            state_matrix = state_matrix.reset_index()
+            _cnt = state_matrix.drop(columns=["المحصّل"])
+            if not _cnt.empty and len(state_matrix) > 1:
+                state_spread_max = int((_cnt.max() - _cnt.min()).max())
+
         if len(summary) > 1:
             amount_spread = float(summary["إجمالي المبلغ"].max() - summary["إجمالي المبلغ"].min())
             client_spread = int(summary["عدد العملاء"].max() - summary["عدد العملاء"].min())
@@ -11513,6 +11623,10 @@ def page_distribution():
                 warnings.append(f"فرق عدد العملاء الفعلي ({client_spread}) أكبر من المسموح ({max_diff_clients})")
             if max_diff_accounts is not None and account_spread > max_diff_accounts:
                 warnings.append(f"فرق عدد الحسابات الفعلي ({account_spread}) أكبر من المسموح ({max_diff_accounts})")
+            if state_spread_max is not None and max_diff_states is not None and state_spread_max > max_diff_states:
+                warnings.append(
+                    f"فرق عدد المطالبات في الحالة الواحدة الفعلي ({state_spread_max}) أكبر من المسموح ({max_diff_states})"
+                )
             if unmapped:
                 warnings.append(f"⚠️ {unmapped} صف لم يُطابق مفتاح العميل وتم إسناده افتراضياً — راجع عمود الهوية")
 
@@ -11562,6 +11676,9 @@ def page_distribution():
             "total_amount": float(grouped["amount"].sum()),
             "sales_col": sales_col,
             "unmapped_rows": unmapped,
+            "state_col": state_col,
+            "state_matrix": state_matrix,
+            "state_spread_max": state_spread_max,
         }
         st.session_state[DISTRIBUTION_RESULT_KEY] = result
         st.success("✅ تم التوزيع بنجاح!")
@@ -11598,10 +11715,16 @@ def _render_distribution_results(result):
         cli_spread = int(summary["عدد العملاء"].max() - summary["عدد العملاء"].min())
         acc_spread = int(summary["عدد الحسابات"].max() - summary["عدد الحسابات"].min())
         st.markdown("#### 📏 الفروقات الفعلية بعد التوزيع (كلّما أصغر كلّما أفضل)")
-        s1, s2, s3 = st.columns(3)
+        _st_spread = result.get("state_spread_max")
+        if _st_spread is not None:
+            s1, s2, s3, s4 = st.columns(4)
+        else:
+            s1, s2, s3 = st.columns(3)
         s1.metric("فرق المبالغ", f"{amt_spread:,.0f}")
         s2.metric("فرق عدد العملاء", f"{cli_spread}")
         s3.metric("فرق عدد الحسابات", f"{acc_spread}")
+        if _st_spread is not None:
+            s4.metric("أكبر فرق في حالة واحدة", f"{_st_spread}")
 
     warnings = result.get("warnings") or []
     if warnings:
@@ -11638,6 +11761,32 @@ def _render_distribution_results(result):
             _apply_ops_chart_style(fig2, "توزيع المبالغ", height=380, xaxis_title="", yaxis_title="المبلغ")
             st.plotly_chart(fig2, use_container_width=True, config=PLOTLY_CONFIG, key="dist_amount_chart")
 
+    state_matrix = result.get("state_matrix")
+    if state_matrix is not None and not state_matrix.empty:
+        st.markdown(f"#### 🏷️ توزيع الحالات على المحصلين ({result.get('state_col')})")
+        st.caption("عدد المطالبات من كل حالة عند كل محصل — الصف الأخير فرق (أعلى − أقل) لكل حالة.")
+        _cnt = state_matrix.drop(columns=["المحصّل"])
+        _diff_row = {"المحصّل": "الفرق (أعلى − أقل)"}
+        for c_ in _cnt.columns:
+            _diff_row[c_] = int(_cnt[c_].max() - _cnt[c_].min())
+        st.dataframe(
+            pd.concat([state_matrix, pd.DataFrame([_diff_row])], ignore_index=True),
+            use_container_width=True,
+            hide_index=True,
+        )
+        _long = state_matrix.melt(id_vars="المحصّل", var_name="الحالة", value_name="عدد المطالبات")
+        fig_st = px.bar(
+            _long,
+            x="المحصّل",
+            y="عدد المطالبات",
+            color="الحالة",
+            barmode="stack",
+            template=PLOTLY_TEMPLATE,
+            color_discrete_sequence=OPS_SCALE,
+        )
+        _apply_ops_chart_style(fig_st, "توزيع الحالات على المحصلين", height=400, xaxis_title="", yaxis_title="عدد المطالبات")
+        st.plotly_chart(fig_st, use_container_width=True, config=PLOTLY_CONFIG, key="dist_state_chart")
+
     detail = result.get("detail")
     if detail is not None and not detail.empty:
         with st.expander("📋 تفاصيل إسناد كل عميل", expanded=False):
@@ -11653,6 +11802,8 @@ def _render_distribution_results(result):
             with pd.ExcelWriter(buf, engine="openpyxl") as writer:
                 if summary is not None:
                     summary.to_excel(writer, index=False, sheet_name="ملخص_التوزيع")
+                if state_matrix is not None and not state_matrix.empty:
+                    state_matrix.to_excel(writer, index=False, sheet_name="توزيع_الحالات")
                 row_level = result.get("row_level_export")
                 if row_level is not None and not row_level.empty:
                     row_level.to_excel(writer, index=False, sheet_name="المطالبات_الموزعة_فقط")

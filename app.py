@@ -4511,7 +4511,7 @@ def render_pivot_section(df: pd.DataFrame, key_prefix: str):
 def _render_period_results(stored, period_key):
     """عرض نتائج الفترة المحفوظة (جدول + كروت + شارتات + تنزيل) — تُستخدم بعد الضغط على زر التصنيف وبعد شيل الملف."""
     period_title = stored["period_title"]
-    result_df = stored["df"]
+    result_df = add_reach_and_nationality_columns(stored["df"])
     sales_col = stored["sales_col"]
     time_col = stored["time_col"]
 
@@ -4823,19 +4823,30 @@ def add_reach_and_nationality_columns(df):
     if df is None or df.empty:
         return df
     out = df.copy()
+    added = []
     if REACH_COL not in out.columns:
         notes_col = find_column(out, NOTES_CANDIDATES + [ORIGINAL_TEXT_COL, MODEL_TEXT_COL])
         sub_col = find_column(out, PROMISE_SUB_STATE_CANDIDATES)
-        empty = pd.Series([None] * len(out), index=out.index)
-        notes = out[notes_col] if notes_col else empty
-        subs = out[sub_col] if sub_col else empty
-        results = [_reach_from_row(n, s) for n, s in zip(notes, subs)]
-        out[REACH_COL] = [r[0] for r in results]
-        out[REACH_DETAIL_COL] = [r[1] for r in results]
+        if notes_col or sub_col:  # من غير إفادة ولا Sub State منقدرش نحكم → منضيفش عمود مضلل
+            empty = pd.Series([None] * len(out), index=out.index)
+            notes = out[notes_col] if notes_col else empty
+            subs = out[sub_col] if sub_col else empty
+            results = [_reach_from_row(n, s) for n, s in zip(notes, subs)]
+            out[REACH_COL] = [r[0] for r in results]
+            out[REACH_DETAIL_COL] = [r[1] for r in results]
+            added += [REACH_COL, REACH_DETAIL_COL]
     if NATIONALITY_COL not in out.columns:
         id_col = find_column(out, DEBTOR_ID_CANDIDATES)
         if id_col:
             out[NATIONALITY_COL] = out[id_col].map(_nationality_from_id)
+            added.append(NATIONALITY_COL)
+    # رتّب الأعمدة الجديدة جنب التصنيف (بعد نسبة الثقة) عشان تبان في الشيت
+    if added:
+        anchor = "نسبة_الثقة" if "نسبة_الثقة" in out.columns else (CLASSIFICATION_COL if CLASSIFICATION_COL in out.columns else None)
+        if anchor:
+            cols = [c for c in out.columns if c not in added]
+            pos = cols.index(anchor) + 1
+            out = out[cols[:pos] + added + cols[pos:]]
     return out
 
 
@@ -5288,7 +5299,7 @@ def _classify_aggregate_file(uploaded_file, company, period_key, period_title):
         st.rerun()
 
 def _render_aggregate_results(stored, period_title, period_key):
-    result_df = stored["df"]
+    result_df = add_reach_and_nationality_columns(stored["df"])
     sales_col = stored["sales_col"]
     time_col = stored["time_col"]
     render_duplicate_summary(stored.get("duplicate_stats"))
@@ -6018,6 +6029,7 @@ def page_dashboard():
         st.error(f"تعذر قراءة الملف: {e}")
         return
 
+    df = add_reach_and_nationality_columns(df)
     class_col = CLASSIFICATION_COL if CLASSIFICATION_COL in df.columns else None
     sales_col = find_column(df, SALES_PERSON_CANDIDATES)
     time_col = find_column(df, CREATED_ON_CANDIDATES)

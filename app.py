@@ -5007,14 +5007,18 @@ def render_period_charts(df, sales_col, time_col, period_title):
     st.subheader("📌 ملخص نتائج التصنيف")
     render_kpi_dashboard(total, success, len(agent), success_rate, avg_wasted)
     st.divider()
-    render_agent_activity_charts(agent, df, sales_col, period_title)
+    no_answer_table = build_no_answer_table(df, sales_col)
+    render_agent_activity_charts(agent, df, sales_col, period_title, no_answer_table=no_answer_table)
     st.divider()
     render_reach_nationality_hourly_charts(df, sales_col, time_col, period_title)
     with st.expander("📋 عرض جدول تفاصيل كل محصّل"):
         st.dataframe(agent, use_container_width=True, hide_index=True)
+    if no_answer_table is not None and not no_answer_table.empty:
+        with st.expander("📋 تفاصيل عدم الرد لكل محصّل"):
+            st.dataframe(no_answer_table, use_container_width=True, hide_index=True)
 
 
-def render_agent_activity_charts(agent, df, sales_col, period_title):
+def render_agent_activity_charts(agent, df, sales_col, period_title, no_answer_table=None):
     agent_sorted = agent.sort_values("ناجحة", ascending=False).reset_index(drop=True)
     names = [str(n) for n in agent_sorted["المحصّل"]]
 
@@ -5088,12 +5092,13 @@ def render_agent_activity_charts(agent, df, sales_col, period_title):
         render_success_fail_chart(agent, period_title)
 
     duration_col, no_answer_col = st.columns(2)
+    pair_height = _pair_chart_height(len(agent))
     with duration_col:
         with st.container(border=True):
-            render_avg_duration_chart(agent, period_title)
+            render_avg_duration_chart(agent, period_title, height=pair_height)
     with no_answer_col:
         with st.container(border=True):
-            render_no_answer_chart(df, sales_col, period_title)
+            render_no_answer_chart(df, sales_col, period_title, table=no_answer_table, height=pair_height)
 
 
 def render_success_fail_chart(agent, period_title):
@@ -5109,75 +5114,91 @@ def render_success_fail_chart(agent, period_title):
     render_selectable_chart(fig, f"classification_success_fail_{period_title}")
 
 
-def render_avg_duration_chart(agent, period_title):
+def render_avg_duration_chart(agent, period_title, height=None):
     key = "متوسط مدة المكالمة (دقيقة)"
     if key not in agent.columns:
         return
     ordered = agent.sort_values(key, ascending=True)
     fig = px.bar(ordered, x=key, y="المحصّل", orientation="h", text=key, color=key, color_continuous_scale=CLASSIFICATION_SCALE, template=PLOTLY_TEMPLATE)
-    fig.update_layout(**PLOTLY_LAYOUT, title=f"⏱️ متوسط مدة المكالمات ({period_title})", xaxis_title="دقيقة", yaxis_title="")
+    fig.update_layout(**PLOTLY_LAYOUT, title=f"⏱️ متوسط مدة المكالمات ({period_title})", xaxis_title="دقيقة", yaxis_title="",
+                      height=height or _pair_chart_height(len(ordered)), coloraxis_showscale=False)
     fig.update_traces(customdata=ordered["المحصّل"], hovertemplate="<b>%{y}</b><br>متوسط المدة: %{x:.1f} دقيقة<extra></extra>")
     render_selectable_chart(fig, f"classification_avg_duration_{period_title}")
 
 
-def render_no_answer_chart(df, sales_col, period_title):
-    """إفادات عدم الرد (لا يرد / مغلق بكل أشكاله) لكل محصّل + نسبتها من إجمالي مكالماته.
+NO_ANSWER_TOTAL_COL = "عدم الرد (لا يرد + مغلق)"
+NO_ANSWER_PCT_COL = "نسبة عدم الرد من إجمالي المكالمات (%)"
 
-    الأساس: نص الإفادة (Notes) بنفس قواعد _classify_unreachable_from_notes
-    (لا يرد، ما يرد، مشغول، بريد صوتي، مغلق، مفصول، خارج الخدمة، ... مع/بدون تكرار).
-    """
+
+def _pair_chart_height(n_agents, base=430, row_px=44, pad=170):
+    """ارتفاع موحّد للشارتات اللي جنب بعض (بتكبر مع عدد المحصلين)."""
+    return max(base, int(n_agents or 0) * row_px + pad)
+
+
+def build_no_answer_table(df, sales_col):
+    """جدول عدم الرد لكل محصّل من الإفادة (Notes): لا يرد / مغلق بكل أشكاله + نسبته من إجمالي مكالماته."""
     notes_col = find_column(df, NOTES_CANDIDATES + [ORIGINAL_TEXT_COL, MODEL_TEXT_COL]) if df is not None else None
     if not notes_col or sales_col not in df.columns:
-        return
+        return None
     work = df[[sales_col, notes_col]].copy()
     work["_agent"] = work[sales_col].astype(str).str.strip()
     work["_state"] = work[notes_col].map(_classify_unreachable_from_notes)
-
     total = work.groupby("_agent").size().rename("إجمالي المكالمات")
     hit = work.dropna(subset=["_state"])
     if hit.empty:
-        st.info("لا توجد إفادات عدم رد (لا يرد / مغلق) في البيانات.")
-        return
+        return pd.DataFrame()
     by_type = pd.crosstab(hit["_agent"], hit["_state"])
     table = total.to_frame().join(by_type, how="left").fillna(0)
     type_cols = [c for c in ACTIVITY_NO_ANSWER_STATES if c in table.columns]
     for c in type_cols:
         table[c] = table[c].astype(int)
-    table["عدم الرد (لا يرد + مغلق)"] = table[type_cols].sum(axis=1).astype(int)
-    table["نسبة عدم الرد من إجمالي المكالمات (%)"] = (
-        table["عدم الرد (لا يرد + مغلق)"] / table["إجمالي المكالمات"].replace(0, pd.NA) * 100
+    table[NO_ANSWER_TOTAL_COL] = table[type_cols].sum(axis=1).astype(int)
+    table[NO_ANSWER_PCT_COL] = (
+        table[NO_ANSWER_TOTAL_COL] / table["إجمالي المكالمات"].replace(0, pd.NA) * 100
     ).fillna(0).round(1)
-    table = table.sort_values("عدم الرد (لا يرد + مغلق)", ascending=False).reset_index().rename(columns={"_agent": "المحصّل"})
+    table = table.sort_values(NO_ANSWER_TOTAL_COL, ascending=False).reset_index().rename(columns={"_agent": "المحصّل"})
+    return table
 
+
+def render_no_answer_chart(df, sales_col, period_title, table=None, height=None):
+    """إفادات عدم الرد (لا يرد / مغلق بكل أشكاله) لكل محصّل + نسبتها من إجمالي مكالماته.
+
+    أفقي عشان أسماء المحصلين الطويلة متتداخلش. الجدول بيتعرض تحت مع باقي الجداول.
+    """
+    if table is None:
+        table = build_no_answer_table(df, sales_col)
+    if table is None:
+        return
+    if table.empty:
+        st.info("لا توجد إفادات عدم رد (لا يرد / مغلق) في البيانات.")
+        return
+
+    table = table.sort_values(NO_ANSWER_TOTAL_COL, ascending=True).reset_index(drop=True)  # الأكبر فوق
+    type_cols = [c for c in ACTIVITY_NO_ANSWER_STATES if c in table.columns]
     names = table["المحصّل"].astype(str).tolist()
-    counts = table["عدم الرد (لا يرد + مغلق)"].tolist()
-    pcts = table["نسبة عدم الرد من إجمالي المكالمات (%)"].tolist()
+    counts = table[NO_ANSWER_TOTAL_COL].tolist()
+    pcts = table[NO_ANSWER_PCT_COL].tolist()
     totals = table["إجمالي المكالمات"].astype(int).tolist()
     labels = [f"{n:,} ({p:.1f}%)" for n, p in zip(counts, pcts)]
-    breakdown = [
-        "<br>".join(f"{c}: {int(table.loc[i, c]):,}" for c in type_cols)
-        for i in range(len(table))
-    ]
+    breakdown = ["<br>".join(f"{c}: {int(table.loc[i, c]):,}" for c in type_cols) for i in range(len(table))]
 
     fig = go.Figure(go.Bar(
-        x=names, y=counts, text=labels, texttemplate="%{text}",
+        x=counts, y=names, orientation="h", text=labels, texttemplate="%{text}",
         marker_color=CLASSIFICATION_PRIMARY, customdata=list(zip(names, totals, pcts, breakdown)),
         hovertemplate=(
-            "<b>%{x}</b><br>عدم الرد: %{y:,} من %{customdata[1]:,} مكالمة"
+            "<b>%{y}</b><br>عدم الرد: %{x:,} من %{customdata[1]:,} مكالمة"
             "<br>النسبة: %{customdata[2]:.1f}%<br>%{customdata[3]}<extra></extra>"
         ),
     ))
     fig.update_layout(
         **PLOTLY_LAYOUT,
-        title=f"📝 إفادات عدم الرد (لا يرد / مغلق بكل أشكاله) ونسبتها من إجمالي المكالمات ({period_title})",
-        xaxis_title="", yaxis_title="عدد الإفادات",
+        title=f"📝 إفادات عدم الرد (لا يرد / مغلق) ونسبتها من إجمالي المكالمات ({period_title})",
+        xaxis_title="عدد الإفادات", yaxis_title="",
+        height=height or _pair_chart_height(len(table)),
     )
+    fig.update_xaxes(range=[0, max(counts) * 1.3 if counts and max(counts) else 1])  # مساحة للّيبل
     fig.update_traces(marker_line_width=0)
-    # customdata[0] = اسم المحصّل (عشان فلتر الضغط على الشارت)
     render_selectable_chart(fig, f"classification_no_answer_{period_title}")
-
-    with st.expander("📋 تفاصيل عدم الرد لكل محصّل"):
-        st.dataframe(table, use_container_width=True, hide_index=True)
 
 
 def _render_aggregate_break_settings(period_key, period_title):

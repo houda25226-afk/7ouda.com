@@ -2204,6 +2204,7 @@ def _state_key(value):
         .replace("ى", "ي")
         .replace("ة", "ه")
     )
+    text = re.sub(r"[\u064B-\u065F\u0670\u0640]", "", text)  # تشكيل + تطويل
     return re.sub(r"[\s_-]+", "", text)
 
 
@@ -2310,6 +2311,39 @@ def _classify_unreachable_from_notes(value):
         or "unabletoreach" in key
         or "clientnotavailable" in key
         or "customernotavailable" in key
+        # صيغ "لا يوجد رد" وأخواتها
+        or ("لارد" in key and "الاردن" not in key)  # "الأردن" فيها لارد
+        or "لاترد" in key
+        or "مافيرد" in key
+        or "مافيهرد" in key
+        or "مافيشرد" in key
+        or "مفيهرد" in key
+        or "لميتمالرد" in key
+        or "لمتمالرد" in key
+        or "لايتمالرد" in key
+        or "لاتوجداجابه" in key
+        or "لايوجداجابه" in key
+        or "لااجابه" in key
+        or "لماجب" in key
+        or "لميجب" in key
+        or "لايجيب" in key
+        or "لايجاوب" in key
+        or "لايتجاوب" in key
+        or "مابيجاوب" in key
+        or "ماجاوب" in key
+        or "مافيجواب" in key
+        or "لايوجدجواب" in key
+        or "لايوجدتجاوب" in key
+        or "عدمالتجاوب" in key
+        or "عدمالاجابه" in key
+        or "لميتمالاجابه" in key
+        or "لميستجب" in key
+        or "لايستجيب" in key
+        or "لايوجداستجابه" in key
+        or "لاتوجداستجابه" in key
+        or "لااستجابه" in key
+        or "عدماستجابه" in key
+        or "عدمالاستجابه" in key
     )
     closed = (
         "مغلق" in key
@@ -5087,18 +5121,63 @@ def render_avg_duration_chart(agent, period_title):
 
 
 def render_no_answer_chart(df, sales_col, period_title):
-    notes_col = ORIGINAL_TEXT_COL if ORIGINAL_TEXT_COL in df.columns else None
+    """إفادات عدم الرد (لا يرد / مغلق بكل أشكاله) لكل محصّل + نسبتها من إجمالي مكالماته.
+
+    الأساس: نص الإفادة (Notes) بنفس قواعد _classify_unreachable_from_notes
+    (لا يرد، ما يرد، مشغول، بريد صوتي، مغلق، مفصول، خارج الخدمة، ... مع/بدون تكرار).
+    """
+    notes_col = find_column(df, NOTES_CANDIDATES + [ORIGINAL_TEXT_COL, MODEL_TEXT_COL]) if df is not None else None
     if not notes_col or sales_col not in df.columns:
         return
-    work = df.copy()
-    work["_lrd"] = work[notes_col].astype(str).str.contains(r"لا يرد|لايرد|لا\s*يرد", regex=True, na=False)
-    counts = work[work["_lrd"]].groupby(sales_col).size().reset_index(name="عدد إفادات لا يرد")
-    if counts.empty:
+    work = df[[sales_col, notes_col]].copy()
+    work["_agent"] = work[sales_col].astype(str).str.strip()
+    work["_state"] = work[notes_col].map(_classify_unreachable_from_notes)
+
+    total = work.groupby("_agent").size().rename("إجمالي المكالمات")
+    hit = work.dropna(subset=["_state"])
+    if hit.empty:
+        st.info("لا توجد إفادات عدم رد (لا يرد / مغلق) في البيانات.")
         return
-    fig = px.bar(counts, x=sales_col, y="عدد إفادات لا يرد", color_discrete_sequence=[CLASSIFICATION_PRIMARY], template=PLOTLY_TEMPLATE)
-    fig.update_layout(**PLOTLY_LAYOUT, title=f"📝 إفادات لا يرد لكل محصّل ({period_title})", xaxis_title="", yaxis_title="العدد")
-    fig.update_traces(customdata=counts[sales_col], hovertemplate="<b>%{x}</b><br>عدد إفادات لا يرد: %{y}<extra></extra>")
+    by_type = pd.crosstab(hit["_agent"], hit["_state"])
+    table = total.to_frame().join(by_type, how="left").fillna(0)
+    type_cols = [c for c in ACTIVITY_NO_ANSWER_STATES if c in table.columns]
+    for c in type_cols:
+        table[c] = table[c].astype(int)
+    table["عدم الرد (لا يرد + مغلق)"] = table[type_cols].sum(axis=1).astype(int)
+    table["نسبة عدم الرد من إجمالي المكالمات (%)"] = (
+        table["عدم الرد (لا يرد + مغلق)"] / table["إجمالي المكالمات"].replace(0, pd.NA) * 100
+    ).fillna(0).round(1)
+    table = table.sort_values("عدم الرد (لا يرد + مغلق)", ascending=False).reset_index().rename(columns={"_agent": "المحصّل"})
+
+    names = table["المحصّل"].astype(str).tolist()
+    counts = table["عدم الرد (لا يرد + مغلق)"].tolist()
+    pcts = table["نسبة عدم الرد من إجمالي المكالمات (%)"].tolist()
+    totals = table["إجمالي المكالمات"].astype(int).tolist()
+    labels = [f"{n:,} ({p:.1f}%)" for n, p in zip(counts, pcts)]
+    breakdown = [
+        "<br>".join(f"{c}: {int(table.loc[i, c]):,}" for c in type_cols)
+        for i in range(len(table))
+    ]
+
+    fig = go.Figure(go.Bar(
+        x=names, y=counts, text=labels, texttemplate="%{text}",
+        marker_color=CLASSIFICATION_PRIMARY, customdata=list(zip(names, totals, pcts, breakdown)),
+        hovertemplate=(
+            "<b>%{x}</b><br>عدم الرد: %{y:,} من %{customdata[1]:,} مكالمة"
+            "<br>النسبة: %{customdata[2]:.1f}%<br>%{customdata[3]}<extra></extra>"
+        ),
+    ))
+    fig.update_layout(
+        **PLOTLY_LAYOUT,
+        title=f"📝 إفادات عدم الرد (لا يرد / مغلق بكل أشكاله) ونسبتها من إجمالي المكالمات ({period_title})",
+        xaxis_title="", yaxis_title="عدد الإفادات",
+    )
+    fig.update_traces(marker_line_width=0)
+    # customdata[0] = اسم المحصّل (عشان فلتر الضغط على الشارت)
     render_selectable_chart(fig, f"classification_no_answer_{period_title}")
+
+    with st.expander("📋 تفاصيل عدم الرد لكل محصّل"):
+        st.dataframe(table, use_container_width=True, hide_index=True)
 
 
 def _render_aggregate_break_settings(period_key, period_title):

@@ -1968,6 +1968,18 @@ def _enhance_chart(fig, axis_size=15, label_size=13):
     fig.for_each_xaxis(_bold_title)
     fig.for_each_yaxis(_bold_title)
     fig.update_layout(legend_font_size=14)
+
+    # الـ legend اللي تحت الشارت بيخبط في أسماء المحاور (خصوصاً لما تتلف وتبقى طويلة)
+    # → ننقله فوق الشارت تحت العنوان، ومش بيتأثر بطول أسماء المحصلين.
+    leg = fig.layout.legend
+    if leg.orientation == "h" and leg.y is not None and leg.y < 0:
+        top = getattr(fig.layout.margin, "t", None) or 60
+        fig.update_layout(
+            legend=dict(orientation="h", y=1.0, yanchor="bottom", x=0.5, xanchor="center"),
+            margin=dict(t=max(int(top), 115)),
+            title_y=0.97,
+            title_yanchor="top",
+        )
     return fig
 
 

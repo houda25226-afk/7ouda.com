@@ -1888,8 +1888,98 @@ def _extract_selected_agent(event, fig):
     return str(selected).strip() if selected is not None else None
 
 
-def render_selectable_chart(fig, key, filter_key=CLASSIFICATION_AGENT_FILTER_KEY):
-    """عرض رسم Plotly مع التقاط اختيار محصّل وإعادة تشغيل الصفحة لتطبيق الفلتر."""
+CLASSIFICATION_CHART_CSS = """
+<style>
+/* تويب التصنيف: أرقام ومحاور الاتشارتس بولد وأوضح */
+.js-plotly-plot .xtick text,
+.js-plotly-plot .ytick text,
+.js-plotly-plot .g-xtitle text,
+.js-plotly-plot .g-ytitle text { font-weight: 700 !important; }
+</style>
+"""
+
+
+def _enhance_chart(fig, axis_size=15, label_size=13):
+    """يضيف Data labels لكل الترايسز + يكبّر خط محاور x/y ويخليه بولد.
+
+    - Bar: أرقام فوق/جوه الأعمدة (stack = جوه، غير كده = فوق).
+    - Line/Scatter: أرقام فوق النقاط.   - Pie: label + value + percent.
+    - اللي عنده text/texttemplate جاهز بيتحوّل لبولد بدل ما يتغير.
+    """
+    if fig is None:
+        return fig
+    barmode = getattr(fig.layout, "barmode", None)
+    n_bar_traces = sum(1 for t in fig.data if getattr(t, "type", None) == "bar")
+    # px بيحط barmode=relative حتى لو ترايس واحد — المكدّس الحقيقي = أكتر من ترايس
+    stacked = barmode in ("stack", "relative") and n_bar_traces > 1
+
+    for tr in fig.data:
+        ttype = getattr(tr, "type", None)
+        if ttype == "bar":
+            horizontal = getattr(tr, "orientation", None) == "h"
+            existing = getattr(tr, "texttemplate", None)
+            if existing:
+                if not str(existing).startswith("<b>"):
+                    tr.texttemplate = f"<b>{existing}</b>"
+            elif getattr(tr, "text", None) is not None:
+                tr.texttemplate = "<b>%{text:,}</b>"
+            else:
+                vals = tr.x if horizontal else tr.y
+                if stacked and vals is not None:
+                    # في المكدّس: خبّي أرقام الأصفار عشان متزحمش الشارت
+                    tr.text = [
+                        "" if (v is None or v == 0)
+                        else (f"{v:,.0f}" if float(v).is_integer() else f"{v:,.1f}")
+                        for v in vals
+                    ]
+                    tr.texttemplate = "<b>%{text}</b>"
+                else:
+                    tr.texttemplate = "<b>%{x:,}</b>" if horizontal else "<b>%{y:,}</b>"
+            if stacked:
+                tr.textposition = "inside"
+                tr.insidetextanchor = "middle"
+            else:
+                tr.textposition = "outside"
+                tr.cliponaxis = False
+            tr.textfont = dict(size=label_size, color=THEME["text"])
+        elif ttype == "scatter":
+            mode = str(getattr(tr, "mode", "") or "")
+            if mode == "text" or "text" in mode.split("+"):
+                continue  # لابل جاهز (مثلاً إجمالي فوق الأعمدة المكدّسة)
+            tr.mode = (mode + "+text") if mode else "lines+markers+text"
+            tr.texttemplate = "<b>%{y:,}</b>"
+            tr.textposition = "top center"
+            tr.textfont = dict(size=label_size, color=THEME["text"])
+        elif ttype == "pie":
+            if not getattr(tr, "texttemplate", None):
+                tr.textinfo = "label+value+percent"
+            tr.textfont = dict(size=label_size + 1, color=THEME["text"])
+
+    axis_font = dict(size=axis_size, color=THEME["text"], family="Tajawal, sans-serif")
+
+    def _bold_title(axis):
+        title = getattr(axis, "title", None)
+        text = getattr(title, "text", None) if title is not None else None
+        if text and not str(text).startswith("<b>"):
+            axis.title.text = f"<b>{text}</b>"
+
+    fig.update_xaxes(tickfont=axis_font, title_font=dict(size=axis_size + 1, color=THEME["text"]), automargin=True)
+    fig.update_yaxes(tickfont=axis_font, title_font=dict(size=axis_size + 1, color=THEME["text"]), automargin=True)
+    fig.for_each_xaxis(_bold_title)
+    fig.for_each_yaxis(_bold_title)
+    fig.update_layout(legend_font_size=14)
+    return fig
+
+
+def render_selectable_chart(fig, key, filter_key=CLASSIFICATION_AGENT_FILTER_KEY, enhance=None):
+    """عرض رسم Plotly مع التقاط اختيار محصّل وإعادة تشغيل الصفحة لتطبيق الفلتر.
+
+    enhance: Data labels + محاور بولد. الافتراضي = شغّال لشارتات تويب التصنيف بس.
+    """
+    if enhance is None:
+        enhance = filter_key == CLASSIFICATION_AGENT_FILTER_KEY
+    if enhance:
+        _enhance_chart(fig)
     try:
         event = st.plotly_chart(
             fig,
@@ -4482,6 +4572,7 @@ def classify_period_file(uploaded_file, period_key):
             )
 
         result_df = result_df.rename(columns={MODEL_TEXT_COL: ORIGINAL_TEXT_COL})
+        result_df = add_reach_and_nationality_columns(result_df)
 
         # معلومات الفترة والشركة تبقى مع النتيجة بدون التأثير على الموديل.
         result_df["الشركة"] = st.session_state["selected_company"]
@@ -4638,6 +4729,220 @@ def render_kpi_dashboard(total, success, agent_count, success_rate, avg_wasted=N
     st.plotly_chart(figure, use_container_width=True, config=PLOTLY_CONFIG)
 
 
+REACH_COL = "التوصل للعميل"
+REACH_DETAIL_COL = "تفاصيل عدم التوصل"
+NATIONALITY_COL = "جنسية العميل"
+REACH_YES = "تم التوصل"
+REACH_NO = "لم يتم التوصل"
+NATIONALITY_SA = "سعودي"
+NATIONALITY_FOREIGN = "أجنبي"
+NATIONALITY_UNKNOWN = "غير محدد"
+DEBTOR_ID_CANDIDATES = [
+    "Debator", "debator", "DEBATOR", "Debator ID", "Debator Id",
+] + SCHEDULE_DEBITOR_CANDIDATES + ["رقم الهوية", "رقم الهويه", "الهوية", "الهويه"]
+
+_ARABIC_DIGITS = str.maketrans("٠١٢٣٤٥٦٧٨٩۰۱۲۳۴۵۶۷۸۹", "01234567890123456789")
+
+
+def _nationality_from_id(value):
+    """رقم الهوية بيبدأ بـ 2 = أجنبي، غير كده = سعودي (فاضي = غير محدد)."""
+    if value is None:
+        return NATIONALITY_UNKNOWN
+    try:
+        if pd.isna(value):
+            return NATIONALITY_UNKNOWN
+    except (TypeError, ValueError):
+        pass
+    text = str(value).strip().translate(_ARABIC_DIGITS)
+    text = re.sub(r"\.0+$", "", text)      # 2123456789.0 من إكسيل
+    digits = re.sub(r"\D", "", text)        # شيل المسافات/الرموز/علامة النص
+    if not digits:
+        return NATIONALITY_UNKNOWN
+    return NATIONALITY_FOREIGN if digits.startswith("2") else NATIONALITY_SA
+
+
+def _reach_from_row(notes, sub_state):
+    """تم التوصل / لم يتم التوصل من الإفادة (Notes) أولاً ثم Sub State كاحتياطي."""
+    note_state = _classify_unreachable_from_notes(notes)
+    if isinstance(note_state, str) and note_state in ACTIVITY_NO_ANSWER_STATES:
+        return REACH_NO, note_state
+    sub = _classify_activity_sub_state(sub_state)
+    if sub in ACTIVITY_NO_ANSWER_STATES:
+        return REACH_NO, sub
+    return REACH_YES, ""
+
+
+def add_reach_and_nationality_columns(df):
+    """يضيف أعمدة: التوصل للعميل + تفاصيل عدم التوصل + جنسية العميل (لو مش موجودين)."""
+    if df is None or df.empty:
+        return df
+    out = df.copy()
+    if REACH_COL not in out.columns:
+        notes_col = find_column(out, NOTES_CANDIDATES + [ORIGINAL_TEXT_COL, MODEL_TEXT_COL])
+        sub_col = find_column(out, PROMISE_SUB_STATE_CANDIDATES)
+        empty = pd.Series([None] * len(out), index=out.index)
+        notes = out[notes_col] if notes_col else empty
+        subs = out[sub_col] if sub_col else empty
+        results = [_reach_from_row(n, s) for n, s in zip(notes, subs)]
+        out[REACH_COL] = [r[0] for r in results]
+        out[REACH_DETAIL_COL] = [r[1] for r in results]
+    if NATIONALITY_COL not in out.columns:
+        id_col = find_column(out, DEBTOR_ID_CANDIDATES)
+        if id_col:
+            out[NATIONALITY_COL] = out[id_col].map(_nationality_from_id)
+    return out
+
+
+def _stacked_by_agent_chart(work, sales_col, value_col, order, colors, title, key, height=430):
+    """شارت مكدّس لكل محصّل حسب عمود تصنيفي (التوصل / الجنسية) + data labels."""
+    table = pd.crosstab(work[sales_col].astype(str).str.strip(), work[value_col])
+    table = table.reindex(columns=[c for c in order if c in table.columns])
+    if table.empty:
+        return
+    table = table.loc[table.sum(axis=1).sort_values(ascending=False).index]
+    names = [str(n) for n in table.index]
+    fig = go.Figure([
+        go.Bar(
+            name=col, x=names, y=table[col].tolist(), marker_color=colors.get(col),
+            customdata=names, hovertemplate=f"<b>%{{x}}</b><br>{col}: %{{y:,}}<extra></extra>",
+        )
+        for col in table.columns
+    ])
+    fig.update_layout(**PLOTLY_LAYOUT, title=title, barmode="stack", xaxis_title="", yaxis_title="عدد الإفادات", height=height,
+                      legend=dict(orientation="h", yanchor="bottom", y=-0.3, x=0.5, xanchor="center"))
+    fig.update_traces(marker_line_width=0)
+    render_selectable_chart(fig, key)
+
+
+def _donut_chart(labels, values, colors, title, key, height=430):
+    fig = go.Figure(go.Pie(
+        labels=labels, values=values, hole=0.55,
+        marker=dict(colors=[colors.get(l) for l in labels]),
+        hovertemplate="<b>%{label}</b><br>العدد: %{value:,}<br>النسبة: %{percent}<extra></extra>",
+    ))
+    fig.update_layout(**PLOTLY_LAYOUT, title=title, height=height,
+                      legend=dict(orientation="h", yanchor="bottom", y=-0.2, x=0.5, xanchor="center"))
+    _enhance_chart(fig)
+    st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG, key=key)
+
+
+def render_reach_nationality_hourly_charts(df, sales_col, time_col, period_title):
+    """شارتات: التوصل للعميل + جنسية العميل + النشاط الساعي (مغطاة / ناجحة) لكل محصّل."""
+    work = add_reach_and_nationality_columns(df)
+    if work is None or work.empty or sales_col not in work.columns:
+        return
+    work = work.copy()
+    work["_success"] = _activity_success_mask(work, CLASSIFICATION_COL)
+    kp = f"{period_title}"
+
+    # ---------------- التوصل للعميل ----------------
+    st.subheader(f"📵 التوصل للعميل — {period_title}")
+    reach_colors = {REACH_YES: CLASSIFICATION_HIGHLIGHT, REACH_NO: CLASSIFICATION_SECONDARY}
+    reach_counts = work[REACH_COL].value_counts()
+    c1, c2 = st.columns(2)
+    with c1:
+        with st.container(border=True):
+            _donut_chart(
+                [REACH_YES, REACH_NO],
+                [int(reach_counts.get(REACH_YES, 0)), int(reach_counts.get(REACH_NO, 0))],
+                reach_colors, "📞 تم التوصل مقابل لم يتم التوصل", f"reach_donut_{kp}",
+            )
+    with c2:
+        with st.container(border=True):
+            no_mask = work[REACH_COL] == REACH_NO
+            reasons = work.loc[no_mask, REACH_DETAIL_COL].replace("", pd.NA).dropna().value_counts()
+            if reasons.empty:
+                st.info("لا توجد إفادات عدم توصل.")
+            else:
+                reasons_df = reasons.reset_index()
+                reasons_df.columns = ["السبب", "العدد"]
+                fig = px.bar(reasons_df, x="السبب", y="العدد", template=PLOTLY_TEMPLATE,
+                             color_discrete_sequence=[CLASSIFICATION_SECONDARY])
+                fig.update_layout(**PLOTLY_LAYOUT, title="🔎 أسباب عدم التوصل", xaxis_title="", yaxis_title="عدد الإفادات", height=430)
+                fig.update_traces(marker_line_width=0, hovertemplate="<b>%{x}</b><br>العدد: %{y:,}<extra></extra>")
+                _enhance_chart(fig)
+                st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG, key=f"reach_reasons_{kp}")
+    with st.container(border=True):
+        _stacked_by_agent_chart(work, sales_col, REACH_COL, [REACH_YES, REACH_NO], reach_colors,
+                                "👥 التوصل للعميل لكل محصّل", f"reach_by_agent_{kp}")
+
+    # ---------------- جنسية العميل ----------------
+    st.subheader(f"🌍 جنسية العميل — {period_title}")
+    if NATIONALITY_COL not in work.columns:
+        st.info("عمود الهوية (Debator / Debtor) غير موجود في الملف — مش هقدر أحدد الجنسية.")
+    else:
+        nat_order = [NATIONALITY_SA, NATIONALITY_FOREIGN, NATIONALITY_UNKNOWN]
+        nat_colors = {NATIONALITY_SA: CLASSIFICATION_HIGHLIGHT, NATIONALITY_FOREIGN: CLASSIFICATION_SECONDARY, NATIONALITY_UNKNOWN: "#8A94A6"}
+        nat_counts = work[NATIONALITY_COL].value_counts()
+        labels = [n for n in nat_order if nat_counts.get(n, 0) > 0]
+        n1, n2 = st.columns(2)
+        with n1:
+            with st.container(border=True):
+                _donut_chart(labels, [int(nat_counts[n]) for n in labels], nat_colors, "🌍 توزيع الإفادات حسب الجنسية", f"nat_donut_{kp}")
+        with n2:
+            with st.container(border=True):
+                grp = work.groupby(NATIONALITY_COL).agg(total=("_success", "size"), success=("_success", "sum")).reindex(labels)
+                grp["rate"] = (grp["success"] / grp["total"].replace(0, pd.NA) * 100).fillna(0).round(1)
+                fig = go.Figure([
+                    go.Bar(name="إجمالي الإفادات", x=labels, y=grp["total"].astype(int).tolist(), marker_color=CLASSIFICATION_SECONDARY),
+                    go.Bar(name="الناجحة", x=labels, y=grp["success"].astype(int).tolist(), marker_color=CLASSIFICATION_HIGHLIGHT),
+                ])
+                fig.update_layout(**PLOTLY_LAYOUT, title="✅ الإفادات والناجحة حسب الجنسية", barmode="group",
+                                  xaxis_title="", yaxis_title="عدد الإفادات", height=430,
+                                  legend=dict(orientation="h", yanchor="bottom", y=-0.3, x=0.5, xanchor="center"))
+                fig.update_traces(marker_line_width=0)
+                _enhance_chart(fig)
+                st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG, key=f"nat_success_{kp}")
+        with st.container(border=True):
+            _stacked_by_agent_chart(work, sales_col, NATIONALITY_COL, nat_order, nat_colors,
+                                    "👥 جنسية العملاء لكل محصّل", f"nat_by_agent_{kp}")
+
+    # ---------------- النشاط الساعي ----------------
+    st.subheader(f"🕐 النشاط الساعي — {period_title}")
+    if not time_col or time_col not in work.columns:
+        st.info("يلزم وجود عمود Created On لعرض النشاط ساعة بساعة.")
+        return
+    work["_t"] = pd.to_datetime(work[time_col], errors="coerce")
+    work = work.dropna(subset=["_t"])
+    if work.empty:
+        st.info("لا توجد أوقات صالحة لعرض النشاط الساعي.")
+        return
+    work["_hour"] = work["_t"].dt.hour
+    work["_covered"] = work[REACH_COL] == REACH_YES
+    agents = sorted(work[sales_col].astype(str).str.strip().unique())
+    pick = st.selectbox("👤 المحصّل", ["كل المحصلين"] + agents, key=f"hourly_agent_{kp}")
+    view = work if pick == "كل المحصلين" else work[work[sales_col].astype(str).str.strip() == pick]
+    hmin, hmax = int(view["_hour"].min()), int(view["_hour"].max())
+    hourly = (
+        view.groupby("_hour")
+        .agg(total=("_covered", "size"), covered=("_covered", "sum"), success=("_success", "sum"))
+        .reindex(range(hmin, hmax + 1), fill_value=0)
+        .astype(int)
+    )
+    labels = [f"{h}:00" for h in hourly.index]
+    fig = go.Figure([
+        go.Bar(name="إجمالي المكالمات", x=labels, y=hourly["total"].tolist(), marker_color=CLASSIFICATION_PRIMARY),
+        go.Bar(name="مغطاة (تم التوصل)", x=labels, y=hourly["covered"].tolist(), marker_color=CLASSIFICATION_SECONDARY),
+        go.Bar(name="ناجحة", x=labels, y=hourly["success"].tolist(), marker_color=CLASSIFICATION_HIGHLIGHT),
+    ])
+    fig.update_layout(**PLOTLY_LAYOUT, title=f"🕐 مكالمات / مغطاة / ناجحة ساعة بساعة — {pick}", barmode="group",
+                      xaxis_title="الساعة", yaxis_title="عدد المكالمات", height=470, bargap=0.2,
+                      legend=dict(orientation="h", yanchor="bottom", y=-0.3, x=0.5, xanchor="center"))
+    fig.update_traces(marker_line_width=0, hovertemplate="<b>الساعة %{x}</b><br>%{fullData.name}: %{y:,}<extra></extra>")
+    _enhance_chart(fig)
+    with st.container(border=True):
+        st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG, key=f"hourly_chart_{kp}")
+
+    with st.expander("📋 جدول ساعة بساعة لكل المحصلين"):
+        table = (
+            work.assign(**{"الساعة": work["_hour"].map(lambda h: f"{h}:00"), "المحصّل": work[sales_col].astype(str).str.strip()})
+            .groupby(["المحصّل", "_hour", "الساعة"], as_index=False)
+            .agg(**{"إجمالي المكالمات": ("_covered", "size"), "مغطاة": ("_covered", "sum"), "ناجحة": ("_success", "sum")})
+            .sort_values(["المحصّل", "_hour"]).drop(columns="_hour")
+        )
+        st.dataframe(table, use_container_width=True, hide_index=True)
+
+
 def render_period_charts(df, sales_col, time_col, period_title):
     if not sales_col or sales_col not in df.columns:
         st.info("لا يوجد عمود واضح للمحصّل لعرض نشاط المحصّلين.")
@@ -4659,6 +4964,8 @@ def render_period_charts(df, sales_col, time_col, period_title):
     render_kpi_dashboard(total, success, len(agent), success_rate, avg_wasted)
     st.divider()
     render_agent_activity_charts(agent, df, sales_col, period_title)
+    st.divider()
+    render_reach_nationality_hourly_charts(df, sales_col, time_col, period_title)
     with st.expander("📋 عرض جدول تفاصيل كل محصّل"):
         st.dataframe(agent, use_container_width=True, hide_index=True)
 
@@ -4855,6 +5162,7 @@ def _classify_aggregate_file(uploaded_file, company, period_key, period_title):
         if sales_col and time_col:
             result_df = calculate_wasted_time(result_df, sales_col, time_col, break_start, break_end)
         result_df = result_df.rename(columns={MODEL_TEXT_COL: ORIGINAL_TEXT_COL})
+        result_df = add_reach_and_nationality_columns(result_df)
         result_df["الشركة"] = company
         result_df["الفترة"] = period_title
         if has_break:
@@ -4897,6 +5205,7 @@ def _show_aggregate_results_from_cache(period_key, period_title):
         _render_aggregate_results(stored, period_title, period_key)
 def page_classification():
     init_activity_state()
+    st.markdown(CLASSIFICATION_CHART_CSS, unsafe_allow_html=True)
     page_header("CALL QUALITY CLASSIFIER", "🎯 تصنيف المكالمات", "اختر الشركة → اختر الفترة → حدّد الميعاد والاستراحة → ارفع الملف → ابدأ التصنيف")
     render_company_selector()
     render_period_selector()

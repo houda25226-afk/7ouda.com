@@ -4908,24 +4908,22 @@ def render_reach_nationality_hourly_charts(df, sales_col, time_col, period_title
         st.info("لا توجد أوقات صالحة لعرض النشاط الساعي.")
         return
     work["_hour"] = work["_t"].dt.hour
-    work["_covered"] = work[REACH_COL] == REACH_YES
     agents = sorted(work[sales_col].astype(str).str.strip().unique())
     pick = st.selectbox("👤 المحصّل", ["كل المحصلين"] + agents, key=f"hourly_agent_{kp}")
     view = work if pick == "كل المحصلين" else work[work[sales_col].astype(str).str.strip() == pick]
     hmin, hmax = int(view["_hour"].min()), int(view["_hour"].max())
     hourly = (
         view.groupby("_hour")
-        .agg(total=("_covered", "size"), covered=("_covered", "sum"), success=("_success", "sum"))
+        .agg(covered=("_success", "size"), success=("_success", "sum"))
         .reindex(range(hmin, hmax + 1), fill_value=0)
         .astype(int)
     )
     labels = [f"{h}:00" for h in hourly.index]
     fig = go.Figure([
-        go.Bar(name="إجمالي المكالمات", x=labels, y=hourly["total"].tolist(), marker_color=CLASSIFICATION_PRIMARY),
-        go.Bar(name="مغطاة (تم التوصل)", x=labels, y=hourly["covered"].tolist(), marker_color=CLASSIFICATION_SECONDARY),
-        go.Bar(name="ناجحة", x=labels, y=hourly["success"].tolist(), marker_color=CLASSIFICATION_HIGHLIGHT),
+        go.Bar(name="مغطاة (إجمالي المكالمات)", x=labels, y=hourly["covered"].tolist(), marker_color=ACTIVITY_PRIMARY),
+        go.Bar(name="ناجحة", x=labels, y=hourly["success"].tolist(), marker_color=ACTIVITY_MUTED),
     ])
-    fig.update_layout(**PLOTLY_LAYOUT, title=f"🕐 مكالمات / مغطاة / ناجحة ساعة بساعة — {pick}", barmode="group",
+    fig.update_layout(**PLOTLY_LAYOUT, title=f"🕐 مغطاة / ناجحة ساعة بساعة — {pick}", barmode="group",
                       xaxis_title="الساعة", yaxis_title="عدد المكالمات", height=470, bargap=0.2,
                       legend=dict(orientation="h", yanchor="bottom", y=-0.3, x=0.5, xanchor="center"))
     fig.update_traces(marker_line_width=0, hovertemplate="<b>الساعة %{x}</b><br>%{fullData.name}: %{y:,}<extra></extra>")
@@ -4937,7 +4935,7 @@ def render_reach_nationality_hourly_charts(df, sales_col, time_col, period_title
         table = (
             work.assign(**{"الساعة": work["_hour"].map(lambda h: f"{h}:00"), "المحصّل": work[sales_col].astype(str).str.strip()})
             .groupby(["المحصّل", "_hour", "الساعة"], as_index=False)
-            .agg(**{"إجمالي المكالمات": ("_covered", "size"), "مغطاة": ("_covered", "sum"), "ناجحة": ("_success", "sum")})
+            .agg(**{"مغطاة (إجمالي المكالمات)": ("_success", "size"), "ناجحة": ("_success", "sum")})
             .sort_values(["المحصّل", "_hour"]).drop(columns="_hour")
         )
         st.dataframe(table, use_container_width=True, hide_index=True)

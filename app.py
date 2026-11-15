@@ -1734,10 +1734,34 @@ CLASSIFICATION_SCALE = [CLASSIFICATION_SECONDARY, CLASSIFICATION_PRIMARY, CLASSI
 # لوحة موحّدة لتويبات: الوعود + الإهمال + الجدولة + أخطاء الحالات
 # لونان أساسيان (تيل) + درجة ثالثة أقرب (أفتح) فقط — بدون أحمر/أصفر منفصل
 # ==========================================================
-OPS_DARK = "#126D3C"      # أخضر الوطنية الغامق
-OPS_MID = "#3A9B5C"       # متوسط
-OPS_LIGHT = "#8BC49A"     # فاتح
+# درجات الأخضر متباعدة في السطوع (L* ≈ 29 / 64 / 86 في الفاتح) عشان الفرق يبان من بعيد.
+# في الدارك بتتزاح لفوق شوية عشان الغامق ما يدوبش في خلفية الصفحة.
+if THEME_NAME == "dark":
+    OPS_DARK = "#16854A"      # أخضر غامق (الأقوى)
+    OPS_MID = "#4FC585"       # متوسط
+    OPS_LIGHT = "#C2F2D6"     # فاتح
+else:
+    OPS_DARK = "#0A4F2B"      # أخضر غامق (الأقوى)
+    OPS_MID = "#3AAE6B"       # متوسط
+    OPS_LIGHT = "#B4E3C6"     # فاتح
 OPS_SCALE = [OPS_DARK, OPS_MID, OPS_LIGHT]
+# لما الفئات تزيد عن 3 (محصلين / حالات / جنسيات) درجات الأخضر لوحدها مش كفاية → ألوان مميزة
+OPS_CATEGORICAL = [
+    "#2E9E5B",  # أخضر (الهوية)
+    "#E0A526",  # ذهبي
+    "#3B82C4",  # أزرق
+    "#E06C5B",  # مرجاني
+    "#8E6BC4",  # بنفسجي
+    "#1CA6A6",  # تيل
+    "#D86FA1",  # وردي
+    "#7C8DA0",  # رمادي مزرق
+    "#9AAE3B",  # زيتي
+]
+# ثوابت شارتات التصنيف: داكن = ناجحة/إيجابي، فاتح = إجمالي/محايد، متوسط = أساسي
+CLASSIFICATION_PRIMARY = OPS_MID
+CLASSIFICATION_SECONDARY = OPS_LIGHT
+CLASSIFICATION_HIGHLIGHT = OPS_DARK
+CLASSIFICATION_SCALE = [OPS_DARK, OPS_MID, OPS_LIGHT]
 OPS_POSITIVE = OPS_DARK   # قائمة / تم التغطية / منتظمة
 OPS_NEGATIVE = OPS_MID    # مكسورة / لم يتم / متعثرة
 OPS_NEUTRAL = OPS_LIGHT   # محايد / بدون سداد / أخرى
@@ -1746,8 +1770,9 @@ OPS_NEUTRAL = OPS_LIGHT   # محايد / بدون سداد / أخرى
 ACTIVITY_PRIMARY = OPS_DARK
 ACTIVITY_SECONDARY = OPS_MID
 ACTIVITY_MUTED = OPS_LIGHT
-ACTIVITY_AGENT_PALETTE = [OPS_DARK, "#1A8A4A", OPS_MID, "#5BB37A", OPS_LIGHT, "#B8D9C4", "#0E5A32", "#8BC49A", "#D4EBD9"]
-ACTIVITY_STATE_PALETTE = [OPS_DARK, OPS_MID, OPS_LIGHT, "#D4EBD9"]
+ACTIVITY_AGENT_PALETTE = list(OPS_CATEGORICAL)
+# أزواج: (لا يرد / لا يرد مع التكرار) أخضر غامق/فاتح — (مغلق / مغلق مع التكرار) ذهبي فاتح/غامق
+ACTIVITY_STATE_PALETTE = [OPS_DARK, OPS_LIGHT, "#E0A526", "#9A6B00"]
 ACTIVITY_OUTCOME_COLORS = {"ناجحة": OPS_DARK, "غير ناجحة": OPS_LIGHT}
 ACTIVITY_TIME_CHART_HEIGHT = 460
 ACTIVITY_PAIR_CHART_HEIGHT = 420
@@ -1849,7 +1874,8 @@ def _apply_ops_chart_style(
     if extra:
         layout.update(extra)
     fig.update_layout(**layout)
-    fig.update_traces(marker_line_width=0)
+    # خط فاصل بلون الخلفية بين الأعمدة/الشرائح المتجاورة عشان الدرجات القريبة متلزقش في بعض
+    fig.update_traces(marker_line_width=1.2, marker_line_color=THEME["surface"])
     return fig
 
 
@@ -1941,7 +1967,12 @@ def _enhance_chart(fig, axis_size=15, label_size=13):
             else:
                 tr.textposition = "outside"
                 tr.cliponaxis = False
-            tr.textfont = dict(size=label_size, color=THEME["text"])
+            # الأرقام برّه العمود بلون الثيم، وجوّه العمود لون تلقائي (أبيض/أسود حسب غمق الدرجة)
+            tr.textfont = dict(size=label_size)
+            tr.outsidetextfont = dict(size=label_size, color=THEME["text"])
+            tr.insidetextfont = dict(size=label_size)
+            if n_bar_traces > 1:
+                tr.marker.line = dict(color=THEME["surface"], width=1.5)
         elif ttype == "scatter":
             mode = str(getattr(tr, "mode", "") or "")
             if mode == "text" or "text" in mode.split("+"):
@@ -1953,7 +1984,8 @@ def _enhance_chart(fig, axis_size=15, label_size=13):
         elif ttype == "pie":
             if not getattr(tr, "texttemplate", None):
                 tr.textinfo = "label+value+percent"
-            tr.textfont = dict(size=label_size + 1, color=THEME["text"])
+            tr.textfont = dict(size=label_size + 1)
+            tr.marker.line = dict(color=THEME["surface"], width=2)
 
     axis_font = dict(size=axis_size, color=THEME["text"], family="Tajawal, sans-serif")
 
@@ -2162,7 +2194,7 @@ WALLET_STATE_CATEGORY_MAP = {
 WALLET_CATEGORY_COLORS = {
     "وعود": OPS_MID,
     "جدولة وسداد": OPS_POSITIVE,
-    "لا يرد / مغلق": OPS_NEGATIVE,
+    "لا يرد / مغلق": "#D9825B",
     "تم الإبلاغ": OPS_LIGHT,
     "حالات خاصة": "#C9A84C",
     "أخرى": THEME["text_muted"],
@@ -2246,6 +2278,30 @@ def _classify_activity_sub_state(value):
     return "أخرى"
 
 
+def _norm_spaced(value):
+    """نفس تطبيع _state_key بس بيسيب مسافة واحدة بين الكلمات (للـ regex بحدود كلمات)."""
+    text = "" if value is None or (isinstance(value, float) and pd.isna(value)) else str(value).strip().casefold()
+    text = (
+        text.replace("أ", "ا").replace("إ", "ا").replace("آ", "ا")
+        .replace("ى", "ي").replace("ة", "ه")
+    )
+    text = re.sub(r"[\u064B-\u065F\u0670\u0640]", "", text)
+    return re.sub(r"[\s_-]+", " ", text).strip()
+
+
+# صيغ "الخط مش بيرد" اللي الكاشف القديم كان بيفوتها (بحدود كلمات عشان "ماتردوا" = ناس تانية متتعدّش)
+_NO_ANSWER_REGEXES = [
+    r"(?<!\S)ما\s?ترد(?!\S)",       # ماترد / ما ترد
+    r"(?<!\S)ما\s?رد(?!\S)",        # مارد (للحين مارد)
+    r"(?<!\S)ما\s?يمسك",             # مايمسك الخط
+    r"لا\s?يستقبل",                   # لايستقبل المكالمات
+]
+# "الرقم لا يمكن الاتصال به" = مش متاح (زي مغلق)
+_UNAVAILABLE_REGEXES = [
+    r"لا\s?يمكن\s?(ال)?اتصال",
+]
+
+
 def _classify_unreachable_from_notes(value):
     """تصنيف الإفادة (Notes) إذا كانت تدل على عدم الوصول للعميل.
 
@@ -2261,6 +2317,7 @@ def _classify_unreachable_from_notes(value):
     key = _state_key(raw)
     if not key:
         return None
+    spaced = _norm_spaced(raw)
 
     has_repeat = ("تكرار" in key) or ("متكرر" in key) or ("again" in key) or ("repeat" in key)
     no_answer = (
@@ -2344,6 +2401,7 @@ def _classify_unreachable_from_notes(value):
         or "لااستجابه" in key
         or "عدماستجابه" in key
         or "عدمالاستجابه" in key
+        or any(re.search(p, spaced) for p in _NO_ANSWER_REGEXES)
     )
     closed = (
         "مغلق" in key
@@ -2356,8 +2414,12 @@ def _classify_unreachable_from_notes(value):
         or "outofservice" in key
         or "خارجالخدمه" in key
         or "خارجالتغطيه" in key
-        or "غيرمتاح" in key
         or "الرقمغيرمتاح" in key
+        or "الهاتفغيرمتاح" in key
+        or "الجوالغيرمتاح" in key
+        or "الخطغيرمتاح" in key
+        or "رقمهغيرمتاح" in key
+        or any(re.search(p, spaced) for p in _UNAVAILABLE_REGEXES)
         or "مفصول" in key
         or "مفصولمنالخدمه" in key
         or "فصلالخدمه" in key
@@ -4807,37 +4869,94 @@ def _nationality_from_id(value):
     return NATIONALITY_FOREIGN if digits.startswith("2") else NATIONALITY_SA
 
 
-def _reach_from_row(notes, sub_state):
-    """تم التوصل / لم يتم التوصل من الإفادة (Notes) أولاً ثم Sub State كاحتياطي."""
+BAD_CONTACT_WRONG = "رقم غير صحيح / لا يخص العميل"
+BAD_CONTACT_MISSING = "لا يوجد رقم تواصل"
+MAIN_STATE_CANDIDATES = ["Main State", "main state", "MainState", "الحالة الرئيسية"]
+
+_BAD_CONTACT_REGEXES = [
+    (BAD_CONTACT_WRONG, [
+        r"رقم\w*\s+غير\s+صحيح",
+        r"(هاتف|جوال)\w*\s+غير\s+صحيح",
+        r"رقم\w*\s+(خاطي|خطا|غلط)",
+        r"لا\s?يخص\s*(ال)?(عميل|مطالب|مدين|رقم)",
+    ]),
+    (BAD_CONTACT_MISSING, [
+        r"لا\s?(يوجد|توجد)\s+(رقم|ارقام)(?!\s+(اخر|ثاني|اضافي|بديل))",
+        r"لا\s?(يوجد|توجد)\s+(بيانات|جوال|هاتف)\s+(ل|لل)",
+        r"لا\s?(يوجد|توجد)\s+بيانات\b",
+    ]),
+]
+
+
+def _classify_bad_contact_from_notes(value):
+    """رقم غلط / مش بتاع العميل / مفيش رقم أصلاً = المحصّل ما وصلش للعميل."""
+    spaced = _norm_spaced(value)
+    if not spaced:
+        return None
+    for label, patterns in _BAD_CONTACT_REGEXES:
+        if any(re.search(p, spaced) for p in patterns):
+            return label
+    return None
+
+
+def _structural_not_reached(main_state, sub_state):
+    """حالات النظام اللي بتقول صراحةً إن التوصل ماحصلش (الرقم لا يخص العميل / بيانات غير صحيحة / عدم التوصل)."""
+    sub_k = _state_key(sub_state)
+    main_k = _state_key(main_state)
+    if "لايخص" in sub_k or "بياناتغيرصحيح" in sub_k:
+        return BAD_CONTACT_WRONG
+    if "عدمالتوصل" in main_k or "عدمالوصول" in main_k:
+        return "عدم التوصل (من الحالة)"
+    return None
+
+
+def _reach_from_row(notes, sub_state, main_state=None):
+    """تم التوصل / لم يتم التوصل: الإفادة (Notes) أولاً، ثم حالات النظام كاحتياطي.
+
+    مش بنعتمد على "العميل متجاوب || تم الوصول" لأن المحصّل بيسيبها افتراضي حتى لو العميل ما ردش.
+    """
     note_state = _classify_unreachable_from_notes(notes)
     if isinstance(note_state, str) and note_state in ACTIVITY_NO_ANSWER_STATES:
         return REACH_NO, note_state
+    bad = _classify_bad_contact_from_notes(notes)
+    if bad:
+        return REACH_NO, bad
+    structural = _structural_not_reached(main_state, sub_state)
+    if structural:
+        return REACH_NO, structural
     sub = _classify_activity_sub_state(sub_state)
     if sub in ACTIVITY_NO_ANSWER_STATES:
         return REACH_NO, sub
     return REACH_YES, ""
 
 
-def add_reach_and_nationality_columns(df):
-    """يضيف أعمدة: التوصل للعميل + تفاصيل عدم التوصل + جنسية العميل (لو مش موجودين)."""
+def add_reach_and_nationality_columns(df, force=False):
+    """يضيف أعمدة: التوصل للعميل + تفاصيل عدم التوصل + جنسية العميل.
+
+    force=True: يعيد الحساب حتى لو الأعمدة موجودة (مثلاً ملف نتيجة قديم محسوب بقواعد أضعف).
+    """
     if df is None or df.empty:
         return df
     out = df.copy()
     added = []
-    if REACH_COL not in out.columns:
+    if force or REACH_COL not in out.columns:
         notes_col = find_column(out, NOTES_CANDIDATES + [ORIGINAL_TEXT_COL, MODEL_TEXT_COL])
         sub_col = find_column(out, PROMISE_SUB_STATE_CANDIDATES)
+        main_col = find_column(out, MAIN_STATE_CANDIDATES)
         if notes_col or sub_col:  # من غير إفادة ولا Sub State منقدرش نحكم → منضيفش عمود مضلل
             empty = pd.Series([None] * len(out), index=out.index)
             notes = out[notes_col] if notes_col else empty
             subs = out[sub_col] if sub_col else empty
-            results = [_reach_from_row(n, s) for n, s in zip(notes, subs)]
+            mains = out[main_col] if main_col else empty
+            results = [_reach_from_row(n, s, m) for n, s, m in zip(notes, subs, mains)]
+            out = out.drop(columns=[c for c in (REACH_COL, REACH_DETAIL_COL) if c in out.columns])
             out[REACH_COL] = [r[0] for r in results]
             out[REACH_DETAIL_COL] = [r[1] for r in results]
             added += [REACH_COL, REACH_DETAIL_COL]
-    if NATIONALITY_COL not in out.columns:
+    if force or NATIONALITY_COL not in out.columns:
         id_col = find_column(out, DEBTOR_ID_CANDIDATES)
         if id_col:
+            out = out.drop(columns=[NATIONALITY_COL], errors="ignore")
             out[NATIONALITY_COL] = out[id_col].map(_nationality_from_id)
             added.append(NATIONALITY_COL)
     # رتّب الأعمدة الجديدة جنب التصنيف (بعد نسبة الثقة) عشان تبان في الشيت
@@ -4914,7 +5033,7 @@ def render_reach_nationality_hourly_charts(df, sales_col, time_col, period_title
                 reasons_df = reasons.reset_index()
                 reasons_df.columns = ["السبب", "العدد"]
                 fig = px.bar(reasons_df, x="السبب", y="العدد", template=PLOTLY_TEMPLATE,
-                             color_discrete_sequence=[CLASSIFICATION_SECONDARY])
+                             color_discrete_sequence=[CLASSIFICATION_PRIMARY])
                 fig.update_layout(**PLOTLY_LAYOUT, title="🔎 أسباب عدم التوصل", xaxis_title="", yaxis_title="عدد الإفادات", height=430)
                 fig.update_traces(marker_line_width=0, hovertemplate="<b>%{x}</b><br>العدد: %{y:,}<extra></extra>")
                 _enhance_chart(fig)
@@ -4929,7 +5048,7 @@ def render_reach_nationality_hourly_charts(df, sales_col, time_col, period_title
         st.info("عمود الهوية (Debator / Debtor) غير موجود في الملف — مش هقدر أحدد الجنسية.")
     else:
         nat_order = [NATIONALITY_SA, NATIONALITY_FOREIGN, NATIONALITY_UNKNOWN]
-        nat_colors = {NATIONALITY_SA: CLASSIFICATION_HIGHLIGHT, NATIONALITY_FOREIGN: CLASSIFICATION_SECONDARY, NATIONALITY_UNKNOWN: "#8A94A6"}
+        nat_colors = {NATIONALITY_SA: OPS_DARK, NATIONALITY_FOREIGN: OPS_CATEGORICAL[1], NATIONALITY_UNKNOWN: OPS_CATEGORICAL[7]}
         nat_counts = work[NATIONALITY_COL].value_counts()
         labels = [n for n in nat_order if nat_counts.get(n, 0) > 0]
         n1, n2 = st.columns(2)
@@ -4977,8 +5096,8 @@ def render_reach_nationality_hourly_charts(df, sales_col, time_col, period_title
     )
     labels = [f"{h}:00" for h in hourly.index]
     fig = go.Figure([
-        go.Bar(name="مغطاة (إجمالي المكالمات)", x=labels, y=hourly["covered"].tolist(), marker_color=ACTIVITY_PRIMARY),
-        go.Bar(name="ناجحة", x=labels, y=hourly["success"].tolist(), marker_color=ACTIVITY_MUTED),
+        go.Bar(name="مغطاة (إجمالي المكالمات)", x=labels, y=hourly["covered"].tolist(), marker_color=OPS_LIGHT),
+        go.Bar(name="ناجحة", x=labels, y=hourly["success"].tolist(), marker_color=OPS_DARK),
     ])
     fig.update_layout(**PLOTLY_LAYOUT, title=f"🕐 مغطاة / ناجحة ساعة بساعة — {pick}", barmode="group",
                       xaxis_title="الساعة", yaxis_title="عدد المكالمات", height=470, bargap=0.2,
@@ -6029,7 +6148,7 @@ def page_dashboard():
         st.error(f"تعذر قراءة الملف: {e}")
         return
 
-    df = add_reach_and_nationality_columns(df)
+    df = add_reach_and_nationality_columns(df, force=True)
     class_col = CLASSIFICATION_COL if CLASSIFICATION_COL in df.columns else None
     sales_col = find_column(df, SALES_PERSON_CANDIDATES)
     time_col = find_column(df, CREATED_ON_CANDIDATES)
@@ -7026,7 +7145,7 @@ def _build_wallet_analysis(df):
         if not cust_state.empty:
             fig_pie = px.pie(
                 cust_state, values="العدد", names="حالة العميل",
-                color="حالة العميل", color_discrete_sequence=OPS_SCALE + ACTIVITY_AGENT_PALETTE,
+                color="حالة العميل", color_discrete_sequence=ACTIVITY_AGENT_PALETTE,
                 template=PLOTLY_TEMPLATE,
             )
             _apply_ops_chart_style(
@@ -7051,7 +7170,7 @@ def _build_wallet_analysis(df):
         if not nat.empty:
             fig_nat = px.pie(
                 nat, values="العدد", names="الجنسية", hole=0.55,
-                color="الجنسية", color_discrete_sequence=OPS_SCALE + ACTIVITY_AGENT_PALETTE,
+                color="الجنسية", color_discrete_sequence=ACTIVITY_AGENT_PALETTE,
                 template=PLOTLY_TEMPLATE,
             )
             _apply_ops_chart_style(
@@ -8955,15 +9074,15 @@ def _run_case_errors_pipeline(uploaded):
 
 
 CASE_ERRORS_AGENT_FILTER_KEY = "case_errors_selected_agent"
-CASE_ERROR_PALETTE = list(OPS_SCALE)  # نفس 3 درجات التويبات التشغيلية
+CASE_ERROR_PALETTE = list(OPS_CATEGORICAL)  # ألوان مميزة لكل نوع خطأ
 CASE_ERROR_RULE_COLORS = {
-    "Payment صفر مع حالة سداد": "#2F6F73",
-    "Payment أكبر من صفر بدون حالة سداد": "#5A8A8D",
-    "Net Amount صفر بدون حالة سداد": "#8FA8AB",
-    "متبقي بعد سداد كامل": "#3D7A7D",
-    "متبقي مع جدولة مقفلة": "#6B9598",
-    "Net Amount صفر مع جدولة مقفلة بخصم": "#9BB0B3",
-    "Net Amount صفر مع سداد بخصم": "#B2C1C3",
+    "Payment صفر مع حالة سداد": OPS_CATEGORICAL[0],
+    "Payment أكبر من صفر بدون حالة سداد": OPS_CATEGORICAL[1],
+    "Net Amount صفر بدون حالة سداد": OPS_CATEGORICAL[2],
+    "متبقي بعد سداد كامل": OPS_CATEGORICAL[3],
+    "متبقي مع جدولة مقفلة": OPS_CATEGORICAL[4],
+    "Net Amount صفر مع جدولة مقفلة بخصم": OPS_CATEGORICAL[5],
+    "Net Amount صفر مع سداد بخصم": OPS_CATEGORICAL[6],
 }
 
 

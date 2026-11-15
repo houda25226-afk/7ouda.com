@@ -4286,7 +4286,11 @@ def _build_base_workbook_bytes(df: pd.DataFrame, data_sheet_name: str, table_nam
     tab = Table(displayName=table_name, ref=f"A1:{last_col_letter}{last_row}")
     tab.tableStyleInfo = TableStyleInfo(name="TableStyleMedium9", showRowStripes=True)
     ws.add_table(tab)
-    wb.create_sheet(pivot_sheet_name)
+    pivot_ws = wb.create_sheet(pivot_sheet_name)
+    # عروض مريحة عشان أعمدة التاريخ/الوقت (أول وآخر إفادة) متظهرش ####
+    pivot_ws.column_dimensions["A"].width = 34
+    for letter in "BCDEF":
+        pivot_ws.column_dimensions[letter].width = 26
     buf = BytesIO()
     wb.save(buf)
     return buf.getvalue()
@@ -4305,6 +4309,7 @@ def _inject_native_pivot_table(
     data_field2=None,
     data_field2_label=None,
     subtotal2="count",
+    extra_data_fields=None,
 ):
     """بيحقن Pivot Table حقيقي (native، قابل للتحديث والسحب والإفلات) جوه ملف الإكسيل — نفس اللي بتعمله
     يدوي في إكسيل بـ Insert > PivotTable. بيتحدث تلقائي من الـ Excel Table لما تفتح الملف."""
@@ -4317,6 +4322,15 @@ def _inject_native_pivot_table(
     data_indices = {data_idx}
     if data_idx2 is not None:
         data_indices.add(data_idx2)
+    # قيم إضافية: [(اسم العمود, اللابل, min/max/sum/count, numFmtId اختياري)] — مثلاً أول/آخر وقت إفادة
+    extra_specs = []
+    for spec in (extra_data_fields or []):
+        field, label, sub = spec[0], spec[1], spec[2]
+        num_fmt = spec[3] if len(spec) > 3 else None
+        if field in df_columns:
+            idx = df_columns.index(field)
+            data_indices.add(idx)
+            extra_specs.append((idx, label, sub, num_fmt))
 
     zin = zipfile.ZipFile(BytesIO(xlsx_bytes), "r")
     data = {n: zin.read(n) for n in zin.namelist()}
@@ -4422,7 +4436,14 @@ def _inject_native_pivot_table(
         data_fields_parts.append(
             f'<dataField name="{_xml_escape(label2)}" fld="{data_idx2}" subtotal="{subtotal2}" baseField="0" baseItem="0"/>'
         )
+    for idx, label, sub, num_fmt in extra_specs:
+        fmt_attr = f' numFmtId="{num_fmt}"' if num_fmt is not None else ""
+        data_fields_parts.append(
+            f'<dataField name="{_xml_escape(label)}" fld="{idx}" subtotal="{sub}" baseField="0" baseItem="0"{fmt_attr}/>'
+        )
     n_data_fields = len(data_fields_parts)
+    # عرض مكان الـ Pivot: عمود للمحصل + عمود لكل قيمة (Excel بيعيد الترتيب عند التحديث)
+    pivot_last_col = get_column_letter(1 + n_data_fields) if col_idx is None else "D"
     data_fields_xml = (
         f'<dataFields count="{n_data_fields}">'
         + "".join(data_fields_parts)
@@ -4440,8 +4461,9 @@ def _inject_native_pivot_table(
         col_items = "".join(f'<i><x v="{i}"/></i>' if i else "<i><x/></i>" for i in range(n_data_fields))
         # الصيغة الشائعة في OOXML لـ Values على الأعمدة:
         # <colFields count="1"><field x="-2"/></colFields>
+        # الصيغة القياسية (زي ما إكسيل بيكتبها): <i i="k"><x v="k"/></i> لكل قيمة بعد الأولى
         col_items = "".join(
-            ("<i><x/></i>" if i == 0 else f'<i><x i="{i}"/></i>') for i in range(n_data_fields)
+            ("<i><x/></i>" if i == 0 else f'<i i="{i}"><x v="{i}"/></i>') for i in range(n_data_fields)
         )
         col_fields_xml = (
             '<colFields count="1"><field x="-2"/></colFields>'
@@ -4457,7 +4479,7 @@ def _inject_native_pivot_table(
         'applyPatternFormats="0" applyAlignmentFormats="0" applyWidthHeightFormats="1" dataCaption="Values" '
         'updatedVersion="6" minRefreshableVersion="3" useAutoFormatting="1" itemPrintTitles="1" createdVersion="6" '
         'indent="0" outline="1" outlineData="1" multipleFieldFilters="0">'
-        '<location ref="A3:D30" firstHeaderRow="1" firstDataRow="2" firstDataCol="1"/>'
+        '<location ref="A3:' + pivot_last_col + '30" firstHeaderRow="1" firstDataRow="2" firstDataCol="1"/>'
         f'<pivotFields count="{n_fields}">{pivot_fields_xml}</pivotFields>'
         f'<rowFields count="1"><field x="{row_idx}"/></rowFields>'
         '<rowItems count="1"><i><x/></i></rowItems>'
@@ -4483,21 +4505,35 @@ def _inject_native_pivot_table(
 
 def build_excel_with_native_pivot(result_df: pd.DataFrame, data_sheet_name: str, key_prefix: str):
     """بيبني ملف إكسيل فيه شيت البيانات (كـ Excel Table) + شيت Pivot Table حقيقي (native) —
-    المحصل في الصفوف، ومجموع عمود التصنيف (SUM) + عدد Customer Account Number (COUNT) في القيم.
+    المحصل في الصفوف، ومجموع عمود التصنيف (SUM) + عدد Customer Account Number (COUNT) +
+    وقت أول إفادة (MIN) + وقت آخر إفادة (MAX) في القيم.
     بيرجع (bytes, تم إضافة بيفوت ولا لأ)."""
     collected_col = find_column(result_df, COLLECTED_BY_CANDIDATES)
     class_col = CLASSIFICATION_COL if CLASSIFICATION_COL in result_df.columns else None
     account_col = find_column(result_df, ACCOUNT_NUMBER_CANDIDATES)
 
+    # عمود وقت الإفادة لازم يتكتب كتاريخ حقيقي في الإكسيل عشان الـ Pivot يطلّع أول/آخر وقت (Min/Max)
+    time_col = find_column(result_df, CREATED_ON_CANDIDATES)
+    workbook_df = result_df
+    if time_col is not None:
+        times = pd.to_datetime(result_df[time_col], errors="coerce")
+        if times.notna().any():
+            if getattr(times.dt, "tz", None) is not None:
+                times = times.dt.tz_localize(None)
+            workbook_df = result_df.copy()
+            workbook_df[time_col] = times
+        else:
+            time_col = None
+
     table_name = _sanitize_table_name(f"tbl_{key_prefix}")
-    base_bytes = _build_base_workbook_bytes(result_df, data_sheet_name, table_name)
+    base_bytes = _build_base_workbook_bytes(workbook_df, data_sheet_name, table_name)
 
     if not (collected_col and class_col):
         return base_bytes, False
 
     kwargs = dict(
         xlsx_bytes=base_bytes,
-        df_columns=result_df.columns,
+        df_columns=workbook_df.columns,
         table_name=table_name,
         pivot_sheet_name="Pivot Table",
         row_field=collected_col,
@@ -4511,6 +4547,12 @@ def build_excel_with_native_pivot(result_df: pd.DataFrame, data_sheet_name: str,
             data_field2_label="عدد Customer Account Number",
             subtotal2="count",
         )
+
+    if time_col is not None:
+        kwargs["extra_data_fields"] = [
+            (time_col, "وقت أول إفادة", "min", 22),   # 22 = تنسيق تاريخ + وقت
+            (time_col, "وقت آخر إفادة", "max", 22),
+        ]
 
     final_bytes = _inject_native_pivot_table(**kwargs)
     return final_bytes, True
@@ -4565,6 +4607,20 @@ def render_pivot_section(df: pd.DataFrame, key_prefix: str):
             if account_col:
                 rename_map[account_col] = "عدد Customer Account Number"
             pivot_df = pivot_df.rename(columns=rename_map)
+
+        # أول وآخر وقت إفادة لكل محصل (نفس اللي هيظهر في الـ Pivot الحقيقي)
+        time_col = find_column(df, CREATED_ON_CANDIDATES)
+        if time_col:
+            stamps = pd.DataFrame({
+                "_agent": df[collected_col],
+                "_t": pd.to_datetime(df[time_col], errors="coerce"),
+            }).dropna(subset=["_t"])
+            if not stamps.empty:
+                span = stamps.groupby("_agent")["_t"].agg(["min", "max"])
+                span.loc["الإجمالي"] = [stamps["_t"].min(), stamps["_t"].max()]
+                span = span.reindex(pivot_df.index)
+                pivot_df["وقت أول إفادة"] = span["min"].dt.strftime("%Y-%m-%d %H:%M:%S")
+                pivot_df["وقت آخر إفادة"] = span["max"].dt.strftime("%Y-%m-%d %H:%M:%S")
 
         pivot_df = pivot_df.rename_axis(index="المحصل")
         st.dataframe(pivot_df, use_container_width=True)

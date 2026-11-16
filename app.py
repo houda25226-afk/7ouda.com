@@ -21,6 +21,7 @@ import hashlib
 import re
 import zipfile
 from io import BytesIO
+from functools import lru_cache
 from datetime import time as dt_time
 from datetime import datetime
 
@@ -2240,7 +2241,7 @@ def _state_key(value):
     return re.sub(r"[\s_-]+", "", text)
 
 
-def _classify_activity_sub_state(value):
+def _classify_activity_sub_state_uncached(value):
     """إرجاع مجموعة موحدة للحالة الفرعية المطلوبة في Dashboard النشاط."""
     key = _state_key(value)
     if not key:
@@ -2278,6 +2279,17 @@ def _classify_activity_sub_state(value):
     return "أخرى"
 
 
+@lru_cache(maxsize=20_000)
+def _classify_activity_sub_state_cached(text):
+    return _classify_activity_sub_state_uncached(text)
+
+
+def _classify_activity_sub_state(value):
+    if value is None or (isinstance(value, float) and pd.isna(value)):
+        return _classify_activity_sub_state_cached("")
+    return _classify_activity_sub_state_cached(str(value))
+
+
 def _norm_spaced(value):
     """نفس تطبيع _state_key بس بيسيب مسافة واحدة بين الكلمات (للـ regex بحدود كلمات)."""
     text = "" if value is None or (isinstance(value, float) and pd.isna(value)) else str(value).strip().casefold()
@@ -2302,7 +2314,7 @@ _UNAVAILABLE_REGEXES = [
 ]
 
 
-def _classify_unreachable_from_notes(value):
+def _classify_unreachable_uncached(value):
     """تصنيف الإفادة (Notes) إذا كانت تدل على عدم الوصول للعميل.
 
     ترجع واحدة من ACTIVITY_NO_ANSWER_STATES أو None.
@@ -2440,6 +2452,18 @@ def _classify_unreachable_from_notes(value):
     return None
 
 
+@lru_cache(maxsize=200_000)
+def _classify_unreachable_cached(text):
+    return _classify_unreachable_uncached(text)
+
+
+def _classify_unreachable_from_notes(value):
+    """نفس التصنيف بس بكاش على النص: الإفادات بتتكرر وكل rerun كان بيعيد حسابها من الصفر."""
+    if value is None or (isinstance(value, float) and pd.isna(value)):
+        return None
+    return _classify_unreachable_cached(str(value))
+
+
 def _activity_success_mask(df, class_col):
     if not class_col or class_col not in df.columns:
         return pd.Series(False, index=df.index)
@@ -2521,16 +2545,10 @@ def _build_activity_summary(df, class_col, sales_col, time_col, break_start=None
     else:
         work["_unreachable_from_notes"] = None
 
-    def _resolve_unreachable(row):
-        note_state = row.get("_unreachable_from_notes")
-        if isinstance(note_state, str) and note_state in ACTIVITY_NO_ANSWER_STATES:
-            return note_state
-        sub_state = row.get("_activity_state")
-        if isinstance(sub_state, str) and sub_state in ACTIVITY_NO_ANSWER_STATES:
-            return sub_state
-        return None
-
-    work["_unreachable_state"] = work.apply(_resolve_unreachable, axis=1)
+    # (vectorized بدل apply بالصف) الإفادة أولاً، ولو مش عدم رد نرجع لـ Sub State
+    _note_ok = work["_unreachable_from_notes"].where(work["_unreachable_from_notes"].isin(ACTIVITY_NO_ANSWER_STATES))
+    _sub_ok = work["_activity_state"].where(work["_activity_state"].isin(ACTIVITY_NO_ANSWER_STATES))
+    work["_unreachable_state"] = _note_ok.where(_note_ok.notna(), _sub_ok)
 
     if time_col and time_col in work.columns and WASTED_TIME_COL not in work.columns:
         work[WASTED_TIME_COL] = _calculate_wasted_time_by_day(
@@ -3071,6 +3089,17 @@ def _render_activity_table(agent):
     st.dataframe(table.sort_values("إجمالي المكالمات", ascending=False), use_container_width=True, hide_index=True)
 
 
+@st.cache_data(show_spinner=False, max_entries=4)
+def _build_activity_summary_cached(df, class_col, sales_col, time_col, break_start, break_end):
+    """كاش لملخص النشاط: كان بيتحسب من الصفر مع كل ضغطة/فلتر (فيه apply بالصف + حساب وقت مهدر)."""
+    return _build_activity_summary(df, class_col, sales_col, time_col, break_start, break_end)
+
+
+@st.cache_data(show_spinner=False, max_entries=4)
+def _reach_columns_cached(df):
+    return add_reach_and_nationality_columns(df, force=True)
+
+
 def render_activity_dashboard(df, class_col=None, sales_col=None, time_col=None, break_start=None, break_end=None):
     """Dashboard تحليل نشاط المحصلين: KPI، اتجاهات زمنية، حالات Sub State، ساعات العمل، وجدول تفصيلي."""
     if not sales_col or sales_col not in df.columns:
@@ -3078,7 +3107,7 @@ def render_activity_dashboard(df, class_col=None, sales_col=None, time_col=None,
         return
     _render_dashboard_agent_filter_notice()
     view = _dashboard_activity_view(df, sales_col, class_col=class_col, time_col=time_col)
-    agent, work, sub_col = _build_activity_summary(view, class_col, sales_col, time_col, break_start, break_end)
+    agent, work, sub_col = _build_activity_summary_cached(view, class_col, sales_col, time_col, break_start, break_end)
     if agent.empty:
         st.info("لا توجد مكالمات قابلة للعرض بعد تطبيق الفلاتر.")
         return
@@ -4503,7 +4532,7 @@ def _inject_native_pivot_table(
     return out_buf.getvalue()
 
 
-def build_excel_with_native_pivot(result_df: pd.DataFrame, data_sheet_name: str, key_prefix: str):
+def _build_excel_with_native_pivot_impl(result_df: pd.DataFrame, data_sheet_name: str, key_prefix: str):
     """بيبني ملف إكسيل فيه شيت البيانات (كـ Excel Table) + شيت Pivot Table حقيقي (native) —
     المحصل في الصفوف، ومجموع عمود التصنيف (SUM) + عدد Customer Account Number (COUNT) +
     وقت أول إفادة (MIN) + وقت آخر إفادة (MAX) في القيم.
@@ -4556,6 +4585,20 @@ def build_excel_with_native_pivot(result_df: pd.DataFrame, data_sheet_name: str,
 
     final_bytes = _inject_native_pivot_table(**kwargs)
     return final_bytes, True
+
+
+@st.cache_data(show_spinner="جارٍ تجهيز ملف الإكسيل والـ Pivot...", max_entries=4)
+def _cached_excel_with_pivot(result_df, data_sheet_name, key_prefix):
+    return _build_excel_with_native_pivot_impl(result_df, data_sheet_name, key_prefix)
+
+
+def build_excel_with_native_pivot(result_df: pd.DataFrame, data_sheet_name: str, key_prefix: str):
+    """نفس الدالة بس بكاش: Streamlit بيعمل rerun كامل مع كل ضغطة (اختيار محصّل، selectbox...)،
+    وبناء الإكسيل + الـ Pivot بياخد ثواني (≈4ث لكل 10 آلاف صف) فكان بيتعاد مع كل ضغطة."""
+    try:
+        return _cached_excel_with_pivot(result_df, data_sheet_name, key_prefix)
+    except Exception:
+        return _build_excel_with_native_pivot_impl(result_df, data_sheet_name, key_prefix)
 
 
 def render_pivot_section(df: pd.DataFrame, key_prefix: str):
@@ -5502,6 +5545,7 @@ def _show_aggregate_results_from_cache(period_key, period_title):
 def page_classification():
     init_activity_state()
     st.markdown(CLASSIFICATION_CHART_CSS, unsafe_allow_html=True)
+    _claim_agent_filter("classification")
     page_header("CALL QUALITY CLASSIFIER", "🎯 تصنيف المكالمات", "اختر الشركة → اختر الفترة → حدّد الميعاد والاستراحة → ارفع الملف → ابدأ التصنيف")
     render_company_selector()
     render_period_selector()
@@ -6204,7 +6248,7 @@ def page_dashboard():
         st.error(f"تعذر قراءة الملف: {e}")
         return
 
-    df = add_reach_and_nationality_columns(df, force=True)
+    df = _reach_columns_cached(df)
     class_col = CLASSIFICATION_COL if CLASSIFICATION_COL in df.columns else None
     sales_col = find_column(df, SALES_PERSON_CANDIDATES)
     time_col = find_column(df, CREATED_ON_CANDIDATES)
@@ -13054,6 +13098,106 @@ def page_rotation():
         st.info("اضغط **ابدأ التدوير** بعد ما تظبط الإعدادات.")
 
 
+# ==========================================================
+# 🖥️ تويب "داش بورد": ارفع النشاط المصنّف → نفس شارتات تويب التصنيف
+# ==========================================================
+
+DASH_BOARD_RESULT_KEY = "dash_board_result"
+DASH_BOARD_UPLOAD_KEY = "dash_board_upload"
+
+
+def _claim_agent_filter(owner):
+    """فلتر المحصّل (بالضغط على الشارت) مشترك بين تويب التصنيف والداش بورد —
+    نصفّره عند التنقل بينهم عشان فلتر تويب ما يظهرش في التويب التاني."""
+    if st.session_state.get("_agent_filter_owner") != owner:
+        st.session_state.pop(CLASSIFICATION_AGENT_FILTER_KEY, None)
+        st.session_state["_agent_filter_owner"] = owner
+
+
+def _prepare_dash_board_df(df):
+    """تجهيز ملف النشاط المصنّف لنفس دوال الرسم المستخدمة في تويب التصنيف.
+    بيرجع (df, sales_col, time_col, notes) أو None لو الملف ناقصه حاجة أساسية."""
+    notes = []
+    sales_col = find_column(df, SALES_PERSON_CANDIDATES + COLLECTED_BY_CANDIDATES)
+    if sales_col is None:
+        st.error("لا يوجد عمود واضح للمحصّل (Created By / Collected by) في الملف.")
+        return None
+    if CLASSIFICATION_COL not in df.columns:
+        st.error(f"لا يوجد عمود '{CLASSIFICATION_COL}' في الملف — ارفع الملف بعد التصنيف.")
+        return None
+
+    df = df.copy()
+    # عمود التصنيف لازم يبقى 1/0 (الملف ممكن يجي نص "1" أو "ناجحة")
+    df[CLASSIFICATION_COL] = _activity_success_mask(df, CLASSIFICATION_COL).astype(int)
+
+    time_col = find_column(df, CREATED_ON_CANDIDATES)
+    if time_col is not None:
+        df[time_col] = pd.to_datetime(df[time_col], errors="coerce")
+    else:
+        notes.append("مفيش عمود Created On — شارت النشاط الساعي والوقت المهدر مش هيظهروا.")
+
+    df = _reach_columns_cached(df)  # التوصل للعميل + الجنسية بأحدث القواعد
+
+    if WASTED_TIME_COL not in df.columns and time_col is not None:
+        df[WASTED_TIME_COL] = _calculate_wasted_time_by_day(df, sales_col, time_col)
+        notes.append("الوقت المهدر اتحسب من الملف (بين مكالمات نفس المحصل في نفس اليوم) من غير خصم استراحة.")
+    return df, sales_col, time_col, notes
+
+
+def _render_dash_board(stored):
+    df = stored["df"]
+    st.caption(f"📄 {stored['name']} — {len(df):,} مكالمة")
+    for note in stored.get("notes", []):
+        st.caption(f"ℹ️ {note}")
+    render_period_charts(df, stored["sales_col"], stored["time_col"], "داش بورد")
+    with st.expander("📋 عرض بيانات الملف"):
+        st.dataframe(df, use_container_width=True, hide_index=True)
+
+
+def page_dash_board():
+    init_activity_state()
+    st.markdown(CLASSIFICATION_CHART_CSS, unsafe_allow_html=True)
+    _claim_agent_filter("dash_board")
+    page_header(
+        "DASHBOARD",
+        "🖥️ داش بورد",
+        "ارفع ملف النشاط المصنّف (بعد التصنيف) وهتظهر لك نفس شارتات تويب التصنيف",
+        centered=True,
+    )
+
+    uploaded = st.file_uploader(
+        "📂 ارفع ملف النشاط المصنّف — CSV أو Excel",
+        type=["csv", "xlsx", "xls"],
+        key=DASH_BOARD_UPLOAD_KEY,
+        on_change=sync_file_cache,
+        args=(DASH_BOARD_UPLOAD_KEY, "dash_board", (DASH_BOARD_RESULT_KEY,)),
+    )
+
+    stored = st.session_state.get(DASH_BOARD_RESULT_KEY)
+    if uploaded is not None:
+        file_hash = uploaded_file_hash(uploaded)
+        if not stored or stored.get("hash") != file_hash:
+            try:
+                raw_df = read_uploaded_dataframe(uploaded)
+            except Exception as e:
+                st.error(f"تعذر قراءة الملف: {e}")
+                return
+            prepared = _prepare_dash_board_df(raw_df)
+            if prepared is None:
+                return
+            df, sales_col, time_col, notes = prepared
+            stored = {
+                "df": df, "sales_col": sales_col, "time_col": time_col,
+                "notes": notes, "name": uploaded.name, "hash": file_hash,
+            }
+            st.session_state[DASH_BOARD_RESULT_KEY] = stored
+
+    if not stored:
+        st.info("ارفع ملف النشاط بعد تصنيفه، وهتتبني الشارتات فورًا.")
+        return
+    _render_dash_board(stored)
+
+
 PAGES = {
     "🎯 تصنيف المكالمات": page_classification,
     "📚 الوعود": page_promises,
@@ -13063,6 +13207,7 @@ PAGES = {
     "⚖️ التوزيع": page_distribution,
     "🔄 التدوير": page_rotation,
     "📊 تحليل نشاط المحصّلين": page_dashboard,
+    "🖥️ داش بورد": page_dash_board,
 }
 
 DEFAULT_PAGE = next(iter(PAGES))

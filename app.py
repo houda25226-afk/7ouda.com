@@ -13144,11 +13144,404 @@ def _prepare_dash_board_df(df):
     return df, sales_col, time_col, notes
 
 
+# ==========================================================
+# 🏆 تقييم أداء المحصلين (درجة 0–100) + مقارنة الفترتين + شيت إكسيل
+# ==========================================================
+
+PERF_COMPONENTS = {
+    "success": "نسبة النجاح",
+    "volume": "حجم المكالمات",
+    "reach": "نسبة التوصل للعميل",
+    "time": "كفاءة الوقت",
+}
+PERF_DEFAULT_WEIGHTS = {"success": 40, "volume": 25, "reach": 20, "time": 15}
+PERF_DEFAULT_TIME_CAP = 30      # متوسط وقت مهدر بين المكالمات يعتبر "ضعيف تمامًا" (دقيقة)
+PERF_DEFAULT_CUTOFF = dt_time(12, 45)
+PERF_SMALL_SAMPLE = 5
+PERF_PERIOD_LABELS = ("الفترة الأولى", "الفترة الثانية")
+PERF_TREND_DELTA = 3.0          # فرق الدرجة اللي بعده نعتبره تحسّن/تراجع
+PERF_MEDALS = {1: "🥇", 2: "🥈", 3: "🥉"}
+
+PERF_COLS = {
+    "rank": "الترتيب",
+    "agent": "المحصّل",
+    "score": "الدرجة النهائية",
+    "calls": "المكالمات المغطاة",
+    "success": "الناجحة",
+    "success_rate": "نسبة النجاح %",
+    "reach_rate": "نسبة التوصل %",
+    "avg_gap": "متوسط الوقت المهدر (دقيقة)",
+    "first": "أول إفادة",
+    "last": "آخر إفادة",
+    "span": "مدة النشاط (ساعة)",
+    "per_hour": "مكالمات/ساعة",
+    "s_success": "درجة النجاح",
+    "s_volume": "درجة الحجم",
+    "s_reach": "درجة التوصل",
+    "s_time": "درجة الوقت",
+    "note": "ملاحظة",
+}
+
+
+def _perf_gap_minutes(agent, times):
+    """الفجوة (دقيقة) بين كل مكالمة وسابقتها لنفس المحصل في نفس اليوم — vectorized."""
+    frame = pd.DataFrame({"a": agent.values, "t": times.values}, index=agent.index)
+    frame["d"] = frame["t"].dt.date
+    ordered = frame.sort_values(["a", "d", "t"])
+    prev = ordered.groupby(["a", "d"])["t"].shift(1)
+    gap = (ordered["t"] - prev).dt.total_seconds() / 60
+    return gap.clip(lower=0).fillna(0.0).reindex(frame.index)
+
+
+def _perf_split_periods(df, time_col, cutoff):
+    """يقسم الملف لفترتين على وقت الفصل. بيرجع (dict فترات، mode) — mode: two / single / none."""
+    if not time_col or time_col not in df.columns:
+        return {"كل الملف": df}, "none"
+    t = pd.to_datetime(df[time_col], errors="coerce")
+    minutes = t.dt.hour * 60 + t.dt.minute
+    cut = cutoff.hour * 60 + cutoff.minute
+    first = df[minutes < cut]
+    second = df[minutes >= cut]
+    if len(first) and len(second):
+        return {PERF_PERIOD_LABELS[0]: first, PERF_PERIOD_LABELS[1]: second}, "two"
+    if len(first):
+        return {PERF_PERIOD_LABELS[0]: first}, "single"
+    if len(second):
+        return {PERF_PERIOD_LABELS[1]: second}, "single"
+    return {"كل الملف": df}, "none"
+
+
+def _perf_metrics(df, sales_col, time_col, weights, time_cap):
+    """جدول أداء كل محصل: مقاييس + 4 درجات فرعية (0–100) + الدرجة النهائية + الترتيب."""
+    if df is None or df.empty:
+        return pd.DataFrame()
+    agent = df[sales_col].fillna("غير محدد").astype(str).str.strip()
+    has_reach = REACH_COL in df.columns
+    work = pd.DataFrame({
+        "agent": agent.values,
+        "success": _activity_success_mask(df, CLASSIFICATION_COL).astype(int).values,
+        "reached": (df[REACH_COL] == REACH_YES).astype(int).values if has_reach else 0,
+    })
+    has_time = bool(time_col) and time_col in df.columns
+    if has_time:
+        times = pd.to_datetime(df[time_col], errors="coerce")
+        work["t"] = times.values
+        work["gap"] = _perf_gap_minutes(agent, times).values
+    g = work.groupby("agent")
+    m = g.agg(calls=("success", "size"), success=("success", "sum"), reached=("reached", "sum"))
+    if has_time:
+        m["avg_gap"] = g["gap"].mean()
+        m["first"] = g["t"].min()
+        m["last"] = g["t"].max()
+        m["span"] = ((m["last"] - m["first"]).dt.total_seconds() / 3600).clip(lower=0)
+        m["per_hour"] = m["calls"] / m["span"].clip(lower=0.25)
+    m["success_rate"] = m["success"] / m["calls"] * 100
+    m["reach_rate"] = (m["reached"] / m["calls"] * 100) if has_reach else float("nan")
+
+    m["s_success"] = m["success_rate"]
+    m["s_volume"] = m["calls"] / m["calls"].max() * 100
+    m["s_reach"] = m["reach_rate"]
+    m["s_time"] = (100 - m["avg_gap"] / max(time_cap, 1) * 100).clip(0, 100) if has_time else float("nan")
+
+    # الأوزان بتتوزع على المكونات المتاحة بس (لو مفيش وقت/توصل في الملف)
+    comp_cols = {"success": "s_success", "volume": "s_volume", "reach": "s_reach", "time": "s_time"}
+    usable = {k: float(weights.get(k, 0)) for k, col in comp_cols.items() if m[col].notna().any()}
+    total_w = sum(usable.values()) or 1.0
+    m["score"] = sum(m[comp_cols[k]].fillna(0) * w for k, w in usable.items()) / total_w
+
+    m = m.sort_values(["score", "success_rate", "calls"], ascending=False)
+    m["rank"] = range(1, len(m) + 1)
+    m["note"] = ["عينة صغيرة (أقل من %d مكالمات)" % PERF_SMALL_SAMPLE if c < PERF_SMALL_SAMPLE else "" for c in m["calls"]]
+    m = m.reset_index().rename(columns={"agent": "agent"})
+    for col in ("success_rate", "reach_rate", "avg_gap", "span", "per_hour", "s_success", "s_volume", "s_reach", "s_time", "score"):
+        if col in m.columns:
+            m[col] = m[col].round(1)
+    ordered_cols = [c for c in PERF_COLS if c in m.columns]
+    return m[ordered_cols].rename(columns=PERF_COLS)
+
+
+def _perf_comparison(p1, p2, overall):
+    """مقارنة الفترتين لكل محصل: درجات وترتيب ونسب نجاح + حكم (تحسّن/تراجع/ثابت)."""
+    a = p1.set_index(PERF_COLS["agent"])
+    b = p2.set_index(PERF_COLS["agent"])
+    agents = list(overall[PERF_COLS["agent"]]) if overall is not None and not overall.empty else list(a.index.union(b.index))
+    agents += [x for x in a.index.union(b.index) if x not in agents]
+    rows = []
+    for name in agents:
+        ra = a.loc[name] if name in a.index else None
+        rb = b.loc[name] if name in b.index else None
+        def pick(r, col):
+            return None if r is None else r.get(PERF_COLS[col])
+        s1, s2 = pick(ra, "score"), pick(rb, "score")
+        rk1, rk2 = pick(ra, "rank"), pick(rb, "rank")
+        if s1 is None or s2 is None:
+            verdict, delta = "نشط في فترة واحدة فقط", None
+        else:
+            delta = round(float(s2) - float(s1), 1)
+            verdict = "تحسّن 📈" if delta >= PERF_TREND_DELTA else ("تراجع 📉" if delta <= -PERF_TREND_DELTA else "ثابت ➖")
+        rows.append({
+            "المحصّل": name,
+            "مكالمات ف1": pick(ra, "calls"), "مكالمات ف2": pick(rb, "calls"),
+            "ناجحة ف1": pick(ra, "success"), "ناجحة ف2": pick(rb, "success"),
+            "نسبة النجاح ف1 %": pick(ra, "success_rate"), "نسبة النجاح ف2 %": pick(rb, "success_rate"),
+            "نسبة التوصل ف1 %": pick(ra, "reach_rate"), "نسبة التوصل ف2 %": pick(rb, "reach_rate"),
+            "الدرجة ف1": s1, "الدرجة ف2": s2, "فرق الدرجة (ف2 − ف1)": delta,
+            "الترتيب ف1": rk1, "الترتيب ف2": rk2,
+            "تغيّر الترتيب": (None if rk1 is None or rk2 is None else int(rk1) - int(rk2)),
+            "الحكم": verdict,
+        })
+    return pd.DataFrame(rows)
+
+
+def build_performance_tables(df, sales_col, time_col, weights, time_cap, cutoff):
+    periods, mode = _perf_split_periods(df, time_col, cutoff)
+    period_tables = {label: _perf_metrics(part, sales_col, time_col, weights, time_cap) for label, part in periods.items()}
+    overall = _perf_metrics(df, sales_col, time_col, weights, time_cap) if mode == "two" else next(iter(period_tables.values()))
+    comparison = None
+    if mode == "two":
+        comparison = _perf_comparison(period_tables[PERF_PERIOD_LABELS[0]], period_tables[PERF_PERIOD_LABELS[1]], overall)
+    return {"mode": mode, "overall": overall, "periods": period_tables, "comparison": comparison}
+
+
+def _perf_best(table):
+    if table is None or table.empty:
+        return None
+    return table.iloc[0][PERF_COLS["agent"]], float(table.iloc[0][PERF_COLS["score"]])
+
+
+def build_performance_excel(tables, weights, time_cap, cutoff, source_name):
+    """شيت إكسيل منسّق: الترتيب العام + كل فترة + مقارنة الفترتين + طريقة التقييم."""
+    from openpyxl.styles import Alignment, Font, PatternFill, Border, Side
+    from openpyxl.formatting.rule import ColorScaleRule
+
+    header_fill = PatternFill("solid", fgColor="0A4F2B")
+    gold_fill = PatternFill("solid", fgColor="FFF2CC")
+    thin = Side(style="thin", color="D0D7D2")
+    border = Border(left=thin, right=thin, top=thin, bottom=thin)
+    mode = tables["mode"]
+
+    sheets = []
+    overall_name = "الترتيب العام" if mode == "two" else "الترتيب"
+    sheets.append((overall_name, tables["overall"]))
+    if mode == "two":
+        for label, tbl in tables["periods"].items():
+            sheets.append((label, tbl))
+        sheets.append(("مقارنة الفترتين", tables["comparison"]))
+
+    weights_df = pd.DataFrame({
+        "المكوّن": [PERF_COMPONENTS[k] for k in PERF_COMPONENTS],
+        "الوزن %": [weights.get(k, 0) for k in PERF_COMPONENTS],
+        "طريقة حساب الدرجة (0–100)": [
+            "نسبة المكالمات الناجحة من مكالمات المحصّل",
+            "مكالمات المحصّل ÷ أعلى محصّل في نفس الفترة × 100",
+            "نسبة المكالمات اللي تم فيها التوصل للعميل (من عمود التوصل للعميل)",
+            f"100 − (متوسط الوقت المهدر بين المكالمات ÷ {time_cap} دقيقة × 100) — بحد أدنى 0",
+        ],
+    })
+    info_lines = [
+        ("الملف", source_name),
+        ("وضع التقييم", "يوم كامل مقسوم لفترتين" if mode == "two" else "فترة واحدة"),
+        ("وقت الفصل بين الفترتين", cutoff.strftime("%H:%M") if mode == "two" else "—"),
+        ("الدرجة النهائية", "المتوسط المرجّح للدرجات الأربعة بالأوزان دي (0–100)"),
+        ("الترتيب", "حسب الدرجة النهائية ثم نسبة النجاح ثم عدد المكالمات"),
+        ("الوقت المهدر", "الفجوة بين مكالمات نفس المحصّل في نفس الفترة، من غير خصم استراحة"),
+        ("الحكم في المقارنة", f"تحسّن/تراجع لو فرق الدرجة ≥ {PERF_TREND_DELTA:g}، غير كده ثابت"),
+        ("عينة صغيرة", f"محصّل عنده أقل من {PERF_SMALL_SAMPLE} مكالمات — النتيجة بتاعته أقل ثقة"),
+    ]
+
+    buf = BytesIO()
+    with pd.ExcelWriter(buf, engine="openpyxl") as writer:
+        for name, tbl in sheets:
+            tbl = tbl.copy()
+            if "الحكم" in tbl.columns:  # الإيموجي بتظهر مربعات في بعض برامج الإكسيل — الحكم بالنص واللون
+                tbl["الحكم"] = tbl["الحكم"].astype(str).str.replace(r"\s*[📈📉➖]", "", regex=True)
+            tbl.to_excel(writer, index=False, sheet_name=name)
+        weights_df.to_excel(writer, index=False, sheet_name="طريقة التقييم", startrow=len(info_lines) + 2)
+        wb = writer.book
+        ws_method = wb["طريقة التقييم"]
+        for i, (k, v) in enumerate(info_lines, start=1):
+            ws_method.cell(row=i, column=1, value=k).font = Font(bold=True)
+            ws_method.cell(row=i, column=2, value=v)
+
+        from openpyxl.worksheet.properties import PageSetupProperties
+        for ws in wb.worksheets:
+            ws.sheet_view.rightToLeft = True
+            # طباعة مريحة: عرض الصفحة كله على ورقة واحدة (أفقي)
+            ws.page_setup.orientation = "landscape"
+            ws.sheet_properties.pageSetUpPr = PageSetupProperties(fitToPage=True)
+            ws.page_setup.fitToWidth = 1
+            ws.page_setup.fitToHeight = 0
+            is_method = ws.title == "طريقة التقييم"
+            header_row = (len(info_lines) + 3) if is_method else 1
+            for cell in ws[header_row]:
+                if cell.value is None:
+                    continue
+                cell.fill = header_fill
+                cell.font = Font(bold=True, color="FFFFFF")
+                cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+                cell.border = border
+            ws.row_dimensions[header_row].height = 32
+            for col_cells in ws.columns:
+                letter = col_cells[0].column_letter
+                longest = max((len(str(c.value)) for c in col_cells if c.value is not None), default=8)
+                ws.column_dimensions[letter].width = min(max(16, longest + 4), 60)
+            if not is_method:
+                ws.freeze_panes = "C2"
+                for row in ws.iter_rows(min_row=2):
+                    for cell in row:
+                        cell.alignment = Alignment(horizontal="center", vertical="center")
+                        cell.border = border
+                        if isinstance(cell.value, float):
+                            cell.number_format = "0.0"
+                        elif hasattr(cell.value, "year"):
+                            cell.number_format = "yyyy-mm-dd hh:mm:ss"
+                headers = {c.value: c.column_letter for c in ws[1] if c.value}
+                score_header = PERF_COLS["score"] if PERF_COLS["score"] in headers else ("الدرجة ف2" if "الدرجة ف2" in headers else None)
+                if ws.title in tuple(PERF_PERIOD_LABELS) + (overall_name,) and PERF_COLS["score"] in headers:
+                    letter = headers[PERF_COLS["score"]]
+                    ws.conditional_formatting.add(
+                        f"{letter}2:{letter}{ws.max_row}",
+                        ColorScaleRule(start_type="min", start_color="F8E6E3", mid_type="percentile", mid_value=50,
+                                       mid_color="FFFFFF", end_type="max", end_color="9ED9B5"),
+                    )
+                    for cell in ws[2]:  # أحسن محصّل
+                        cell.fill = gold_fill
+                        cell.font = Font(bold=True)
+                if ws.title == "مقارنة الفترتين":
+                    verdict_col = headers.get("الحكم")
+                    for row in ws.iter_rows(min_row=2):
+                        for cell in row:
+                            if verdict_col and cell.column_letter == verdict_col:
+                                text = str(cell.value or "")
+                                cell.font = Font(bold=True, color=("1B7F46" if "تحسّن" in text else ("B23B3B" if "تراجع" in text else "555555")))
+    return buf.getvalue()
+
+
+def render_performance_section(df, sales_col, time_col, source_name):
+    """قسم "🏆 تقييم أداء المحصلين" في تويب داش بورد."""
+    st.subheader("🏆 تقييم أداء المحصلين")
+    with st.expander("⚙️ إعدادات التقييم (الأوزان ووقت الفصل بين الفترتين)", expanded=False):
+        wcols = st.columns(4)
+        weights = {}
+        for col, (key, label) in zip(wcols, PERF_COMPONENTS.items()):
+            with col:
+                weights[key] = st.slider(f"وزن {label}", 0, 100, PERF_DEFAULT_WEIGHTS[key], 5, key=f"perf_w_{key}")
+        c1, c2 = st.columns(2)
+        with c1:
+            time_cap = st.number_input(
+                "متوسط وقت مهدر يعتبر ضعيف تمامًا (دقيقة)", min_value=5, max_value=240,
+                value=PERF_DEFAULT_TIME_CAP, step=5, key="perf_time_cap",
+                help="متوسط الفجوة بين مكالمات المحصل لو وصل للقيمة دي، درجة كفاءة الوقت = 0",
+            )
+        with c2:
+            cutoff = st.time_input("وقت الفصل بين الفترتين", value=PERF_DEFAULT_CUTOFF, key="perf_cutoff",
+                                   help="لو الملف فيه مكالمات قبل وبعد الوقت ده بيتقسم لفترتين ويتقارنوا")
+    if sum(weights.values()) == 0:
+        st.warning("كل الأوزان صفر — زوّد وزن واحد على الأقل.")
+        return
+
+    tables = build_performance_tables(df, sales_col, time_col, weights, time_cap, cutoff)
+    overall, mode = tables["overall"], tables["mode"]
+    if overall is None or overall.empty:
+        st.info("مفيش بيانات كفاية لتقييم الأداء.")
+        return
+
+    if mode == "two":
+        st.caption(f"🕐 اليوم اتقسم لفترتين على {cutoff.strftime('%H:%M')} — الفترة الأولى: {len(tables['periods'][PERF_PERIOD_LABELS[0]]):,} مكالمة، الفترة الثانية: {len(tables['periods'][PERF_PERIOD_LABELS[1]]):,} مكالمة")
+    elif mode == "single":
+        st.caption(f"🕐 الملف فيه {next(iter(tables['periods']))} بس — بتم التقييم من غير مقارنة.")
+
+    # ---- الأحسن ----
+    best_cards = [("🥇 الأحسن" + (" (اليوم كامل)" if mode == "two" else ""), _perf_best(overall))]
+    if mode == "two":
+        for label in PERF_PERIOD_LABELS:
+            best_cards.append((f"⭐ أحسن {label}", _perf_best(tables["periods"][label])))
+        comp = tables["comparison"]
+        valid = comp.dropna(subset=["فرق الدرجة (ف2 − ف1)"])
+        if not valid.empty:
+            top = valid.sort_values("فرق الدرجة (ف2 − ف1)", ascending=False).iloc[0]
+            best_cards.append(("📈 أكتر تحسّنًا", (top["المحصّل"], float(top["فرق الدرجة (ف2 − ف1)"]))))
+    cols = st.columns(len(best_cards))
+    for col, (title, best) in zip(cols, best_cards):
+        with col:
+            if best:
+                is_delta = title.startswith("📈")
+                st.metric(title, str(best[0]), f"{best[1]:+.1f} درجة" if is_delta else f"{best[1]:.1f} / 100")
+
+    def _show(table, key):
+        view = table.copy()
+        view.insert(0, "🏅", view[PERF_COLS["rank"]].map(lambda r: PERF_MEDALS.get(int(r), "")))
+        kwargs = {}
+        try:
+            kwargs["column_config"] = {
+                PERF_COLS["score"]: st.column_config.ProgressColumn(PERF_COLS["score"], min_value=0, max_value=100, format="%.1f"),
+            }
+        except Exception:
+            pass
+        try:
+            st.dataframe(view, use_container_width=True, hide_index=True, **kwargs)
+        except TypeError:  # نسخة Streamlit قديمة من غير column_config
+            st.dataframe(view, use_container_width=True, hide_index=True)
+
+    st.markdown("##### 🏁 الترتيب" + (" العام (اليوم كامل)" if mode == "two" else ""))
+    _show(overall, "perf_overall_table")
+
+    # ---- شارت الدرجات ----
+    names = overall[PERF_COLS["agent"]].tolist()
+    scores = overall[PERF_COLS["score"]].tolist()
+    fig = go.Figure(go.Bar(
+        x=names, y=scores,
+        marker_color=[OPS_DARK if i == 0 else OPS_MID for i in range(len(names))],
+        hovertemplate="<b>%{x}</b><br>الدرجة: %{y:.1f}<extra></extra>",
+    ))
+    fig.update_layout(**PLOTLY_LAYOUT, title="🏆 الدرجة النهائية لكل محصّل" + (" (اليوم كامل)" if mode == "two" else ""),
+                      xaxis_title="", yaxis_title="الدرجة (من 100)", yaxis_range=[0, 112], height=430)
+    _enhance_chart(fig)
+    with st.container(border=True):
+        st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG, key="perf_overall_chart")
+
+    # ---- مقارنة الفترتين ----
+    if mode == "two":
+        comp = tables["comparison"]
+        st.markdown("##### ⚖️ مقارنة الأداء بين الفترتين")
+        order = comp.sort_values("الدرجة ف2", ascending=False, na_position="last")["المحصّل"].tolist()
+        by = comp.set_index("المحصّل")
+        fig2 = go.Figure([
+            go.Bar(name=PERF_PERIOD_LABELS[0], x=order, y=[by.loc[n, "الدرجة ف1"] for n in order], marker_color=OPS_LIGHT),
+            go.Bar(name=PERF_PERIOD_LABELS[1], x=order, y=[by.loc[n, "الدرجة ف2"] for n in order], marker_color=OPS_DARK),
+        ])
+        fig2.update_layout(**PLOTLY_LAYOUT, title="⚖️ درجة المحصّل: الفترة الأولى مقابل الثانية", barmode="group",
+                           xaxis_title="", yaxis_title="الدرجة (من 100)", yaxis_range=[0, 112], height=450,
+                           legend=dict(orientation="h", yanchor="bottom", y=-0.3, x=0.5, xanchor="center"))
+        _enhance_chart(fig2)
+        with st.container(border=True):
+            st.plotly_chart(fig2, use_container_width=True, config=PLOTLY_CONFIG, key="perf_compare_chart")
+        st.dataframe(comp, use_container_width=True, hide_index=True)
+        for label in PERF_PERIOD_LABELS:
+            with st.expander(f"📋 ترتيب {label}"):
+                _show(tables["periods"][label], f"perf_table_{label}")
+
+    # ---- تنزيل الإكسيل ----
+    try:
+        xlsx = build_performance_excel(tables, weights, time_cap, cutoff, source_name)
+        stem = re.sub(r"\.[^.]+$", "", str(source_name)) or "نشاط"
+        st.download_button(
+            "📥 تنزيل شيت تقييم الأداء (Excel)", data=xlsx,
+            file_name=f"تقييم_أداء_المحصلين_{stem}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            key="perf_download", use_container_width=True,
+        )
+    except Exception as exc:
+        st.warning(f"تعذر تجهيز ملف الإكسيل: {exc}")
+    st.divider()
+
+
 def _render_dash_board(stored):
     df = stored["df"]
     st.caption(f"📄 {stored['name']} — {len(df):,} مكالمة")
     for note in stored.get("notes", []):
         st.caption(f"ℹ️ {note}")
+    render_performance_section(df, stored["sales_col"], stored["time_col"], stored["name"])
     render_period_charts(df, stored["sales_col"], stored["time_col"], "داش بورد")
     with st.expander("📋 عرض بيانات الملف"):
         st.dataframe(df, use_container_width=True, hide_index=True)

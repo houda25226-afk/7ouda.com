@@ -12,6 +12,7 @@
   - الإهمال ومتابعة الإهمال
   - الجدولة المتعثرة (محفظة + سدادات)
   - تحليل نشاط المحصّلين (Dashboard + تصدير HTML)
+  - تنضيف أرقام التواصل (استخراج الأرقام الصحيحة في أعمدة جانبية)
 
 أسماء الأعمدة قابلة للتعديل من قسم الإعدادات أعلى الملف.
 """
@@ -13591,6 +13592,344 @@ def page_dash_board():
     _render_dash_board(stored)
 
 
+# ==========================================================
+# تويب: تنضيف أرقام التواصل
+# يطلّع كل رقم صحيح (10 خانات وبيبدأ بـ 0) في عمود جانبي لكل صف
+# ==========================================================
+
+PHONE_CLEAN_UPLOAD_KEY = "phone_clean_upload"
+PHONE_CLEAN_RESULT_KEY = "phone_clean_result"
+PHONE_CLEAN_COLUMNS_KEY = "phone_clean_columns"
+PHONE_CLEAN_DEFAULT_COLUMNS = ["رقم جوال المؤمن", "Debitor Phone", "رقم جوال المالك"]
+
+_PHONE_AR_DIGITS = str.maketrans("٠١٢٣٤٥٦٧٨٩۰۱۲۳۴۵۶۷۸۹", "01234567890123456789")
+_PHONE_VALID_RE = re.compile(r"^0[1-9]\d{8}$")  # 10 خانات وبيبدأ بصفر
+
+
+def _phone_bump(stats, key):
+    stats[key] = stats.get(key, 0) + 1
+
+
+def _phone_fix_token(token, restore_zero, stats):
+    """قطعة أرقام واحدة (بدون أي رموز) -> لستة أرقام صحيحة.
+
+    - 10 خانات وبيبدأ بصفر: رقم صحيح زي ما هو.
+    - 9 خانات وبيبدأ بـ 5 (الصفر اتشال من الإكسيل): نرجّع الصفر.
+    - 966 / 00966 في الأول: نحوّلها لصيغة 05.
+    - قطعة أطول من 10 (رقمين لازقين): نفصلهم.
+    """
+    forced = False
+    if token.startswith("00966"):
+        token, forced = token[5:], True
+    elif token.startswith("966") and len(token) == 12:
+        token, forced = token[3:], True
+    allow_nine = restore_zero or forced
+
+    if len(token) == 10 and _PHONE_VALID_RE.match(token):
+        return [token]
+    if len(token) == 9 and token[0] == "5":
+        if allow_nine:
+            _phone_bump(stats, "restored_zero")
+            return ["0" + token]
+        return []
+    if len(token) == 11 and token.startswith("00") and token[2] == "5":
+        if allow_nine:
+            _phone_bump(stats, "restored_zero")
+            return ["0" + token[2:]]
+        return []
+    if len(token) == 10 and token[0] != "0":
+        return []
+    if len(token) <= 10:
+        return []
+
+    # أرقام لازقة في بعض: نقسمها بالتتابع
+    found, i = [], 0
+    while i < len(token):
+        if token[i] == "0" and i + 10 <= len(token) and token[i + 1] != "0":
+            found.append(token[i:i + 10])
+            i += 10
+        elif token[i] == "5" and i + 9 <= len(token) and allow_nine:
+            found.append("0" + token[i:i + 9])
+            _phone_bump(stats, "restored_zero")
+            i += 9
+        else:
+            i += 1
+    if found:
+        _phone_bump(stats, "glued_split")
+    return found
+
+
+def extract_phone_numbers(value, restore_zero=True, stats=None):
+    """خلية واحدة -> لستة أرقام صحيحة (من غير تكرار وبنفس الترتيب)."""
+    stats = stats if stats is not None else {}
+    if value is None or (isinstance(value, float) and pd.isna(value)):
+        return []
+    if isinstance(value, float) and value.is_integer():
+        value = int(value)
+    text = str(value).translate(_PHONE_AR_DIGITS)
+    tokens = re.findall(r"\d+", text)
+
+    result, buffer = [], ""
+
+    def flush():
+        nonlocal buffer
+        if buffer:
+            result.extend(_phone_fix_token(buffer, restore_zero, stats))
+            buffer = ""
+
+    for tok in tokens:
+        if len(tok) < 9 and not tok.startswith("966"):
+            # جزء من رقم متقطّع بمسافات أو علامات (057 2582903 / 054-123-4567)
+            buffer += tok
+            if len(buffer) >= 9:
+                fixed = _phone_fix_token(buffer, restore_zero, stats)
+                if fixed or len(buffer) >= 12:
+                    result.extend(fixed)
+                    buffer = ""
+        else:
+            flush()
+            result.extend(_phone_fix_token(tok, restore_zero, stats))
+    flush()
+
+    unique = []
+    for number in result:
+        if number not in unique:
+            unique.append(number)
+    return unique
+
+
+def clean_phone_columns(df, phone_cols, restore_zero=True, mobile_only=False):
+    """يرجّع (الجدول بالأعمدة الجديدة، أسماء الأعمدة الجديدة، ملخص، المرفوض، إحصائيات)."""
+    stats = {}
+    new_data, new_cols, summary_rows, rejected = {}, [], [], {}
+
+    for name in phone_cols:
+        parsed, rejected_values = [], []
+        for raw in df[name].tolist():
+            numbers = extract_phone_numbers(raw, restore_zero, stats)
+            if mobile_only:
+                numbers = [n for n in numbers if n.startswith("05")]
+            parsed.append(numbers)
+            if not numbers and raw is not None and not (isinstance(raw, float) and pd.isna(raw)):
+                digits = re.sub(r"\D", "", str(raw).translate(_PHONE_AR_DIGITS))
+                if len(digits) >= 7:  # فيه أرقام فعلية بس مش صالحة (مش مجرد - أو 0)
+                    rejected_values.append(str(raw).strip())
+
+        max_per_row = max((len(x) for x in parsed), default=0)
+        for k in range(max(max_per_row, 1)):
+            col_name = f"{name} - {k + 1}"
+            while col_name in df.columns or col_name in new_data:
+                col_name += "_"
+            new_data[col_name] = [x[k] if k < len(x) else None for x in parsed]
+            new_cols.append(col_name)
+
+        for numbers in parsed:
+            for number in numbers:
+                if not number.startswith("05"):
+                    _phone_bump(stats, "non_mobile")
+
+        summary_rows.append({
+            "العمود": name,
+            "صفوف فيها رقم صحيح": sum(1 for x in parsed if x),
+            "إجمالي الأرقام": sum(len(x) for x in parsed),
+            "أقصى عدد أرقام في صف": max_per_row,
+            "خلايا فيها أرقام مرفوضة": len(rejected_values),
+        })
+        rejected[name] = pd.Series(rejected_values, dtype="object").value_counts()
+
+    out = pd.concat([df, pd.DataFrame(new_data, index=df.index)], axis=1)
+    return out, new_cols, pd.DataFrame(summary_rows), rejected, stats
+
+
+def _phone_excel_bytes(out_df, new_cols):
+    """إكسيل فيه كل الأعمدة الأصلية + الأعمدة الجديدة (نص عشان الصفر ما يتشالش)."""
+    from openpyxl.styles import Alignment, Font, PatternFill
+
+    buf = io.BytesIO()
+    with pd.ExcelWriter(buf, engine="openpyxl") as writer:
+        out_df.to_excel(writer, index=False, sheet_name="Sheet1")
+        ws = writer.sheets["Sheet1"]
+        header_font = Font(bold=True, color="FFFFFF")
+        header_fill = PatternFill("solid", fgColor="1F4E78")
+        for col_name in new_cols:
+            col_idx = list(out_df.columns).index(col_name) + 1
+            head = ws.cell(1, col_idx)
+            head.font, head.fill = header_font, header_fill
+            head.alignment = Alignment(horizontal="center")
+            ws.column_dimensions[get_column_letter(col_idx)].width = 16
+            for row in range(2, ws.max_row + 1):
+                ws.cell(row, col_idx).number_format = "@"
+    return buf.getvalue()
+
+
+@st.cache_data(show_spinner=False, max_entries=4)
+def _phone_read_headers(data, filename):
+    if filename.lower().endswith(".csv"):
+        return [str(c) for c in pd.read_csv(io.BytesIO(data), nrows=0).columns]
+    return [str(c) for c in pd.read_excel(io.BytesIO(data), nrows=0).columns]
+
+
+@st.cache_data(show_spinner=False, max_entries=2)
+def _phone_read_full(data, filename, phone_cols):
+    """القراءة بنوع نص للأعمدة دي عشان الصفر اللي في الأول ما يتشالش."""
+    dtype_map = {c: str for c in phone_cols}
+    if filename.lower().endswith(".csv"):
+        last_error = None
+        for encoding in ("utf-8-sig", "cp1256", "latin-1"):
+            try:
+                return pd.read_csv(io.BytesIO(data), dtype=dtype_map, encoding=encoding)
+            except UnicodeDecodeError as error:
+                last_error = error
+        raise last_error
+    df = pd.read_excel(io.BytesIO(data), dtype=dtype_map)
+    if filename.lower().endswith((".xlsx", ".xlsm")):
+        try:
+            df = _phone_restore_formula_text(data, df, phone_cols)
+        except Exception:
+            pass  # لو فشلت نكمل بالقيم المقروءة عادي
+    return df
+
+
+def _phone_restore_formula_text(data, df, phone_cols):
+    """خلايا زي "= 0550778941 \\0505538502" الإكسيل بيعتبرها معادلة وبيحفظ قيمتها 0.
+
+    بنقرأ النص الأصلي للخلايا دي بس (اللي بتبدأ بـ =) عشان الأرقام اللي جواها ما تضيعش.
+    """
+    from openpyxl import load_workbook
+
+    wb = load_workbook(io.BytesIO(data), read_only=True)
+    rows = wb.worksheets[0].iter_rows(values_only=True)
+    header = next(rows, None) or ()
+    positions = {}
+    for idx, name in enumerate(header):
+        positions.setdefault(str(name), idx)
+    wanted = {c: positions[c] for c in phone_cols if c in positions}
+    raw = {c: [] for c in wanted}
+    for row in rows:
+        for c, idx in wanted.items():
+            raw[c].append(row[idx] if idx < len(row) else None)
+    wb.close()
+
+    n = len(df)
+    for c, values in raw.items():
+        values = (values + [None] * n)[:n]
+        for i, value in enumerate(values):
+            if isinstance(value, str) and value.lstrip().startswith("="):
+                df.iat[i, df.columns.get_loc(c)] = value
+    return df
+
+
+def page_phone_cleaning():
+    page_header(
+        "DATA CLEANING",
+        "📞 تنضيف أرقام التواصل",
+        "ارفع الشيت وحدد أعمدة الأرقام — هتطلع كل رقم صحيح (10 خانات وبيبدأ بـ 0) في عمود جانبي لكل صف",
+    )
+
+    uploaded = st.file_uploader(
+        "📂 ارفع ملف الأرقام — Excel أو CSV",
+        type=["xlsx", "xls", "csv"],
+        key=PHONE_CLEAN_UPLOAD_KEY,
+        on_change=sync_file_cache,
+        args=(PHONE_CLEAN_UPLOAD_KEY, "phone_cleaning", (PHONE_CLEAN_RESULT_KEY,)),
+    )
+    if uploaded is None:
+        st.info("ارفع الملف وهيتم اقتراح أعمدة الأرقام تلقائيًا (رقم جوال المؤمن / Debitor Phone / رقم جوال المالك).")
+        return
+
+    data = uploaded.getvalue()
+    try:
+        headers = _phone_read_headers(data, uploaded.name)
+    except Exception as error:
+        st.error(f"تعذر قراءة الملف: {error}")
+        return
+
+    defaults = [c for c in PHONE_CLEAN_DEFAULT_COLUMNS if c in headers]
+    if not defaults:
+        st.warning("مش لاقي الأعمدة المعتادة في الملف — اختار أعمدة الأرقام بنفسك من القايمة.")
+    phone_cols = st.multiselect(
+        "أعمدة الأرقام المطلوب تنضيفها",
+        options=headers,
+        default=defaults,
+        key=f"{PHONE_CLEAN_COLUMNS_KEY}_{hashlib.md5(','.join(headers).encode('utf-8')).hexdigest()[:8]}",
+    )
+    opt1, opt2 = st.columns(2)
+    with opt1:
+        restore_zero = st.checkbox(
+            "رجّع الصفر للأرقام اللي من 9 خانات وبتبدأ بـ 5",
+            value=True,
+            help="الإكسيل بيشيل الصفر من أول الرقم (562126106 بدل 0562126106). لو قفلتها الأرقام دي هتتستبعد.",
+        )
+    with opt2:
+        mobile_only = st.checkbox(
+            "الجوالات بس (05...) واستبعد الأرضي",
+            value=False,
+            help="لو مقفولة بيدخل أي رقم 10 خانات وبيبدأ بصفر (زي 011...).",
+        )
+
+    signature = (uploaded_file_hash(uploaded), tuple(phone_cols), restore_zero, mobile_only)
+
+    if st.button("🧹 ابدأ التنضيف", type="primary", use_container_width=True, disabled=not phone_cols, key="phone_clean_run"):
+        with st.spinner("جارٍ تنضيف الأرقام..."):
+            try:
+                df = _phone_read_full(data, uploaded.name, tuple(phone_cols))
+                out_df, new_cols, summary, rejected, stats = clean_phone_columns(
+                    df, phone_cols, restore_zero=restore_zero, mobile_only=mobile_only
+                )
+                excel_bytes = _phone_excel_bytes(out_df, new_cols)
+            except Exception as error:
+                st.error(f"حصل خطأ أثناء التنضيف: {error}")
+                return
+        st.session_state[PHONE_CLEAN_RESULT_KEY] = {
+            "signature": signature, "rows": len(out_df), "new_cols": new_cols,
+            "summary": summary, "rejected": rejected, "stats": stats,
+            "excel": excel_bytes, "preview": out_df[phone_cols + new_cols].head(200),
+            "source_name": uploaded.name,
+        }
+
+    result = st.session_state.get(PHONE_CLEAN_RESULT_KEY)
+    if not result:
+        return
+    if result["signature"] != signature:
+        st.info("غيّرت الملف أو الإعدادات — اضغط «ابدأ التنضيف» عشان تتحدّث النتيجة.")
+        return
+
+    st.success(f"✅ تم تنضيف {result['rows']:,} صف وإضافة {len(result['new_cols'])} عمود جديد.")
+    st.dataframe(result["summary"], use_container_width=True, hide_index=True)
+
+    stats = result["stats"]
+    st.caption(
+        f"🔧 أرقام اتضاف لها صفر: {stats.get('restored_zero', 0):,} · "
+        f"خلايا فيها أرقام لازقة واتفصلت: {stats.get('glued_split', 0):,} · "
+        f"أرقام مش جوال (مش 05): {stats.get('non_mobile', 0):,}"
+    )
+
+    stamp = datetime.now().strftime("%Y%m%d_%H%M")
+    base_name = re.sub(r"\.[^.]+$", "", result["source_name"])
+    st.download_button(
+        "📥 تحميل الملف بعد التنضيف",
+        data=result["excel"],
+        file_name=f"{base_name}_أرقام_منظفة_{stamp}.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        use_container_width=True,
+        type="primary",
+        key="phone_clean_download",
+    )
+
+    with st.expander("👀 معاينة أول 200 صف"):
+        st.dataframe(result["preview"], use_container_width=True, hide_index=True)
+    with st.expander("🚫 قيم فيها أرقام بس اتستبعدت (للمراجعة)"):
+        any_rejected = False
+        for col_name, counts in result["rejected"].items():
+            if len(counts):
+                any_rejected = True
+                st.markdown(f"**{col_name}** — {int(counts.sum()):,} خلية")
+                table = counts.head(300).rename_axis("القيمة").reset_index(name="التكرار")
+                st.dataframe(table, use_container_width=True, hide_index=True)
+        if not any_rejected:
+            st.write("مفيش قيم مستبعدة.")
+
+
 PAGES = {
     "🎯 تصنيف المكالمات": page_classification,
     "📚 الوعود": page_promises,
@@ -13599,6 +13938,7 @@ PAGES = {
     "🧾 أخطاء الحالات": page_case_errors,
     "⚖️ التوزيع": page_distribution,
     "🔄 التدوير": page_rotation,
+    "📞 تنضيف أرقام التواصل": page_phone_cleaning,
     "📊 تحليل نشاط المحصّلين": page_dashboard,
     "🖥️ داش بورد": page_dash_board,
 }

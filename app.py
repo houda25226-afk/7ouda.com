@@ -13938,7 +13938,7 @@ PAGES = {
     "🧾 أخطاء الحالات": page_case_errors,
     "⚖️ التوزيع": page_distribution,
     "🔄 التدوير": page_rotation,
-    "📞 تنضيف أرقام التواصل": page_phone_cleaning,
+    "📞 Phone Numbers Cleaning": page_phone_cleaning,
     "📊 تحليل نشاط المحصّلين": page_dashboard,
     "🖥️ داش بورد": page_dash_board,
 }

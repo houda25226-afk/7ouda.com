@@ -13822,7 +13822,7 @@ def _phone_restore_formula_text(data, df, phone_cols):
 def page_phone_cleaning():
     page_header(
         "DATA CLEANING",
-        "📞 تنضيف أرقام التواصل",
+        "📞 Phone Numbers Cleaning",
         "ارفع الشيت وحدد أعمدة الأرقام — هتطلع كل رقم صحيح (10 خانات وبيبدأ بـ 0) في عمود جانبي لكل صف",
     )
 

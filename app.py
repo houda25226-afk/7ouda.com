@@ -13,6 +13,7 @@
   - الجدولة المتعثرة (محفظة + سدادات)
   - تحليل نشاط المحصّلين (Dashboard + تصدير HTML)
   - تنضيف أرقام التواصل (استخراج الأرقام الصحيحة في أعمدة جانبية)
+  - أداء المحصّلين (نشاط + سدادات + محفظة لفترة، ترتيب وتغطية وتركيز على فئات المديونيات)
 
 أسماء الأعمدة قابلة للتعديل من قسم الإعدادات أعلى الملف.
 """
@@ -14118,6 +14119,1168 @@ def page_phone_cleaning():
             st.write("مفيش قيم مستبعدة.")
 
 
+# ==========================================================
+# 🏆 تويب: أداء المحصّلين (نشاط + سدادات + محفظة لفترة)
+# - ترتيب المحصلين بدرجة مركّبة قابلة للتعديل
+# - تغطية المحفظة (مبلغ + حسابات) وتغطية النشاط
+# - تركيز كل محصل على فئات المديونية (مبلغ / عمر إسناد / عمر حادث / أولوية ...)
+# ==========================================================
+
+CPR_RESULT_KEY = "cpr_result"
+CPR_NOT_IN_PORTFOLIO = "غير موجود بالمحفظة"
+CPR_UNKNOWN = "غير محدد"
+CPR_SYSTEM_OWNER_PATTERN = r"\bii\b|archive|closed|cancel|\bhold\b|depletion|closing|all insurance|\(\d+\)"
+CPR_AMOUNT_BANDS = [0, 2000, 5000, 10000, 20000, 50000]
+CPR_AMOUNT_LABELS = ["أقل من 2,000", "2,000 — 5,000", "5,000 — 10,000", "10,000 — 20,000", "20,000 — 50,000", "50,000 فأكثر"]
+CPR_DEBIT_AGE_BINS = [-float("inf"), 90, 180, 365, 730, float("inf")]
+CPR_DEBIT_AGE_LABELS = ["0 — 90 يوم", "91 — 180 يوم", "181 — 365 يوم", "1 — 2 سنة", "أكثر من سنتين"]
+CPR_PRIORITY_ORDER = ["Very High", "High", "Medium", "Low", CPR_UNKNOWN]
+CPR_PRIORITY_CANDIDATES = ["Priority Category", "priority category", "Priority", "الأولوية", "فئة الأولوية", "الاولوية"]
+CPR_PORTFOLIO_TYPE_CANDIDATES = ["Portfolio Type", "portfolio type", "Portfolio Name", "portfolio name", "نوع المحفظة", "المحفظة"]
+CPR_OPPORTUNITY_CANDIDATES = ["Opportunity", "opportunity", "رقم الفرصة"]
+
+CPR_METRICS = {
+    "rate": ("معدل التحصيل من المحفظة %", 30),
+    "amount": ("المبلغ المحصّل", 15),
+    "acc_cov": ("تغطية السداد بالحسابات %", 10),
+    "per_day": ("إفادات/يوم نشاط", 15),
+    "act_cov": ("تغطية النشاط للمحفظة %", 15),
+    "success": ("نجاح الإفادات %", 10),
+    "days": ("أيام النشاط", 5),
+}
+CPR_TIERS = [(80, "🥇 ممتاز"), (60, "🟢 جيد"), (40, "🟡 متوسط"), (-1, "🔴 يحتاج تحسين")]
+
+_CPR_AR_MAP = str.maketrans({"أ": "ا", "إ": "ا", "آ": "ا", "ى": "ي", "ة": "ه", "ؤ": "و", "ئ": "ي"})
+
+
+# ---------------------------------------------------------------- أدوات التنضيف
+def _cpr_name_key(value):
+    """مفتاح مقارنة لاسم المحصل: بيشيل بادئة 'Watanya ||' والتشكيل ويوحّد الحروف."""
+    if value is None or (isinstance(value, float) and pd.isna(value)):
+        return ""
+    text = str(value).strip()
+    if "||" in text:
+        text = text.split("||")[-1]
+    text = text.translate(_CPR_AR_MAP)
+    text = re.sub(r"[\u064B-\u0652\u0640]", "", text)
+    text = re.sub(r"\s+", " ", text).strip().casefold()
+    return "" if text in {"nan", "none", "null", "nat"} else text
+
+
+def _cpr_display_name(value):
+    if value is None or (isinstance(value, float) and pd.isna(value)):
+        return ""
+    text = str(value).strip()
+    if "||" in text:
+        tail = text.split("||")[-1].strip()
+        text = tail or text
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def _cpr_id_key(series):
+    """يوحّد شكل الأرقام التعريفية (حساب / مدين / مطالبة) عشان الربط يشتغل."""
+    text = series.astype(str).str.strip().str.replace(r"\.0$", "", regex=True).str.replace(r"\s+", "", regex=True)
+    return text.where(~text.str.lower().isin(["", "nan", "none", "null", "nat"]), None)
+
+
+def _cpr_to_datetime(series):
+    import warnings
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        parsed = pd.to_datetime(series, errors="coerce")
+        if len(series) and parsed.notna().mean() < 0.5:
+            alt = pd.to_datetime(series, errors="coerce", dayfirst=True)
+            if alt.notna().sum() > parsed.notna().sum():
+                parsed = alt
+    return parsed
+
+
+def _cpr_id_columns(df):
+    """الأعمدة اللي ممكن تكون مفتاح ربط (رقم حساب / مدين / مطالبة ...)."""
+    lists = [
+        ACCOUNT_NUMBER_CANDIDATES, ID_CANDIDATES, WALLET_CUSTOMER_ID_CANDIDATES,
+        PAYMENT_ACCOUNT_CANDIDATES, PAYMENT_CLIENT_CANDIDATES, SCHEDULE_DEBITOR_CANDIDATES,
+        CLAIM_CANDIDATES, CPR_OPPORTUNITY_CANDIDATES,
+    ]
+    lowered = {str(c).strip().casefold(): c for c in df.columns}
+    found = []
+    for names in lists:
+        for name in names:
+            col = lowered.get(str(name).strip().casefold())
+            if col is not None and col not in found:
+                found.append(col)
+    return found
+
+
+def _cpr_pick_key(left_df, right_df, left_override=None, right_override=None, right_fixed=None):
+    """يختار أنسب عمودين للربط بين ملفين (الأكتر تطابقًا)."""
+    left_cols = [left_override] if left_override else _cpr_id_columns(left_df)
+    if right_fixed:
+        right_cols = [right_fixed]
+    else:
+        right_cols = [right_override] if right_override else _cpr_id_columns(right_df)
+    right_sets = {r: set(_cpr_id_key(right_df[r]).dropna().unique()) for r in right_cols}
+    best = (None, None, -1, 0)
+    for left in left_cols:
+        keys = _cpr_id_key(left_df[left]).dropna()
+        for right, values in right_sets.items():
+            matched = int(keys.isin(values).sum())
+            if matched > best[2]:
+                best = (left, right, matched, len(keys))
+    return best
+
+
+def _cpr_clean_cat(series):
+    """نص نظيف للفئة (القيم الفاضية = غير محدد) — شغال على كل إصدارات pandas."""
+    text = series.fillna("").astype(str).str.strip()
+    return text.where(~text.str.lower().isin(["", "nan", "none", "null", "nat"]), CPR_UNKNOWN)
+
+
+def _cpr_label_cut(values, bins, labels, right=True):
+    cut = pd.cut(values, bins=bins, labels=labels, right=right)
+    return cut.astype(object).where(cut.notna(), CPR_UNKNOWN)
+
+
+# ---------------------------------------------------------------- الفئات
+def _cpr_add_categories(P, pc, end_ts):
+    """يضيف أعمدة الفئات للمحفظة ويرجّع لستة الأبعاد المتاحة."""
+    dims = []
+    labels = CPR_AMOUNT_LABELS
+    P["_cat_amount"] = _cpr_label_cut(P["_value"], CPR_AMOUNT_BANDS + [float("inf")], labels, right=False)
+    dims.append({"name": "فئة مبلغ المديونية", "col": "_cat_amount", "order": labels + [CPR_UNKNOWN], "sheet": "المبلغ"})
+
+    aging_labels = [lab for _, _, lab in WALLET_AGING_BUCKETS]
+    if pc.get("aging"):
+        P["_cat_aging"] = _cpr_clean_cat(P[pc["aging"]])
+        dims.append({"name": "عمر الإسناد", "col": "_cat_aging", "order": None, "sheet": "عمر_الإسناد"})
+    elif pc.get("assign"):
+        days = (end_ts - _cpr_to_datetime(P[pc["assign"]])).dt.days.clip(lower=0)
+        edges = [-float("inf")] + [high for _, high, _ in WALLET_AGING_BUCKETS if high is not None] + [float("inf")]
+        P["_cat_aging"] = _cpr_label_cut(days, edges, aging_labels)
+        dims.append({"name": "عمر الإسناد", "col": "_cat_aging", "order": aging_labels + [CPR_UNKNOWN], "sheet": "عمر_الإسناد"})
+
+    if pc.get("debit"):
+        days = (end_ts - _cpr_to_datetime(P[pc["debit"]])).dt.days.clip(lower=0)
+        P["_cat_debit"] = _cpr_label_cut(days, CPR_DEBIT_AGE_BINS, CPR_DEBIT_AGE_LABELS)
+        dims.append({"name": "عمر الحادث / المديونية", "col": "_cat_debit", "order": CPR_DEBIT_AGE_LABELS + [CPR_UNKNOWN], "sheet": "عمر_الحادث"})
+
+    if pc.get("priority"):
+        P["_cat_priority"] = _cpr_clean_cat(P[pc["priority"]])
+        dims.append({"name": "فئة الأولوية", "col": "_cat_priority", "order": CPR_PRIORITY_ORDER, "sheet": "الأولوية"})
+
+    if pc.get("ptype"):
+        P["_cat_ptype"] = _cpr_clean_cat(P[pc["ptype"]])
+        if P.loc[P["_cat_ptype"] != CPR_UNKNOWN, "_cat_ptype"].nunique() > 1:
+            dims.append({"name": "نوع المحفظة", "col": "_cat_ptype", "order": None, "sheet": "نوع_المحفظة"})
+
+    if pc.get("custom"):
+        P["_cat_custom"] = _cpr_clean_cat(P[pc["custom"]])
+        dims.append({"name": f"فئة إضافية: {pc['custom']}", "col": "_cat_custom", "order": None, "sheet": "فئة_إضافية"})
+    return dims
+
+
+def _cpr_order_categories(values, order):
+    present = [v for v in pd.unique(values)]
+    if order:
+        ranked = [v for v in order if v in present]
+        rest = sorted([v for v in present if v not in order and v != CPR_NOT_IN_PORTFOLIO], key=str)
+        out = ranked + rest
+    else:
+        out = sorted([v for v in present if v != CPR_NOT_IN_PORTFOLIO], key=str)
+    if CPR_NOT_IN_PORTFOLIO in present:
+        out.append(CPR_NOT_IN_PORTFOLIO)
+    return out
+
+
+def _cpr_category_table(P, Y, A, dim, ckeys, names, has_act_key):
+    """جدول محصل × فئة: المحفظة، التحصيل، التغطية، التركيز، والنشاط."""
+    col = dim["col"]
+    owned = P.groupby(["_ckey", col]).agg(
+        حسابات_المحفظة=("_key", "nunique"), قيمة_المحفظة=("_value", "sum")
+    ).reset_index().rename(columns={col: "cat"})
+
+    pay = Y.groupby(["_ckey", col]).agg(
+        عدد_السدادات=("_amt", "size"), المبلغ_المحصّل=("_amt", "sum")
+    ).reset_index().rename(columns={col: "cat"})
+    pay_own = (
+        Y[Y["_owner"] == Y["_ckey"]].groupby(["_ckey", col])["_key"].nunique()
+        .reset_index(name="حسابات_سددت").rename(columns={col: "cat"})
+    )
+    table = owned.merge(pay, on=["_ckey", "cat"], how="outer").merge(pay_own, on=["_ckey", "cat"], how="left")
+
+    if has_act_key and A is not None and len(A):
+        act = A.groupby(["_ckey", col]).agg(إفادات=("_ckey", "size")).reset_index().rename(columns={col: "cat"})
+        act_own = (
+            A[A["_owner"] == A["_ckey"]].groupby(["_ckey", col])["_key"].nunique()
+            .reset_index(name="حسابات_اتشتغل_عليها").rename(columns={col: "cat"})
+        )
+        table = table.merge(act, on=["_ckey", "cat"], how="outer").merge(act_own, on=["_ckey", "cat"], how="left")
+    else:
+        table["إفادات"] = 0
+        table["حسابات_اتشتغل_عليها"] = 0
+
+    table = table[table["_ckey"].isin(ckeys)].copy()
+    num_cols = [c for c in table.columns if c not in ("_ckey", "cat")]
+    table[num_cols] = table[num_cols].fillna(0)
+
+    totals = table.groupby("_ckey").agg(
+        _tot_value=("قيمة_المحفظة", "sum"), _tot_collected=("المبلغ_المحصّل", "sum"),
+        _tot_act=("إفادات", "sum"), _tot_accounts=("حسابات_المحفظة", "sum"),
+    )
+    table = table.join(totals, on="_ckey")
+
+    def pct(num, den):
+        return (num / den * 100).where(den > 0)
+
+    table["نسبة الفئة من محفظته %"] = pct(table["قيمة_المحفظة"], table["_tot_value"])
+    table["نسبة الفئة من تحصيله %"] = pct(table["المبلغ_المحصّل"], table["_tot_collected"])
+    table["تغطية المبلغ %"] = pct(table["المبلغ_المحصّل"], table["قيمة_المحفظة"])
+    table["تغطية الحسابات %"] = pct(table["حسابات_سددت"], table["حسابات_المحفظة"])
+    table["مؤشر تركيز التحصيل"] = (table["نسبة الفئة من تحصيله %"] / table["نسبة الفئة من محفظته %"]).where(
+        table["نسبة الفئة من محفظته %"] > 0
+    )
+    if has_act_key:
+        table["نسبة الفئة من نشاطه %"] = pct(table["إفادات"], table["_tot_act"])
+        table["تغطية النشاط %"] = pct(table["حسابات_اتشتغل_عليها"], table["حسابات_المحفظة"])
+        share_accounts = pct(table["حسابات_المحفظة"], table["_tot_accounts"])
+        table["مؤشر تركيز النشاط"] = (table["نسبة الفئة من نشاطه %"] / share_accounts).where(share_accounts > 0)
+
+    table["المحصّل"] = table["_ckey"].map(names)
+    order = _cpr_order_categories(table["cat"], dim.get("order"))
+    table["_ord"] = table["cat"].map({c: i for i, c in enumerate(order)})
+    table = table.sort_values(["المحصّل", "_ord"]).drop(columns=["_ord", "_tot_value", "_tot_collected", "_tot_act", "_tot_accounts"])
+    table = table.rename(columns={"cat": "الفئة"})
+    table["الفئة"] = table["الفئة"].astype(str)
+    return table, order
+
+
+def _cpr_team_by_category(cat_table, order):
+    rows = []
+    for cat in order:
+        g = cat_table[cat_table["الفئة"] == cat]
+        if g.empty:
+            continue
+        value = float(g["قيمة_المحفظة"].sum())
+        collected = float(g["المبلغ_المحصّل"].sum())
+        eligible = g[(g["حسابات_المحفظة"] >= 3) & (g["قيمة_المحفظة"] > 0)]
+        best_cov = best_amt = None
+        if not eligible.empty:
+            r = eligible.loc[eligible["تغطية المبلغ %"].idxmax()]
+            best_cov = (r["المحصّل"], float(r["تغطية المبلغ %"]))
+        if collected > 0:
+            r = g.loc[g["المبلغ_المحصّل"].idxmax()]
+            best_amt = (r["المحصّل"], float(r["المبلغ_المحصّل"]))
+        rows.append({
+            "الفئة": cat,
+            "حسابات المحفظة": int(g["حسابات_المحفظة"].sum()),
+            "قيمة المحفظة": value,
+            "المبلغ المحصّل": collected,
+            "تغطية الفريق %": (collected / value * 100) if value > 0 else None,
+            "عدد المحصلين المشاركين": int((g["المبلغ_المحصّل"] > 0).sum()),
+            "أفضل تغطية (محصّل)": best_cov[0] if best_cov else None,
+            "أفضل تغطية %": best_cov[1] if best_cov else None,
+            "أعلى تحصيل (محصّل)": best_amt[0] if best_amt else None,
+            "أعلى تحصيل (مبلغ)": best_amt[1] if best_amt else None,
+        })
+    return pd.DataFrame(rows)
+
+
+def _cpr_focus_summary(cat_table, dim_name, has_act_key):
+    """لكل محصل: أكتر فئة بيحصّل منها، وبيشتغل عليها، وأضعف فئة تغطية."""
+    rows = []
+    real = cat_table[cat_table["الفئة"] != CPR_NOT_IN_PORTFOLIO]
+    for name, g in real.groupby("المحصّل"):
+        row = {"المحصّل": name, "البُعد": dim_name}
+        paid = g[g["المبلغ_المحصّل"] > 0]
+        if not paid.empty:
+            top = paid.loc[paid["المبلغ_المحصّل"].idxmax()]
+            row["أكتر فئة بيحصّل منها"] = top["الفئة"]
+            row["نسبتها من تحصيله %"] = float(top["نسبة الفئة من تحصيله %"])
+            row["تغطيته فيها %"] = float(top["تغطية المبلغ %"]) if pd.notna(top["تغطية المبلغ %"]) else None
+        if has_act_key and "إفادات" in g.columns and g["إفادات"].sum() > 0:
+            top_act = g.loc[g["إفادات"].idxmax()]
+            row["أكتر فئة بيشتغل عليها"] = top_act["الفئة"]
+            row["نسبتها من نشاطه %"] = float(top_act["نسبة الفئة من نشاطه %"])
+        big = g[(g["نسبة الفئة من محفظته %"] >= 10) & (g["حسابات_المحفظة"] >= 3)]
+        if not big.empty:
+            weak = big.loc[big["تغطية المبلغ %"].idxmin()]
+            row["أضعف فئة تغطية"] = weak["الفئة"]
+            row["تغطيته فيها (الأضعف) %"] = float(weak["تغطية المبلغ %"])
+        rows.append(row)
+    return pd.DataFrame(rows)
+
+
+# ---------------------------------------------------------------- الاكتشاف التلقائي للمحصلين
+def cpr_collector_candidates(act, pay, port, act_col, pay_col, port_col):
+    """كل المحصلين اللي ظهروا في الملفات + علامة لو الاسم شكله حساب نظام (Archive / Closed ...)."""
+    rows = {}
+    for tag, df, col in (("portfolio", port, port_col), ("activity", act, act_col), ("payments", pay, pay_col)):
+        if df is None or not col or col not in df.columns:
+            continue
+        keys = df[col].map(_cpr_name_key)
+        shown = df[col].map(_cpr_display_name)
+        frame = pd.DataFrame({"k": keys, "n": shown})
+        frame = frame[frame["k"] != ""].drop_duplicates("k")
+        for key, name in zip(frame["k"], frame["n"]):
+            info = rows.setdefault(key, {"key": key, "name": name, "portfolio": False, "activity": False, "payments": False})
+            info[tag] = True
+    out = pd.DataFrame(list(rows.values()))
+    if out.empty:
+        return out
+    out["system"] = out["key"].str.contains(CPR_SYSTEM_OWNER_PATTERN, regex=True)
+    return out.sort_values("name").reset_index(drop=True)
+
+
+# ---------------------------------------------------------------- الحساب الرئيسي
+def compute_collector_performance(act, pay, port, cfg):
+    """يحسب أداء المحصلين. act اختياري. بيرجّع dict فيه كل الجداول."""
+    pc, yc, ac = cfg["port_cols"], cfg["pay_cols"], cfg.get("act_cols") or {}
+    start = pd.Timestamp(cfg["start"]) if cfg.get("start") else None
+    end = pd.Timestamp(cfg["end"]) if cfg.get("end") else None
+    end_excl = (end + pd.Timedelta(days=1)) if end is not None else None
+    end_for_age = end if end is not None else pd.Timestamp(datetime.now().date())
+    include = set(cfg.get("include_keys") or [])
+    quality = {"notes": []}
+
+    # ---------- المحفظة ----------
+    P = port.copy()
+    P["_ckey"] = P[pc["collector"]].map(_cpr_name_key)
+    P["_cname"] = P[pc["collector"]].map(_cpr_display_name)
+    quality["portfolio_rows_total"] = int(len(P))
+    quality["portfolio_rows_no_collector"] = int((P["_ckey"] == "").sum())
+    P = P[P["_ckey"] != ""].copy()
+    net = pd.to_numeric(P[pc["net"]], errors="coerce").fillna(0) if pc.get("net") else pd.Series(0.0, index=P.index)
+    paid = pd.to_numeric(P[pc["paid"]], errors="coerce").fillna(0) if pc.get("paid") else pd.Series(0.0, index=P.index)
+    if cfg.get("value_basis", "total") == "total" and pc.get("paid"):
+        P["_value"] = (net + paid.clip(lower=0)).clip(lower=0)
+    else:
+        P["_value"] = net.clip(lower=0)
+
+    Y = pay.copy()
+    pay_key_col, port_key_col, pay_matched, pay_total = _cpr_pick_key(
+        Y, P, cfg.get("pay_key"), cfg.get("port_key")
+    )
+    if port_key_col is None:
+        port_key_col = pc.get("key") or find_column(P, ACCOUNT_NUMBER_CANDIDATES)
+    if port_key_col is None:
+        raise ValueError("مش لاقي عمود رقم الحساب في المحفظة للربط مع السدادات.")
+    quality["pay_key"] = pay_key_col
+    quality["port_key"] = port_key_col
+
+    key_series = _cpr_id_key(P[port_key_col])
+    fallback = pd.Series("ROW_" + P.index.astype(str), index=P.index)
+    P["_key"] = key_series.where(key_series.notna(), fallback)
+    dims = _cpr_add_categories(P, pc, end_for_age)
+    cat_cols = [d["col"] for d in dims]
+
+    lookup = (
+        P.sort_values("_value", ascending=False).drop_duplicates("_key")
+        [["_key", "_ckey"] + cat_cols].set_index("_key").rename(columns={"_ckey": "_owner"})
+    )
+
+    # ---------- السدادات ----------
+    Y["_ckey"] = Y[yc["collector"]].map(_cpr_name_key)
+    Y["_cname"] = Y[yc["collector"]].map(_cpr_display_name)
+    Y["_amt"] = pd.to_numeric(Y[yc["amount"]], errors="coerce").fillna(0)
+    quality["pay_rows_total"] = int(len(Y))
+    if yc.get("date"):
+        Y["_date"] = _cpr_to_datetime(Y[yc["date"]])
+        quality["pay_rows_no_date"] = int(Y["_date"].isna().sum())
+        if start is not None:
+            Y = Y[(Y["_date"] >= start) & (Y["_date"] < end_excl)]
+    quality["pay_rows_in_period"] = int(len(Y))
+    Y = Y[Y["_ckey"] != ""].copy()
+    Y["_key"] = _cpr_id_key(Y[pay_key_col]) if pay_key_col else None
+    Y = Y.join(lookup, on="_key")
+    Y["_matched"] = Y["_owner"].notna()
+    for col in cat_cols:
+        Y[col] = Y[col].fillna(CPR_NOT_IN_PORTFOLIO)
+    quality["pay_match_rows"] = int(Y["_matched"].sum())
+
+    # ---------- النشاط ----------
+    A = None
+    has_act = act is not None and ac.get("collector")
+    has_act_key = False
+    has_act_time = False
+    has_class = False
+    if has_act:
+        A = act.copy()
+        A["_ckey"] = A[ac["collector"]].map(_cpr_name_key)
+        A["_cname"] = A[ac["collector"]].map(_cpr_display_name)
+        quality["act_rows_total"] = int(len(A))
+        if ac.get("time"):
+            A["_date"] = _cpr_to_datetime(A[ac["time"]])
+            quality["act_rows_no_date"] = int(A["_date"].isna().sum())
+            if start is not None:
+                A = A[(A["_date"] >= start) & (A["_date"] < end_excl)]
+            A["_day"] = A["_date"].dt.normalize()
+            has_act_time = True
+        quality["act_rows_in_period"] = int(len(A))
+        A = A[A["_ckey"] != ""].copy()
+        A["_success"] = _activity_success_mask(A, ac.get("class"))
+        has_class = bool(ac.get("class") and ac["class"] in A.columns)
+        act_key_col, _, act_matched, act_total = _cpr_pick_key(
+            A, P, cfg.get("act_key"), None, right_fixed=port_key_col
+        )
+        quality["act_key"] = act_key_col
+        if act_key_col and act_total and act_matched / act_total >= 0.2:
+            has_act_key = True
+            A["_key"] = _cpr_id_key(A[act_key_col])
+            A = A.join(lookup, on="_key")
+            for col in cat_cols:
+                A[col] = A[col].fillna(CPR_NOT_IN_PORTFOLIO)
+            quality["act_match_rows"] = int(A["_owner"].notna().sum())
+        else:
+            A["_key"] = None
+            A["_owner"] = None
+            if act_key_col and not len(A):
+                quality["notes"].append("مفيش إفادات وقعت داخل الفترة المختارة.")
+            elif act_key_col:
+                quality["notes"].append(
+                    "تطابق أرقام الحسابات بين النشاط والمحفظة ضعيف جدًا — اتشال مقياس «تغطية النشاط» وتركيز النشاط على الفئات."
+                )
+            else:
+                quality["notes"].append("ملف النشاط مفيهوش عمود رقم حساب قابل للربط — اتشال مقياس «تغطية النشاط» وتركيز النشاط على الفئات.")
+
+    # ---------- مجموعة المحصلين ----------
+    name_map = {}
+    for frame in (P, Y, A):
+        if frame is None:
+            continue
+        for key, name in zip(frame["_ckey"], frame["_cname"]):
+            if key and name and key not in name_map:
+                name_map[key] = name
+    universe = set(P["_ckey"]) | set(Y["_ckey"]) | (set(A["_ckey"]) if A is not None else set())
+    if include:
+        ckeys = sorted(k for k in universe if k in include)
+    else:
+        ckeys = sorted(k for k in universe if not re.search(CPR_SYSTEM_OWNER_PATTERN, k))
+    if not ckeys:
+        raise ValueError("مفيش أي محصل مطابق للاختيار — راجع قايمة المحصلين.")
+    quality["pay_rows_excluded_collectors"] = int((~Y["_ckey"].isin(ckeys)).sum())
+    if A is not None:
+        quality["act_rows_excluded_collectors"] = int((~A["_ckey"].isin(ckeys)).sum())
+
+    Pi = P[P["_ckey"].isin(ckeys)]
+    Yi = Y[Y["_ckey"].isin(ckeys)]
+    Ai = A[A["_ckey"].isin(ckeys)] if A is not None else None
+
+    # ---------- مقاييس كل محصل ----------
+    M = pd.DataFrame(index=pd.Index(ckeys, name="_ckey"))
+    M["حسابات المحفظة"] = Pi.groupby("_ckey")["_key"].nunique()
+    M["قيمة المحفظة"] = Pi.groupby("_ckey")["_value"].sum()
+    M["عدد السدادات"] = Yi.groupby("_ckey").size()
+    M["المبلغ المحصّل"] = Yi.groupby("_ckey")["_amt"].sum()
+    M["حسابات سددت (إجمالي)"] = Yi.groupby("_ckey")["_key"].nunique()
+    own_pay = Yi[Yi["_owner"] == Yi["_ckey"]]
+    M["حسابات سددت من محفظته"] = own_pay.groupby("_ckey")["_key"].nunique()
+    M["تحصيل من محفظته"] = own_pay.groupby("_ckey")["_amt"].sum()
+    if has_act:
+        M["إجمالي الإفادات"] = Ai.groupby("_ckey").size()
+        if has_act_time:
+            M["أيام النشاط"] = Ai.groupby("_ckey")["_day"].nunique()
+        if has_act_key:
+            M["حسابات اتشتغل عليها (إجمالي)"] = Ai.groupby("_ckey")["_key"].nunique()
+            M["حسابات اتشتغل عليها من محفظته"] = Ai[Ai["_owner"] == Ai["_ckey"]].groupby("_ckey")["_key"].nunique()
+        if has_class:
+            M["إفادات ناجحة"] = Ai.groupby("_ckey")["_success"].sum()
+    M = M.fillna(0)
+    M["اسم"] = [name_map.get(k, k) for k in M.index]
+
+    owned_value = M["قيمة المحفظة"]
+    owned_acc = M["حسابات المحفظة"]
+    M["معدل التحصيل من المحفظة %"] = (M["المبلغ المحصّل"] / owned_value * 100).where(owned_value > 0)
+    M["تغطية السداد بالحسابات %"] = (M["حسابات سددت من محفظته"] / owned_acc * 100).where(owned_acc > 0)
+    M["تحصيل خارج محفظته"] = (M["المبلغ المحصّل"] - M["تحصيل من محفظته"]).clip(lower=0)
+    M["متوسط السداد"] = (M["المبلغ المحصّل"] / M["عدد السدادات"]).where(M["عدد السدادات"] > 0)
+    if has_act:
+        n_act = M["إجمالي الإفادات"]
+        if has_act_time:
+            M["إفادات/يوم نشاط"] = (n_act / M["أيام النشاط"]).where(M["أيام النشاط"] > 0)
+        if has_act_key:
+            M["تغطية النشاط للمحفظة %"] = (M["حسابات اتشتغل عليها من محفظته"] / owned_acc * 100).where(owned_acc > 0)
+        if has_class:
+            M["نجاح الإفادات %"] = (M["إفادات ناجحة"] / n_act * 100).where(n_act > 0)
+        M["تحصيل لكل إفادة"] = (M["المبلغ المحصّل"] / n_act).where(n_act > 0)
+
+    # ---------- الدرجة والترتيب ----------
+    available = {"amount"}
+    if (owned_value > 0).any():
+        available |= {"rate", "acc_cov"}
+    if has_act and has_act_time:
+        available |= {"per_day", "days"}
+    if has_act and has_act_key:
+        available.add("act_cov")
+    if has_act and has_class:
+        available.add("success")
+    weights = {k: float(v) for k, v in (cfg.get("weights") or {k: w for k, (_, w) in CPR_METRICS.items()}).items()}
+    used = [k for k in CPR_METRICS if weights.get(k, 0) > 0 and k in available]
+    if not used:
+        used = [k for k in CPR_METRICS if k in available]
+        weights = {k: 1.0 for k in used}
+    total_w = sum(weights[k] for k in used)
+    score = pd.Series(0.0, index=M.index)
+    for key in used:
+        column = CPR_METRICS[key][0]
+        values = M[column].fillna(0).clip(lower=0)
+        top = float(values.max())
+        norm = (values / top * 100) if top > 0 else values * 0
+        M[f"_norm_{key}"] = norm
+        score += weights[key] * norm
+    M["الدرجة"] = (score / total_w).round(1)
+
+    def tier(value):
+        for floor, label in CPR_TIERS:
+            if value >= floor:
+                return label
+        return CPR_TIERS[-1][1]
+
+    M["التقييم"] = M["الدرجة"].map(tier)
+    M = M.sort_values(["الدرجة", "المبلغ المحصّل"], ascending=False)
+    M.insert(0, "الترتيب", range(1, len(M) + 1))
+
+    # ---------- الفئات ----------
+    cat_tables, team_tables, focus_tables = {}, {}, {}
+    for dim in dims:
+        table, order = _cpr_category_table(Pi, Yi, Ai, dim, set(ckeys), name_map, has_act_key)
+        cat_tables[dim["name"]] = {"table": table, "order": order, "sheet": dim["sheet"]}
+        team_tables[dim["name"]] = _cpr_team_by_category(table, order)
+        focus_tables[dim["name"]] = _cpr_focus_summary(table, dim["name"], has_act_key)
+
+    insights = _cpr_build_insights(M, cat_tables, focus_tables, used, has_act, has_act_key, has_class)
+
+    # ---------- جودة الربط ----------
+    quality["pay_match_rate"] = (pay_matched / pay_total * 100) if pay_total else None
+    quality["act_present"] = bool(has_act)
+    quality["act_key_linked"] = has_act_key
+    quality["class_present"] = has_class
+    in_port = set(P["_ckey"])
+    in_pay = set(Y["_ckey"])
+    in_act = set(A["_ckey"]) if A is not None else set()
+    quality["pay_not_in_portfolio"] = sorted({name_map.get(k, k) for k in in_pay - in_port if k in ckeys})
+    quality["act_not_in_portfolio"] = sorted({name_map.get(k, k) for k in in_act - in_port if k in ckeys})
+    quality["portfolio_no_activity"] = sorted({name_map.get(k, k) for k in ckeys if has_act and k in in_port and k not in in_act})
+    quality["no_payments"] = sorted({name_map.get(k, k) for k in ckeys if k not in in_pay})
+    if quality.get("pay_rows_in_period", 0) == 0:
+        quality["notes"].append("مفيش أي سداد وقع داخل الفترة المختارة — راجع التواريخ أو عمود تاريخ السداد.")
+    if pay_total and pay_matched / pay_total < 0.6:
+        quality["notes"].append("نسبة تطابق أرقام حسابات السدادات مع المحفظة أقل من 60% — راجع عمود الربط في «ربط الأعمدة».")
+
+    totals = {
+        "collected": float(M["المبلغ المحصّل"].sum()),
+        "payments": int(M["عدد السدادات"].sum()),
+        "paying_accounts": int(M["حسابات سددت (إجمالي)"].sum()),
+        "collectors": int(len(M)),
+        "portfolio_value": float(M["قيمة المحفظة"].sum()),
+        "portfolio_accounts": int(M["حسابات المحفظة"].sum()),
+        "activity": int(M["إجمالي الإفادات"].sum()) if has_act else None,
+    }
+    totals["rate"] = (totals["collected"] / totals["portfolio_value"] * 100) if totals["portfolio_value"] > 0 else None
+    return {
+        "metrics": M, "used": used, "weights": {k: weights.get(k, 0) for k in CPR_METRICS},
+        "dims": [d["name"] for d in dims], "cat_tables": cat_tables, "team_tables": team_tables,
+        "focus_tables": focus_tables, "insights": insights, "quality": quality, "totals": totals,
+        "has_act": bool(has_act), "has_act_key": has_act_key, "has_class": has_class,
+        "period": (cfg.get("start"), cfg.get("end")), "value_basis": cfg.get("value_basis", "total"),
+        "name_map": name_map,
+    }
+
+
+def _cpr_build_insights(M, cat_tables, focus_tables, used, has_act, has_act_key, has_class):
+    """ملاحظات مكتوبة لكل محصل: ترتيبه، قوته وضعفه، وتركيزه على الفئات."""
+    out = {}
+    n = len(M)
+    medians = {k: float(M[CPR_METRICS[k][0]].median()) for k in used}
+    for ckey, row in M.iterrows():
+        lines = [f"المركز {int(row['الترتيب'])} من {n} بدرجة {row['الدرجة']:.1f} ({row['التقييم']})."]
+        rel = {}
+        for k in used:
+            col = CPR_METRICS[k][0]
+            med = medians[k]
+            val = row[col]
+            if pd.notna(val) and med > 0:
+                rel[k] = float(val) / med
+        if rel:
+            best = max(rel, key=rel.get)
+            worst = min(rel, key=rel.get)
+            if rel[best] >= 1.1:
+                lines.append(f"أقوى نقطة: {CPR_METRICS[best][0]} ({row[CPR_METRICS[best][0]]:,.1f}) — أعلى من وسيط الفريق بـ {(rel[best] - 1) * 100:.0f}%.")
+            if rel[worst] <= 0.9:
+                lines.append(f"أضعف نقطة: {CPR_METRICS[worst][0]} ({row[CPR_METRICS[worst][0]]:,.1f}) — أقل من وسيط الفريق بـ {(1 - rel[worst]) * 100:.0f}%.")
+        if row["المبلغ المحصّل"] <= 0:
+            lines.append("⚠️ ما سجّلش أي سداد في الفترة.")
+        if row["تحصيل خارج محفظته"] > 0 and row["المبلغ المحصّل"] > 0:
+            share = row["تحصيل خارج محفظته"] / row["المبلغ المحصّل"] * 100
+            if share >= 15:
+                lines.append(f"{share:.0f}% من تحصيله جاي من حسابات خارج محفظته الحالية.")
+        if has_act and row.get("إجمالي الإفادات", 0) > 0 and row["المبلغ المحصّل"] > 0:
+            lines.append(f"متوسط التحصيل لكل إفادة: {row['المبلغ المحصّل'] / row['إجمالي الإفادات']:,.0f}.")
+        if has_act_key and pd.notna(row.get("تغطية النشاط للمحفظة %")) and row["تغطية النشاط للمحفظة %"] < 50 and row["حسابات المحفظة"] > 0:
+            untouched = int(row["حسابات المحفظة"] - row.get("حسابات اتشتغل عليها من محفظته", 0))
+            lines.append(f"لسه {untouched:,} حساب من محفظته ({100 - row['تغطية النشاط للمحفظة %']:.0f}%) ما اتشتغلش عليهم في الفترة.")
+        for dim_name, focus in focus_tables.items():
+            if focus is None or focus.empty:
+                continue
+            rows = focus[focus["المحصّل"] == row["اسم"]]
+            if rows.empty:
+                continue
+            r = rows.iloc[0]
+            if "أكتر فئة بيحصّل منها" in r and pd.notna(r.get("أكتر فئة بيحصّل منها")):
+                cov = f" وغطّى {r['تغطيته فيها %']:.1f}% منها" if pd.notna(r.get("تغطيته فيها %")) else ""
+                lines.append(f"{dim_name}: بيحصّل أكتر من «{r['أكتر فئة بيحصّل منها']}» ({r['نسبتها من تحصيله %']:.0f}% من تحصيله){cov}.")
+            if pd.notna(r.get("أضعف فئة تغطية")) and r.get("أضعف فئة تغطية") != r.get("أكتر فئة بيحصّل منها"):
+                lines.append(f"{dim_name}: أضعف تغطية في «{r['أضعف فئة تغطية']}» ({r['تغطيته فيها (الأضعف) %']:.1f}%).")
+        out[ckey] = lines
+    return out
+
+
+# ---------------------------------------------------------------- الواجهة
+def _cpr_style(df):
+    """تنسيق أرقام الجداول: فواصل آلاف و % بكسر واحد."""
+    fmt = {}
+    for col in df.columns:
+        if pd.api.types.is_integer_dtype(df[col]):
+            fmt[col] = "{:,}"
+        elif pd.api.types.is_float_dtype(df[col]):
+            fmt[col] = "{:,.1f}" if ("%" in str(col) or "الدرجة" in str(col) or "مؤشر" in str(col) or "يوم" in str(col)) else "{:,.0f}"
+    return df.style.format(fmt, na_rep="—")
+
+
+@st.cache_data(show_spinner=False, max_entries=6)
+def _cpr_sheet_info(data, filename):
+    if filename.lower().endswith(".csv"):
+        return [("CSV", 0)]
+    try:
+        from openpyxl import load_workbook
+        wb = load_workbook(io.BytesIO(data), read_only=True)
+        info = [(ws.title, int(ws.max_row or 0)) for ws in wb.worksheets]
+        wb.close()
+        return info
+    except Exception:
+        return [(name, 0) for name in pd.ExcelFile(io.BytesIO(data)).sheet_names]
+
+
+@st.cache_data(show_spinner=False, max_entries=3)
+def _cpr_read_table(data, filename, sheet):
+    if filename.lower().endswith(".csv"):
+        df = pd.read_csv(io.BytesIO(data))
+    else:
+        df = pd.read_excel(io.BytesIO(data), sheet_name=sheet)
+    df.columns = [str(c).strip() for c in df.columns]
+    return df
+
+
+def _cpr_upload(label, key, help_text):
+    uploaded = st.file_uploader(
+        label, type=["xlsx", "xls", "csv"], key=key, help=help_text,
+        on_change=sync_file_cache, args=(key, f"cpr_{key}", (CPR_RESULT_KEY,)),
+    )
+    if uploaded is None:
+        return None, None
+    data = uploaded.getvalue()
+    tag = hashlib.md5(data).hexdigest()[:8]
+    sheets = _cpr_sheet_info(data, uploaded.name)
+    sheet = sheets[0][0]
+    if len(sheets) > 1:
+        names = [name for name, _ in sheets]
+        default = max(range(len(sheets)), key=lambda i: sheets[i][1])
+        sheet = st.selectbox(
+            "📄 الشيت", names, index=default, key=f"{key}_sheet_{tag}",
+            format_func=lambda n: f"{n} ({dict(sheets)[n]:,} صف)" if dict(sheets).get(n) else n,
+        )
+    try:
+        return _cpr_read_table(data, uploaded.name, sheet), tag
+    except Exception as error:
+        st.error(f"تعذر قراءة الملف: {error}")
+        return None, None
+
+
+def _cpr_pick(label, df, candidates, key, optional=True, tag=""):
+    options = (["— مفيش —"] if optional else []) + [str(c) for c in df.columns]
+    detected = find_column(df, candidates) if candidates else None
+    index = options.index(detected) if detected in options else 0
+    choice = st.selectbox(label, options, index=index, key=f"{key}_{tag}")
+    return None if choice.startswith("—") else choice
+
+
+def _cpr_bar(df, x, y, title, fmt="{:,.0f}", height=None, color=None, suffix=""):
+    frame = df.sort_values(x, ascending=True)
+    fig = px.bar(frame, x=x, y=y, orientation="h", text=x, template=PLOTLY_TEMPLATE,
+                 color_discrete_sequence=[color or OPS_DARK])
+    _apply_ops_chart_style(fig, title, height=height or max(360, 46 * len(frame) + 120),
+                           xaxis_title="", yaxis_title="", show_legend=False)
+    fig.update_traces(texttemplate="%{x:" + (",.1f" if "." in fmt else ",.0f") + "}" + suffix,
+                      textposition="outside", cliponaxis=False)
+    _enhance_chart_bold(fig)
+    _pad_hbar_range(fig, frame[x].max(), pad=1.3)
+    return fig
+
+
+def _cpr_render_ranking(result):
+    M = result["metrics"]
+    totals = result["totals"]
+    start, end = result["period"]
+    if start and end:
+        st.caption(f"📅 الفترة: **{start}** → **{end}**")
+    cards = [
+        ("💰<br>إجمالي المحصّل", totals["collected"], {"valueformat": ",.0f"}, OPS_DARK),
+        ("🧾<br>عدد السدادات", totals["payments"], {"valueformat": ",d"}, THEME["text"]),
+        ("📁<br>حسابات سددت", totals["paying_accounts"], {"valueformat": ",d"}, OPS_POSITIVE),
+        ("👥<br>عدد المحصلين", totals["collectors"], {"valueformat": ",d"}, THEME["text"]),
+        ("🎯<br>تحصيل من المحفظة", totals["rate"] or 0, {"valueformat": ".2f", "suffix": "%"}, OPS_MID),
+    ]
+    if totals["activity"] is not None:
+        cards.append(("📞<br>إجمالي الإفادات", totals["activity"], {"valueformat": ",d"}, THEME["text"]))
+    st.plotly_chart(_build_kpi_figure(cards, height=210), use_container_width=True, config=PLOTLY_CONFIG, key="cpr_kpis")
+
+    st.markdown("### 🏆 ترتيب المحصلين")
+    top = M.head(3)
+    cols = st.columns(len(top))
+    for col, (_, row) in zip(cols, top.iterrows()):
+        with col:
+            with st.container(border=True):
+                st.markdown(f"#### {PERF_MEDALS.get(int(row['الترتيب']), '')} {row['اسم']}")
+                st.markdown(f"**الدرجة: {row['الدرجة']:.1f}** · {row['التقييم']}")
+                st.markdown(
+                    f"💰 **{row['المبلغ المحصّل']:,.0f}** محصّل  \n"
+                    f"🎯 **{(row['معدل التحصيل من المحفظة %'] if pd.notna(row['معدل التحصيل من المحفظة %']) else 0):.2f}%** من محفظته"
+                )
+
+    base_cols = ["الترتيب", "اسم", "الدرجة", "التقييم", "المبلغ المحصّل", "معدل التحصيل من المحفظة %",
+                 "عدد السدادات", "حسابات سددت من محفظته", "تغطية السداد بالحسابات %", "قيمة المحفظة", "حسابات المحفظة"]
+    if result["has_act"]:
+        base_cols += ["إجمالي الإفادات"]
+        if "أيام النشاط" in M.columns:
+            base_cols += ["أيام النشاط", "إفادات/يوم نشاط"]
+        if "تغطية النشاط للمحفظة %" in M.columns:
+            base_cols += ["تغطية النشاط للمحفظة %"]
+        if "نجاح الإفادات %" in M.columns:
+            base_cols += ["نجاح الإفادات %"]
+        base_cols += ["تحصيل لكل إفادة"]
+    base_cols += ["تحصيل خارج محفظته"]
+    table = M[base_cols].rename(columns={"اسم": "المحصّل"}).reset_index(drop=True)
+    st.dataframe(_cpr_style(table), use_container_width=True, hide_index=True)
+
+    score_fig = px.bar(
+        M.sort_values("الدرجة"), x="الدرجة", y="اسم", orientation="h", text="الدرجة",
+        template=PLOTLY_TEMPLATE, color="الدرجة", color_continuous_scale=list(reversed(OPS_SCALE)),
+    )
+    _apply_ops_chart_style(score_fig, "الدرجة النهائية لكل محصل (من 100)", height=max(380, 46 * len(M) + 120), show_legend=False)
+    score_fig.update_traces(texttemplate="%{x:.1f}", textposition="outside", cliponaxis=False)
+    _enhance_chart_bold(score_fig)
+    _pad_hbar_range(score_fig, 100, pad=1.1)
+    with st.container(border=True):
+        st.plotly_chart(score_fig, use_container_width=True, config=PLOTLY_CONFIG, key="cpr_score_chart")
+
+
+def _cpr_render_metrics(result):
+    M = result["metrics"]
+    st.markdown("### 📈 مقارنة المقاييس")
+    left, right = st.columns(2)
+    with left:
+        with st.container(border=True):
+            st.plotly_chart(_cpr_bar(M, "المبلغ المحصّل", "اسم", "المبلغ المحصّل في الفترة", height=None),
+                            use_container_width=True, config=PLOTLY_CONFIG, key="cpr_amount")
+    with right:
+        if (M["قيمة المحفظة"] > 0).any():
+            with st.container(border=True):
+                st.plotly_chart(
+                    _cpr_bar(M.fillna({"معدل التحصيل من المحفظة %": 0}), "معدل التحصيل من المحفظة %", "اسم",
+                             "معدل التحصيل من المحفظة %", fmt="{:,.1f}", suffix="%", color=OPS_MID),
+                    use_container_width=True, config=PLOTLY_CONFIG, key="cpr_rate")
+    if (M["قيمة المحفظة"] > 0).any():
+        cov = M[["اسم", "تغطية السداد بالحسابات %"] + (["تغطية النشاط للمحفظة %"] if "تغطية النشاط للمحفظة %" in M.columns else [])].fillna(0)
+        long = cov.melt(id_vars="اسم", var_name="المقياس", value_name="النسبة")
+        fig = px.bar(long, x="اسم", y="النسبة", color="المقياس", barmode="group", text="النسبة",
+                     template=PLOTLY_TEMPLATE, color_discrete_sequence=[OPS_DARK, OPS_LIGHT])
+        _apply_ops_chart_style(fig, "تغطية المحفظة: حسابات سددت vs حسابات اتشتغل عليها (% من حسابات المحفظة)", height=470,
+                               xaxis_title="", yaxis_title="%")
+        fig.update_traces(texttemplate="%{y:.1f}%", textposition="outside", cliponaxis=False)
+        _enhance_chart_bold(fig)
+        with st.container(border=True):
+            st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG, key="cpr_cov")
+    if result["has_act"]:
+        c1, c2 = st.columns(2)
+        with c1:
+            if "إفادات/يوم نشاط" in M.columns:
+                with st.container(border=True):
+                    st.plotly_chart(
+                        _cpr_bar(M.fillna({"إفادات/يوم نشاط": 0}), "إفادات/يوم نشاط", "اسم", "متوسط الإفادات في يوم النشاط",
+                                 fmt="{:,.1f}", color=OPS_MID),
+                        use_container_width=True, config=PLOTLY_CONFIG, key="cpr_perday")
+        with c2:
+            scatter = M.assign(_label="<b>" + M["اسم"] + "</b>")
+            fig = px.scatter(scatter, x="إجمالي الإفادات", y="المبلغ المحصّل", size=scatter["قيمة المحفظة"].clip(lower=1),
+                             text="_label", template=PLOTLY_TEMPLATE, color_discrete_sequence=[OPS_DARK])
+            _apply_ops_chart_style(fig, "الجهد مقابل النتيجة (حجم الفقاعة = قيمة المحفظة)", height=470,
+                                   xaxis_title="إجمالي الإفادات", yaxis_title="المبلغ المحصّل", show_legend=False)
+            fig.update_traces(textposition="top center", textfont=dict(size=14, color=THEME["text"]))
+            with st.container(border=True):
+                st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG, key="cpr_scatter")
+            st.caption("فوق وشمال = نتيجة عالية بمجهود أقل (كفاءة أعلى) · تحت ويمين = مجهود كبير ونتيجة أقل.")
+
+
+def _cpr_heatmap(table, order, value_col, title, key, scale=None):
+    pivot = table.pivot_table(index="المحصّل", columns="الفئة", values=value_col, aggfunc="first")
+    cols = [c for c in order if c in pivot.columns]
+    pivot = pivot[cols]
+    fig = px.imshow(pivot, aspect="auto", color_continuous_scale=scale or list(reversed(OPS_SCALE)), template=PLOTLY_TEMPLATE)
+    fig.update_traces(texttemplate="<b>%{z:.1f}</b>", textfont=dict(size=14))
+    fig.update_layout(**{
+        **PLOTLY_LAYOUT,
+        "title": {"text": title, "x": 0.5, "xanchor": "center", "font": {"size": 17, "color": THEME["text"]}},
+        "height": max(380, 52 * len(pivot) + 170),
+        "margin": dict(t=130, b=40, l=60, r=40),
+        "coloraxis_showscale": True,
+        "xaxis_title": "", "yaxis_title": "",
+    })
+    fig.update_xaxes(side="top", tickfont=dict(size=13))
+    fig.update_yaxes(tickfont=dict(size=13))
+    st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG, key=key)
+
+
+def _cpr_render_categories(result):
+    st.markdown("### 🧩 التركيز على فئات المديونيات")
+    st.caption(
+        "التحصيل = السدادات اللي دخلها المحصل في الفترة مصنّفة حسب فئة الحساب في المحفظة · "
+        "تغطية المبلغ = تحصيله في الفئة ÷ قيمة الفئة في محفظته · "
+        "مؤشر التركيز = نسبة الفئة من تحصيله ÷ نسبتها من محفظته (فوق 1 = بيحصّل منها أكتر من وزنها)."
+    )
+    if not result["dims"]:
+        st.info("مفيش أعمدة فئات قابلة للتحليل في المحفظة.")
+        return
+    tabs = st.tabs(result["dims"])
+    for tab, dim_name in zip(tabs, result["dims"]):
+        with tab:
+            info = result["cat_tables"][dim_name]
+            table, order = info["table"], info["order"]
+            team = result["team_tables"][dim_name]
+            focus = result["focus_tables"][dim_name]
+            if table.empty:
+                st.info("مفيش بيانات للفئة دي.")
+                continue
+            st.markdown("**🌐 الفريق كله حسب الفئة**")
+            st.dataframe(_cpr_style(team), use_container_width=True, hide_index=True)
+
+            fig = px.bar(team[team["الفئة"] != CPR_NOT_IN_PORTFOLIO], x="الفئة", y="المبلغ المحصّل", text="المبلغ المحصّل",
+                         template=PLOTLY_TEMPLATE, color_discrete_sequence=[OPS_DARK],
+                         category_orders={"الفئة": order})
+            _apply_ops_chart_style(fig, f"إجمالي التحصيل حسب {dim_name}", height=400, xaxis_title="", yaxis_title="", show_legend=False)
+            fig.update_traces(texttemplate="%{y:,.0f}", textposition="outside", cliponaxis=False)
+            _enhance_chart_bold(fig)
+            with st.container(border=True):
+                st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG, key=f"cpr_team_{dim_name}")
+
+            st.markdown("**🎯 كل محصل بيركّز على إيه؟**")
+            if focus is not None and not focus.empty:
+                st.dataframe(_cpr_style(focus.drop(columns=["البُعد"])), use_container_width=True, hide_index=True)
+
+            real = table[table["الفئة"] != CPR_NOT_IN_PORTFOLIO]
+            _cpr_heatmap(real, order, "تغطية المبلغ %", f"تغطية المبلغ % — كل محصل × {dim_name}", f"cpr_hm_cov_{dim_name}")
+
+            share = real.copy()
+            share["_txt"] = share["نسبة الفئة من تحصيله %"].map(lambda v: f"{v:.0f}%" if pd.notna(v) and v >= 6 else "")
+            fig = px.bar(share, x="المحصّل", y="نسبة الفئة من تحصيله %", color="الفئة", text="_txt",
+                         template=PLOTLY_TEMPLATE, color_discrete_sequence=OPS_CATEGORICAL, category_orders={"الفئة": order})
+            _apply_ops_chart_style(fig, f"توزيع تحصيل كل محصل على {dim_name} (100%)", height=480, xaxis_title="", yaxis_title="% من تحصيله")
+            fig.update_traces(texttemplate="<b>%{text}</b>", textposition="inside", textfont=dict(size=13))
+            fig.update_layout(barmode="stack", uniformtext_mode=False)
+            with st.container(border=True):
+                st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG, key=f"cpr_share_{dim_name}")
+
+            if result["has_act_key"] and "نسبة الفئة من نشاطه %" in real.columns:
+                _cpr_heatmap(real, order, "نسبة الفئة من نشاطه %", f"توزيع نشاط كل محصل على {dim_name} (% من إفاداته)",
+                             f"cpr_hm_act_{dim_name}", scale=list(reversed(CLASSIFICATION_SCALE)))
+
+            with st.expander("📋 الجدول التفصيلي (محصل × فئة)"):
+                shown = table.drop(columns=["_ckey"]).rename(columns={
+                    "حسابات_المحفظة": "حسابات المحفظة", "قيمة_المحفظة": "قيمة المحفظة",
+                    "عدد_السدادات": "عدد السدادات", "المبلغ_المحصّل": "المبلغ المحصّل",
+                    "حسابات_سددت": "حسابات سددت", "حسابات_اتشتغل_عليها": "حسابات اتشتغل عليها",
+                })
+                lead = ["المحصّل", "الفئة"]
+                st.dataframe(_cpr_style(shown[lead + [c for c in shown.columns if c not in lead]]),
+                             use_container_width=True, hide_index=True)
+
+
+def _cpr_render_collector_card(result):
+    M = result["metrics"]
+    st.markdown("### 👤 بطاقة محصل")
+    names = M["اسم"].tolist()
+    chosen = st.selectbox("اختار المحصل", names, key="cpr_card_pick")
+    ckey = M.index[M["اسم"] == chosen][0]
+    row = M.loc[ckey]
+    used = result["used"]
+    labels = [CPR_METRICS[k][0] for k in used]
+    mine = [float(row[f"_norm_{k}"]) for k in used]
+    team_avg = [float(M[f"_norm_{k}"].mean()) for k in used]
+    left, right = st.columns([1, 1])
+    with left:
+        fig = go.Figure()
+        fig.add_trace(go.Scatterpolar(r=mine + mine[:1], theta=labels + labels[:1], fill="toself", name=chosen,
+                                      line=dict(color=OPS_DARK, width=3)))
+        fig.add_trace(go.Scatterpolar(r=team_avg + team_avg[:1], theta=labels + labels[:1], fill="toself",
+                                      name="متوسط الفريق", line=dict(color=OPS_LIGHT, width=2), opacity=0.55))
+        fig.update_layout(
+            template=PLOTLY_TEMPLATE, height=430, paper_bgcolor="rgba(0,0,0,0)",
+            polar=dict(radialaxis=dict(range=[0, 100], tickfont=dict(size=11)), angularaxis=dict(tickfont=dict(size=13))),
+            font={"family": "Tajawal, sans-serif", "color": THEME["text"]}, margin=dict(t=40, b=40, l=60, r=60),
+            legend=dict(orientation="h", y=-0.08),
+        )
+        with st.container(border=True):
+            st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG, key="cpr_radar")
+        st.caption("كل مقياس مترجم لنسبة من أعلى محصل في الفريق (100 = الأفضل).")
+    with right:
+        with st.container(border=True):
+            st.markdown(f"#### {PERF_MEDALS.get(int(row['الترتيب']), '🏅')} {chosen}")
+            for line in result["insights"].get(ckey, []):
+                st.markdown(f"- {line}")
+
+
+def _cpr_render_quality(result):
+    q = result["quality"]
+    st.markdown("### 🔎 جودة البيانات وطريقة الحساب")
+    rows = [
+        ("مفتاح ربط السدادات بالمحفظة", f"{q.get('pay_key')} ↔ {q.get('port_key')}"),
+        ("نسبة السدادات المتطابقة مع المحفظة", f"{q['pay_match_rate']:.1f}%" if q.get("pay_match_rate") is not None else "—"),
+        ("سدادات اتحسبت في الفترة", f"{q.get('pay_rows_in_period', 0):,} من {q.get('pay_rows_total', 0):,}"),
+        ("سدادات بدون تاريخ مقروء", f"{q.get('pay_rows_no_date', 0):,}"),
+        ("سدادات لمحصلين مستبعدين", f"{q.get('pay_rows_excluded_collectors', 0):,}"),
+    ]
+    if q.get("act_present"):
+        rows += [
+            ("إفادات اتحسبت في الفترة", f"{q.get('act_rows_in_period', 0):,} من {q.get('act_rows_total', 0):,}"),
+            ("مفتاح ربط النشاط بالمحفظة", f"{q.get('act_key')}" if q.get("act_key_linked") else "غير مربوط"),
+            ("عمود التصنيف (نجاح الإفادات)", "موجود" if q.get("class_present") else "غير موجود"),
+        ]
+    st.dataframe(pd.DataFrame(rows, columns=["البند", "القيمة"]), use_container_width=True, hide_index=True)
+    for note in q.get("notes", []):
+        st.warning(note)
+    for title, key in (
+        ("محصلين سددوا ومش في المحفظة", "pay_not_in_portfolio"),
+        ("محصلين عندهم نشاط ومش في المحفظة", "act_not_in_portfolio"),
+        ("محصلين في المحفظة بدون أي نشاط في الفترة", "portfolio_no_activity"),
+        ("محصلين بدون أي سداد في الفترة", "no_payments"),
+    ):
+        names = q.get(key) or []
+        if names:
+            with st.expander(f"{title} ({len(names)})"):
+                st.write("، ".join(names))
+    with st.expander("📐 طريقة حساب الدرجة والمقاييس"):
+        weights = result["weights"]
+        used = set(result["used"])
+        lines = ["الدرجة = متوسط مرجّح لمقاييس كل واحد فيها مترجم لنسبة من **أعلى محصل في الفريق** (الأفضل = 100):"]
+        for key, (label, _) in CPR_METRICS.items():
+            state = "✅" if key in used else "⛔ غير متاح / وزنه 0"
+            lines.append(f"- {label}: وزن {weights.get(key, 0):g} {state}")
+        lines += [
+            "",
+            "- **قيمة المحفظة** = " + ("إجمالي المطالبة (Net Amount + Payment)" if result["value_basis"] == "total" else "المتبقي (Net Amount) فقط") + " لحسابات المحصل الحالية.",
+            "- **معدل التحصيل** = المبلغ المحصّل في الفترة ÷ قيمة محفظته.",
+            "- **تغطية السداد بالحسابات** = حسابات من محفظته سددت في الفترة ÷ كل حسابات محفظته.",
+            "- **تغطية النشاط** = حسابات من محفظته اتعمل عليها إفادة في الفترة ÷ كل حسابات محفظته.",
+            "- **التقييم**: ≥80 ممتاز · ≥60 جيد · ≥40 متوسط · أقل من كده يحتاج تحسين.",
+            "- لو مقياس غير متاح (مثلًا مفيش تصنيف) بيتشال والأوزان بتتوزع على الباقي تلقائيًا.",
+        ]
+        st.markdown("\n".join(lines))
+
+
+def _cpr_excel(result):
+    M = result["metrics"]
+    out = M.drop(columns=[c for c in M.columns if c.startswith("_norm_")]).rename(columns={"اسم": "المحصّل"}).reset_index(drop=True)
+    sheets = {"الترتيب والمقاييس": out}
+    for dim_name in result["dims"]:
+        info = result["cat_tables"][dim_name]
+        sheets[f"الفريق_{info['sheet']}"] = result["team_tables"][dim_name]
+        sheets[f"تركيز_{info['sheet']}"] = result["focus_tables"][dim_name].drop(columns=["البُعد"], errors="ignore")
+        sheets[f"تفصيل_{info['sheet']}"] = info["table"].drop(columns=["_ckey"])
+    notes = []
+    for ckey, lines in result["insights"].items():
+        name = M.loc[ckey, "اسم"]
+        notes.extend({"المحصّل": name, "الترتيب": int(M.loc[ckey, "الترتيب"]), "ملاحظة": line} for line in lines)
+    sheets["ملاحظات_المحصلين"] = pd.DataFrame(notes)
+    q = result["quality"]
+    sheets["جودة_البيانات"] = pd.DataFrame(
+        [(k, str(v)) for k, v in q.items() if not isinstance(v, (list, dict))] +
+        [(k, "، ".join(v)) for k, v in q.items() if isinstance(v, list) and k != "notes"],
+        columns=["البند", "القيمة"],
+    )
+    sheets["الأوزان"] = pd.DataFrame(
+        [(CPR_METRICS[k][0], result["weights"].get(k, 0), "مستخدم" if k in result["used"] else "غير متاح") for k in CPR_METRICS],
+        columns=["المقياس", "الوزن", "الحالة"],
+    )
+    return _rotation_excel_bytes(sheets)
+
+
+def page_collectors_performance():
+    page_header(
+        "COLLECTORS PERFORMANCE",
+        "🏆 أداء المحصّلين",
+        "نشاط + سدادات + محفظة لفترة — ترتيب المحصلين، تغطية المحفظة، وتركيز كل محصل على فئات المديونيات",
+        centered=True,
+    )
+
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        port, h_port = _cpr_upload("📁 المحفظة (LeadOpportunity)", "cpr_up_portfolio", "ملف المحفظة من الـ CRM: المحصل + المبالغ + تواريخ + فئات")
+    with c2:
+        pay, h_pay = _cpr_upload("💰 السدادات (Collection Request)", "cpr_up_payments", "ملف السدادات: المحصل + تاريخ السداد + المبلغ + رقم الحساب")
+    with c3:
+        act, h_act = _cpr_upload("📞 النشاط (اختياري لكن مهم)", "cpr_up_activity", "ملف النشاط (يفضّل المصنّف): المحصل + وقت الإفادة + رقم الحساب + التصنيف")
+    if port is None or pay is None:
+        st.info("ارفع **المحفظة** و**السدادات** على الأقل. ملف **النشاط** بيضيف مقاييس النشاط والتغطية والتركيز على الفئات.")
+        return
+
+    tag = f"{h_port}{h_pay}{h_act or 'x'}"
+    with st.expander("⚙️ ربط الأعمدة (اتكتشفت تلقائيًا — عدّل لو محتاج)", expanded=False):
+        st.markdown("**المحفظة**")
+        a1, a2, a3 = st.columns(3)
+        with a1:
+            p_collector = _cpr_pick("المحصل", port, SALES_PERSON_CANDIDATES, "cpr_p_col", optional=False, tag=tag)
+            p_net = _cpr_pick("المبلغ المتبقي (Net Amount)", port, PROMISE_NET_AMOUNT_CANDIDATES, "cpr_p_net", tag=tag)
+        with a2:
+            p_paid = _cpr_pick("المبلغ المدفوع (Payment)", port, CASE_PAYMENT_CANDIDATES, "cpr_p_paid", tag=tag)
+            p_assign = _cpr_pick("تاريخ الإسناد", port, WALLET_ASSIGN_DATE_CANDIDATES, "cpr_p_assign", tag=tag)
+        with a3:
+            p_debit = _cpr_pick("تاريخ الحادث / المديونية", port, WALLET_DEBIT_DATE_CANDIDATES, "cpr_p_debit", tag=tag)
+            p_aging = _cpr_pick("عمود عمر الإسناد الجاهز (لو موجود)", port, WALLET_AGING_SOURCE_CANDIDATES, "cpr_p_aging", tag=tag)
+        b1, b2, b3 = st.columns(3)
+        with b1:
+            p_priority = _cpr_pick("فئة الأولوية", port, CPR_PRIORITY_CANDIDATES, "cpr_p_pri", tag=tag)
+        with b2:
+            p_type = _cpr_pick("نوع المحفظة", port, CPR_PORTFOLIO_TYPE_CANDIDATES, "cpr_p_type", tag=tag)
+        with b3:
+            p_custom = _cpr_pick("فئة إضافية (أي عمود)", port, [], "cpr_p_custom", tag=tag)
+        st.markdown("**السدادات**")
+        d1, d2, d3, d4 = st.columns(4)
+        with d1:
+            y_collector = _cpr_pick("المحصل", pay, COLLECTED_BY_CANDIDATES + SALES_PERSON_CANDIDATES, "cpr_y_col", optional=False, tag=tag)
+        with d2:
+            y_date = _cpr_pick("تاريخ السداد", pay, SCHEDULE_PAYMENT_DATE_CANDIDATES + CREATED_ON_CANDIDATES, "cpr_y_date", tag=tag)
+        with d3:
+            y_amount = _cpr_pick("مبلغ السداد", pay, CASE_PAYMENT_CANDIDATES + PROMISE_NET_AMOUNT_CANDIDATES, "cpr_y_amt", optional=False, tag=tag)
+        with d4:
+            y_key = _cpr_pick("رقم الحساب للربط (تلقائي لو فاضي)", pay, [], "cpr_y_key", tag=tag)
+        if act is not None:
+            st.markdown("**النشاط**")
+            e1, e2, e3, e4 = st.columns(4)
+            with e1:
+                a_collector = _cpr_pick("المحصل", act, SALES_PERSON_CANDIDATES, "cpr_a_col", optional=False, tag=tag)
+            with e2:
+                a_time = _cpr_pick("وقت الإفادة", act, CREATED_ON_CANDIDATES, "cpr_a_time", tag=tag)
+            with e3:
+                a_class = _cpr_pick("عمود التصنيف (ناجحة/غير ناجحة)", act, [CLASSIFICATION_COL], "cpr_a_class", tag=tag)
+            with e4:
+                a_key = _cpr_pick("رقم الحساب للربط (تلقائي لو فاضي)", act, [], "cpr_a_key", tag=tag)
+        else:
+            a_collector = a_time = a_class = a_key = None
+
+    if not p_collector or not y_collector or not y_amount:
+        st.error("لازم تحدد عمود المحصل في المحفظة والسدادات وعمود مبلغ السداد.")
+        return
+
+    # ---- الفترة ----
+    date_pool = []
+    if y_date:
+        date_pool.append(_cpr_to_datetime(pay[y_date]).dropna())
+    if act is not None and a_time:
+        date_pool.append(_cpr_to_datetime(act[a_time]).dropna())
+    date_pool = [d for d in date_pool if len(d)]
+    start = end = None
+    if date_pool:
+        all_dates = pd.concat(date_pool)
+        dmin, dmax = all_dates.min().date(), all_dates.max().date()
+        p1, p2 = st.columns(2)
+        with p1:
+            start = st.date_input("📅 من", value=dmin, min_value=dmin, max_value=dmax, key=f"cpr_from_{tag}")
+        with p2:
+            end = st.date_input("📅 إلى", value=dmax, min_value=dmin, max_value=dmax, key=f"cpr_to_{tag}")
+        if start > end:
+            st.error("تاريخ البداية بعد النهاية.")
+            return
+    else:
+        st.warning("مفيش تواريخ مقروءة في السدادات أو النشاط — هيتحسب كل الملف كفترة واحدة.")
+
+    # ---- المحصلين ----
+    cands = cpr_collector_candidates(act, pay, port, a_collector, y_collector, p_collector)
+    if cands.empty:
+        st.error("مفيش أسماء محصلين مقروءة.")
+        return
+    option_map = {r.key: r for r in cands.itertuples()}
+    defaults = [k for k, r in option_map.items() if not r.system]
+
+    def fmt_name(key):
+        r = option_map[key]
+        flags = "".join(["📁" if r.portfolio else "", "📞" if r.activity else "", "💰" if r.payments else ""])
+        return f"{r.name}  {flags}" + ("  (حساب نظام)" if r.system else "")
+
+    include = st.multiselect(
+        "👥 المحصلين المشمولين في التقييم (📁 محفظة · 📞 نشاط · 💰 سداد)",
+        options=list(option_map), default=defaults, format_func=fmt_name, key=f"cpr_include_{tag}",
+    )
+
+    s1, s2 = st.columns(2)
+    with s1:
+        basis_label = st.radio(
+            "💼 أساس قياس المحفظة",
+            ["إجمالي المطالبة (المتبقي + المدفوع)", "المتبقي فقط (Net Amount)"],
+            horizontal=True, key="cpr_basis",
+            help="لو بتقيس السداد على كل المطالبة اختار الأول. التاني بيقيس على المتبقي بعد السدادات.",
+        )
+    value_basis = "total" if basis_label.startswith("إجمالي") else "net"
+    with s2:
+        st.caption("المقاييس بتتحسب على الفترة المختارة، والمحفظة هي حالة الإسناد وقت تصدير الملف.")
+
+    with st.expander("🎚️ أوزان الدرجة النهائية", expanded=False):
+        w_cols = st.columns(len(CPR_METRICS))
+        weights = {}
+        for col, (key, (label, default)) in zip(w_cols, CPR_METRICS.items()):
+            with col:
+                weights[key] = st.number_input(label, min_value=0, max_value=100, value=int(default), step=5, key=f"cpr_w_{key}")
+        st.caption("المقاييس غير المتاحة (مثلًا مفيش ملف نشاط) بتتشال والأوزان بتتوزع على الباقي تلقائيًا.")
+
+    cfg = {
+        "port_cols": {"collector": p_collector, "net": p_net, "paid": p_paid, "assign": p_assign, "debit": p_debit,
+                      "aging": p_aging, "priority": p_priority, "ptype": p_type, "custom": p_custom},
+        "pay_cols": {"collector": y_collector, "date": y_date, "amount": y_amount},
+        "act_cols": {"collector": a_collector, "time": a_time, "class": a_class},
+        "pay_key": y_key, "act_key": a_key, "port_key": None,
+        "start": start, "end": end, "include_keys": include, "weights": weights, "value_basis": value_basis,
+    }
+    signature = hashlib.md5(repr((tag, sorted(include), start, end, weights, value_basis, cfg["port_cols"],
+                                  cfg["pay_cols"], cfg["act_cols"], y_key, a_key)).encode("utf-8")).hexdigest()
+
+    if st.button("🏆 احسب أداء المحصلين", type="primary", use_container_width=True, disabled=not include, key="cpr_run"):
+        with st.spinner("جارٍ حساب الأداء والفئات..."):
+            try:
+                result = compute_collector_performance(act if a_collector else None, pay, port, cfg)
+                excel_bytes = _cpr_excel(result)
+            except Exception as error:
+                st.error(f"حصل خطأ أثناء الحساب: {error}")
+                return
+        st.session_state[CPR_RESULT_KEY] = {"signature": signature, "result": result, "excel": excel_bytes}
+
+    stored = st.session_state.get(CPR_RESULT_KEY)
+    if not stored:
+        return
+    if stored["signature"] != signature:
+        st.info("غيّرت ملف أو إعداد — اضغط «احسب أداء المحصلين» عشان تتحدّث النتيجة.")
+        return
+
+    result = stored["result"]
+    stamp = datetime.now().strftime("%Y%m%d_%H%M")
+    st.download_button(
+        "📥 تحميل التقرير الكامل (Excel)", data=stored["excel"], file_name=f"أداء_المحصلين_{stamp}.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        use_container_width=True, key="cpr_download",
+    )
+    _cpr_render_ranking(result)
+    _cpr_render_metrics(result)
+    _cpr_render_categories(result)
+    _cpr_render_collector_card(result)
+    _cpr_render_quality(result)
+
+
 PAGES = {
     "🎯 تصنيف المكالمات": page_classification,
     "📚 الوعود": page_promises,
@@ -14128,6 +15291,7 @@ PAGES = {
     "🔄 التدوير": page_rotation,
     "📞 Phone Numbers Cleaning": page_phone_cleaning,
     "📊 تحليل نشاط المحصّلين": page_dashboard,
+    "🏆 أداء المحصّلين": page_collectors_performance,
     "🖥️ داش بورد": page_dash_board,
 }
 

@@ -2154,6 +2154,60 @@ def render_neglect_filter_notice(filter_key=NEGLECT_AGENT_FILTER_KEY, clear_key=
             st.rerun()
 
 
+def render_agents_multiselect(df, sales_col, key, label="👥 فلتر المحصّلين (سيبه فاضي = كل المحصّلين)"):
+    """فلتر متعدد للمحصّلين: اختار المحصّل/المحصّلين اللي عايزهم والداتا كلها بتتفلتر عليهم.
+
+    بيرجّع (الداتا بعد الفلتر، لستة المحصّلين المختارين). لو مفيش اختيار بيرجّع الداتا زي ما هي.
+    """
+    if df is None or not sales_col or sales_col not in df.columns or len(df) == 0:
+        return df, []
+    names = df[sales_col].dropna().astype(str).str.strip()
+    names = names[names.ne("") & names.str.lower().ne("nan")]
+    counts = names.value_counts()
+    options = sorted(counts.index.tolist())
+    if not options:
+        return df, []
+    state_key = f"{key}_agents"
+    # لو اتغير الملف واختفى محصّل كان مختار، نشيله قبل ما الـ widget يتبني
+    current = [a for a in st.session_state.get(state_key, []) if a in options]
+    if st.session_state.get(state_key) != current:
+        st.session_state[state_key] = current
+    selected = st.multiselect(
+        label,
+        options=options,
+        key=state_key,
+        format_func=lambda a: f"{a}  ({int(counts.get(a, 0)):,})",
+        help="الرقم اللي جنب كل اسم = عدد الصفوف عنده. الفلتر بيأثر على الأرقام والشارتات والجدول والتحميل.",
+    )
+    if not selected:
+        return df, []
+    mask = df[sales_col].astype(str).str.strip().isin(selected)
+    return df.loc[mask].copy(), list(selected)
+
+
+def _pad_hbar_range(fig, max_value, pad=1.3):
+    """يوسّع محور الأعمدة الأفقية عشان الأرقام اللي برّه الأعمدة ما تتقطعش."""
+    try:
+        top = float(max_value)
+    except (TypeError, ValueError):
+        return fig
+    if top > 0:
+        fig.update_xaxes(range=[0, top * pad])
+    return fig
+
+
+def _enhance_chart_bold(fig, axis_size=15, label_size=14):
+    """Data labels بولد وواضحة على كل الأعمدة/الدوائر + محاور بولد، ومن غير ما الأرقام تتخفي."""
+    _enhance_chart(fig, axis_size=axis_size, label_size=label_size)
+    for tr in fig.data:
+        if getattr(tr, "type", None) == "pie":
+            template = getattr(tr, "texttemplate", None)
+            if template and not str(template).startswith("<b>"):
+                tr.texttemplate = f"<b>{template}</b>"
+    fig.update_layout(uniformtext_mode=False)
+    return fig
+
+
 DASHBOARD_AGENT_FILTER_KEY = "dashboard_selected_agent"
 DASHBOARD_DAY_FILTER_KEY = "dashboard_selected_day"
 DASHBOARD_OUTCOME_FILTER_KEY = "dashboard_selected_outcome"  # "ناجحة" | "غير ناجحة"
@@ -5747,7 +5801,8 @@ def _show_neglect_followup_results(df, meta=None):
         find_column(df, NEGLECT_LAST_DATE_CANDIDATES) or "تاريخ اخر متابعة"
     )
 
-    # فلتر تفاعلي من الشارت
+    # فلتر المحصّلين (اختيار متعدد) + فلتر تفاعلي من الشارت
+    df, _picked_agents = render_agents_multiselect(df, sales_col, "neglect_followup_filter")
     render_neglect_filter_notice(
         filter_key=NEGLECT_FOLLOWUP_AGENT_FILTER_KEY,
         clear_key="clear_neglect_followup_agent_filter",
@@ -5811,6 +5866,12 @@ def _show_neglect_followup_results(df, meta=None):
                 hovertemplate="<b>%{label}</b><br>العدد: %{value:,.0f}<br>النسبة: %{percent:.1%}<extra></extra>",
             )
             with st.container(border=True):
+                _enhance_chart_bold(fig)
+                fig.update_traces(
+                    textposition="outside", automargin=True,
+                    textfont=dict(size=15, color=THEME["text"]),
+                )
+                fig.update_layout(margin=dict(t=80, b=60, l=70, r=70))
                 st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG, key="neglect_followup_pie")
         with right:
             if sales_col and sales_col in df.columns:
@@ -5853,11 +5914,14 @@ def _show_neglect_followup_results(df, meta=None):
                     customdata=agent_type[sales_col],
                     hovertemplate="<b>%{y}</b><br>%{fullData.name}: %{x:,.0f}<extra></extra>",
                 )
+                _enhance_chart_bold(fig)
+                _pad_hbar_range(fig, agent_type["العدد"].max())
                 with st.container(border=True):
                     render_selectable_chart(
                         fig,
                         "neglect_followup_by_agent",
                         filter_key=NEGLECT_FOLLOWUP_AGENT_FILTER_KEY,
+                        enhance=False,
                     )
             else:
                 st.info("لا يوجد عمود محصّل لعرض التوزيع.")
@@ -6039,6 +6103,7 @@ def _show_neglect_results(df, meta):
     sales_col = meta.get("sales_col")
     net_col = meta.get("net_col")
 
+    df, _picked_agents = render_agents_multiselect(df, sales_col, "neglect_filter")
     render_neglect_filter_notice(
         filter_key=NEGLECT_AGENT_FILTER_KEY,
         clear_key="clear_neglect_agent_filter",
@@ -6097,11 +6162,14 @@ def _show_neglect_results(df, meta):
                 customdata=agent_counts["المحصّل"],
                 hovertemplate="<b>%{y}</b><br>عدد الحالات: %{x:,}<extra></extra>",
             )
+            _enhance_chart_bold(fig)
+            _pad_hbar_range(fig, agent_counts["عدد الحالات"].max())
             with st.container(border=True):
                 render_selectable_chart(
                     fig,
                     "neglect_by_agent",
                     filter_key=NEGLECT_AGENT_FILTER_KEY,
+                    enhance=False,
                 )
         with right:
             sub_col = meta.get("substate_col")
@@ -6143,6 +6211,8 @@ def _show_neglect_results(df, meta):
                     marker_line_width=0,
                 )
                 with st.container(border=True):
+                    _enhance_chart_bold(fig)
+                    _pad_hbar_range(fig, state_counts["العدد"].max(), pad=1.45)
                     st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG, key="neglect_by_state")
             else:
                 st.info("لا يوجد عمود Sub State لعرض التوزيع.")
@@ -9261,6 +9331,7 @@ def _show_case_errors_results(errors_df, meta):
     payment_col = meta.get("payment_col")
     net_col = meta.get("net_col")
 
+    errors_df, picked_agents = render_agents_multiselect(errors_df, sales_col, "case_errors_filter")
     render_case_errors_filter_notice()
     df = get_case_errors_view(errors_df, sales_col)
 
@@ -9278,8 +9349,17 @@ def _show_case_errors_results(errors_df, meta):
             "💡 اضغط على محصّل في الشارت لتصفية النتائج عليه."
         )
 
-    st.subheader("📊 ملخص أخطاء الحالات" + (f" — {selected_agent}" if selected_agent else ""))
-    base_rows = meta.get("after_sales_filter", 0) if not selected_agent else error_count
+    st.subheader(
+        "📊 ملخص أخطاء الحالات"
+        + (f" — {selected_agent}" if selected_agent else (f" — {len(picked_agents)} محصّل" if picked_agents else ""))
+    )
+    if selected_agent:
+        base_rows = error_count
+    elif picked_agents and meta.get("source_df") is not None and sales_col in meta["source_df"].columns:
+        # نسبة الأخطاء للمحصّلين المختارين = أخطاؤهم ÷ كل صفوفهم في الملف
+        base_rows = int(meta["source_df"][sales_col].astype(str).str.strip().isin(picked_agents).sum())
+    else:
+        base_rows = meta.get("after_sales_filter", 0)
     error_rate = (error_count / base_rows * 100.0) if base_rows else 0.0
     render_case_errors_kpi(
         base_rows,
@@ -9325,8 +9405,10 @@ def _show_case_errors_results(errors_df, meta):
                 customdata=agent_counts[sales_col],
                 hovertemplate="<b>%{y}</b><br>الأخطاء: %{x:,}<extra></extra>",
             )
+            _enhance_chart_bold(fig)
+            _pad_hbar_range(fig, agent_counts["عدد الأخطاء"].max())
             with st.container(border=True):
-                render_selectable_chart(fig, "case_errors_by_agent", filter_key=CASE_ERRORS_AGENT_FILTER_KEY)
+                render_selectable_chart(fig, "case_errors_by_agent", filter_key=CASE_ERRORS_AGENT_FILTER_KEY, enhance=False)
 
         with right:
             # إجمالي المديونية (Net Amount) للأخطاء حسب المحصّل
@@ -9365,8 +9447,10 @@ def _show_case_errors_results(errors_df, meta):
                     customdata=agent_net[sales_col],
                     hovertemplate="<b>%{y}</b><br>Net Amount: %{x:,.0f}<extra></extra>",
                 )
+                _enhance_chart_bold(net_fig)
+                _pad_hbar_range(net_fig, agent_net["إجمالي Net Amount"].max(), pad=1.4)
                 with st.container(border=True):
-                    render_selectable_chart(net_fig, "case_errors_net_by_agent", filter_key=CASE_ERRORS_AGENT_FILTER_KEY)
+                    render_selectable_chart(net_fig, "case_errors_net_by_agent", filter_key=CASE_ERRORS_AGENT_FILTER_KEY, enhance=False)
             else:
                 st.info("لا يوجد عمود Net Amount لعرض رسم المديونية.")
 
@@ -9394,6 +9478,8 @@ def _show_case_errors_results(errors_df, meta):
                 margin=dict(t=70, b=55, l=180, r=50),
             )
             state_fig.update_traces(texttemplate="%{x:,}", textposition="outside", cliponaxis=False)
+            _enhance_chart_bold(state_fig)
+            _pad_hbar_range(state_fig, state_counts["العدد"].max())
             with st.container(border=True):
                 st.plotly_chart(state_fig, use_container_width=True, config=PLOTLY_CONFIG, key="case_errors_by_state")
 
@@ -12543,24 +12629,35 @@ def _rotation_client_table(work, participants, state_used, selected_states, elig
     return clients
 
 
-def _rotation_assign(eligible, collectors, loads0):
+def _rotation_assign(eligible, collectors, loads0, state_matrix=None):
     """يوزّع العملاء المؤهلين على المحصلين.
 
     - ممنوع محصل ياخد عميل كان عنده قبل كده.
     - كل عميل بيروح لمحصل واحد (العميل وحدة واحدة).
-    - الهدف: أقل انحراف عن المتوسط في (عدد العملاء، عدد الحسابات، إجمالي المبلغ).
+    - الهدف: أقل انحراف عن المتوسط في (عدد العملاء، عدد الحسابات، إجمالي المبلغ)
+      وكمان في عدد مطالبات كل حالة لو اتبعتت state_matrix (عدد العملاء × عدد الحالات).
     يرجّع (assign, loads) — assign[i] = رقم المحصل أو -1 لو مفيش محصل مسموح.
     """
     k = len(collectors)
     n = len(eligible)
     idx = {c: i for i, c in enumerate(collectors)}
 
-    V = np.column_stack([
+    columns = [
         np.ones(n),
         eligible["accounts"].to_numpy(dtype=float),
         eligible["amount"].to_numpy(dtype=float),
-    ])
-    loads = np.array(loads0, dtype=float).reshape(k, 3).copy()
+    ]
+    n_states = 0
+    if state_matrix is not None and np.size(state_matrix) and np.shape(state_matrix)[1] > 0:
+        state_matrix = np.asarray(state_matrix, dtype=float)
+        n_states = state_matrix.shape[1]
+        columns.extend(state_matrix.T)
+    V = np.column_stack(columns)
+    # وزن الحالات: مجموعها مش بيزيد عن وزن (العملاء + الحسابات + المبلغ) عشان الحالات الكتير ما تطغاش
+    weights = np.ones(V.shape[1])
+    if n_states:
+        weights[3:] = min(1.0, 3.0 / n_states)
+    loads = np.array(loads0, dtype=float).reshape(k, V.shape[1]).copy()
     target = (V.sum(axis=0) + loads.sum(axis=0)) / k
     scale = np.where(target > 0, target, 1.0)
 
@@ -12569,7 +12666,7 @@ def _rotation_assign(eligible, collectors, loads0):
         forbidden.append([idx[p] for p in prev if p in idx])
 
     def cost(L):
-        return (((L - target) / scale) ** 2).sum(axis=-1)
+        return ((((L - target) / scale) ** 2) * weights).sum(axis=-1)
 
     # الأكبر مبلغًا الأول (ثم الأكثر حسابات) — أفضل لتوازن المبالغ
     order = np.lexsort((-V[:, 1], -V[:, 2]))
@@ -12641,6 +12738,7 @@ def _rotation_prepare_work(df, sales_col, client_col, account_col, amount_cols, 
 def _run_rotation(
     df, sales_col, client_col, account_col, amount_cols, state_col,
     participants, selected_states, eligibility_mode, balance_mode, filename,
+    balance_states=False,
 ):
     participants = list(participants)
     work, blank_count = _rotation_prepare_work(
@@ -12649,6 +12747,8 @@ def _run_rotation(
     state_used = bool(state_col)
     clients = _rotation_client_table(work, participants, state_used, selected_states, eligibility_mode)
     eligible = clients[clients["eligible"]].copy()
+    use_states = bool(balance_states and state_used and selected_states)
+    states_list = list(selected_states) if use_states else []
 
     result = {
         "filename": filename,
@@ -12657,6 +12757,7 @@ def _run_rotation(
         "selected_states": list(selected_states) if state_used else [],
         "eligibility_mode": eligibility_mode,
         "balance_mode": balance_mode,
+        "balance_states": use_states,
         "blank_clients": blank_count,
         "clients_in_selection": int(clients["any_selected"].sum()),
         "mixed_clients": int((clients["eligible"] & clients["mixed_states"]).sum()),
@@ -12669,17 +12770,36 @@ def _run_rotation(
     pidx = {c: i for i, c in enumerate(participants)}
 
     # الحمل الأولي: في وضع "مساواة المحفظة النهائية" بنحسب اللي فضل عند كل محصل
-    loads0 = np.zeros((k, 3))
+    n_state_dims = len(states_list)
+    loads0 = np.zeros((k, 3 + n_state_dims))
     kept = work[~work["_client"].isin(eligible.index) & work["_sales"].isin(participants)]
     kept_stats = pd.DataFrame({
         "clients": kept.groupby("_sales")["_client"].nunique(),
         "accounts": kept.groupby("_sales")["_account"].nunique(),
         "amount": kept.groupby("_sales")["_amt"].sum(),
     }).reindex(participants).fillna(0)
-    if balance_mode == "final":
-        loads0 = kept_stats[["clients", "accounts", "amount"]].to_numpy(dtype=float)
 
-    assign, _ = _rotation_assign(eligible, participants, loads0)
+    # توزيع الحالات: عدد مطالبات كل عميل في كل حالة مختارة + اللي فضل عند كل محصل
+    state_matrix = None
+    kept_state = None
+    if states_list:
+        client_states = (
+            pd.crosstab(work["_client"], work["_state"])
+            .reindex(index=eligible.index, columns=states_list, fill_value=0)
+            .fillna(0)
+        )
+        state_matrix = client_states.to_numpy(dtype=float)
+        kept_state = (
+            pd.crosstab(kept["_sales"], kept["_state"])
+            .reindex(index=participants, columns=states_list, fill_value=0)
+            .fillna(0)
+        )
+    if balance_mode == "final":
+        loads0[:, :3] = kept_stats[["clients", "accounts", "amount"]].to_numpy(dtype=float)
+        if kept_state is not None:
+            loads0[:, 3:] = kept_state.to_numpy(dtype=float)
+
+    assign, _ = _rotation_assign(eligible, participants, loads0, state_matrix=state_matrix)
     eligible["new_collector"] = [participants[a] if a >= 0 else None for a in assign]
     assigned = eligible[eligible["new_collector"].notna()].copy()
     unassigned = eligible[eligible["new_collector"].isna()].copy()
@@ -12743,6 +12863,35 @@ def _run_rotation(
         balance_rows.append(row)
     balance = pd.DataFrame(balance_rows)
 
+    # ---- توزيع الحالات على المحصلين (لو مفعّل) ----
+    state_pivot = None
+    state_balance = None
+    if states_list and not assigned.empty:
+        recv_state = (
+            client_states.loc[assigned.index]
+            .groupby(assigned["new_collector"]).sum()
+            .reindex(participants).fillna(0)
+        )
+        basis_state = (kept_state + recv_state) if balance_mode == "final" else recv_state
+        tgt_state = basis_state.sum() / k
+        state_rows = []
+        for name in participants:
+            for state_name in states_list:
+                actual_s = float(basis_state.loc[name, state_name])
+                target_s = float(tgt_state[state_name])
+                state_rows.append({
+                    "المحصّل": name,
+                    "الحالة": state_name,
+                    "مستهدف": round(target_s, 2),
+                    "فعلي": int(round(actual_s)),
+                    "فرق %": round((actual_s - target_s) / target_s * 100, 1) if target_s > 0 else 0.0,
+                })
+        state_balance = pd.DataFrame(state_rows)
+        state_pivot = basis_state.astype(int).reset_index(drop=True)
+        state_pivot.columns = [str(c) for c in states_list]
+        state_pivot["الإجمالي"] = state_pivot.sum(axis=1)
+        state_pivot.insert(0, "المحصّل", participants)
+
     # ---- تفاصيل العملاء ----
     detail = pd.DataFrame({
         "العميل": assigned.index,
@@ -12779,6 +12928,8 @@ def _run_rotation(
     sheets_full = {
         "ملخص_التدوير": summary,
         "الموازنة": balance,
+        "توزيع_الحالات": state_pivot,
+        "موازنة_الحالات": state_balance,
         "إسناد_العملاء": detail,
         "المطالبات_المدوّرة_فقط": rotated_rows,
         "عملاء_مستبعدون": skipped_df,
@@ -12788,12 +12939,16 @@ def _run_rotation(
     sheets_report = {
         "ملخص_التدوير": summary,
         "الموازنة": balance,
+        "توزيع_الحالات": state_pivot,
+        "موازنة_الحالات": state_balance,
         "إسناد_العملاء": detail,
         "المطالبات_المدوّرة_فقط": rotated_rows,
     }
     result.update({
         "summary": summary,
         "balance": balance,
+        "state_pivot": state_pivot,
+        "state_balance": state_balance,
         "detail": detail,
         "unassigned": unassigned_df,
         "skipped": skipped_df,
@@ -12818,7 +12973,8 @@ def _render_rotation_results(result):
     states_txt = "، ".join(result.get("selected_states") or []) or "كل الحالات"
     st.caption(
         f"الملف: **{result.get('filename', '—')}** · الحالات: **{states_txt}** · "
-        f"الموازنة: **{mode_txt}** · عدد المحصلين المشاركين: **{len(result.get('participants', []))}**"
+        f"الموازنة: **{mode_txt}** · مساواة الحالات: **{'نعم' if result.get('balance_states') else 'لا'}** · "
+        f"عدد المحصلين المشاركين: **{len(result.get('participants', []))}**"
     )
 
     if result.get("blank_clients"):
@@ -12865,6 +13021,28 @@ def _render_rotation_results(result):
     st.dataframe(summary, use_container_width=True, hide_index=True)
     st.markdown("#### ⚖️ الموازنة (المستهدف مقابل الفعلي)")
     st.dataframe(balance, use_container_width=True, hide_index=True)
+
+    state_pivot = result.get("state_pivot")
+    state_balance = result.get("state_balance")
+    if state_pivot is not None and not state_pivot.empty and state_balance is not None:
+        st.markdown("#### 🏷️ توزيع الحالات على المحصلين")
+        st.dataframe(state_pivot, use_container_width=True, hide_index=True)
+        worst_gap = float(state_balance["فرق %"].abs().max()) if len(state_balance) else 0.0
+        st.caption(f"أقصى فرق عن المستهدف في أي حالة عند أي محصل: {worst_gap:.1f}%")
+        if len(state_pivot) > 1:
+            basis_txt = "بعد التدوير" if result.get("balance_mode") == "final" else "المُستلَم"
+            fig_states = px.bar(
+                state_balance, x="المحصّل", y="فعلي", color="الحالة", barmode="group", text="فعلي",
+                template=PLOTLY_TEMPLATE, color_discrete_sequence=OPS_CATEGORICAL,
+            )
+            _apply_ops_chart_style(
+                fig_states, f"توزيع الحالات لكل محصل ({basis_txt})", height=440,
+                xaxis_title="", yaxis_title="عدد المطالبات",
+            )
+            _enhance_chart_bold(fig_states)
+            st.plotly_chart(fig_states, use_container_width=True, config=PLOTLY_CONFIG, key="rot_state_chart")
+        with st.expander("⚖️ موازنة الحالات (المستهدف مقابل الفعلي)", expanded=False):
+            st.dataframe(state_balance, use_container_width=True, hide_index=True)
 
     if len(summary) > 1:
         basis_cols = (
@@ -12925,7 +13103,7 @@ def page_rotation():
         "ROTATION",
         "🔄 التدوير",
         "تدوير العملاء على المحصلين: كل محصل ياخد عملاء عمرهم ما كانوا عنده، وكل عميل عند محصل واحد بس، "
-        "مع مساواة العملاء والحسابات والمبالغ",
+        "مع مساواة العملاء والحسابات والمبالغ والحالات",
     )
 
     st.subheader("1️⃣ رفع المحفظة")
@@ -13069,6 +13247,15 @@ def page_rotation():
     )
     balance_mode = next(k for k, v in balance_labels.items() if v == bal_choice)
 
+    balance_states = False
+    if state_col:
+        balance_states = st.checkbox(
+            "🏷️ ساوي توزيع الحالات كمان (كل محصل ياخد نفس عدد كل حالة تقريبًا)",
+            value=True,
+            key="rot_balance_states",
+            help="بيوازن عدد مطالبات كل حالة من الحالات المختارة بين المحصلين، مع العملاء والحسابات والمبالغ.",
+        )
+
     # ---- معاينة قبل التشغيل ----
     work_prev, _ = _rotation_prepare_work(df, sales_col, client_col, account_col, amount_cols, state_col)
     prev_clients = _rotation_client_table(
@@ -13090,6 +13277,7 @@ def page_rotation():
             st.session_state[ROTATION_RESULT_KEY] = _run_rotation(
                 df, sales_col, client_col, account_col, amount_cols, state_col,
                 participants, selected_states, eligibility_mode, balance_mode, uploaded.name,
+                balance_states=balance_states,
             )
 
     cached = st.session_state.get(ROTATION_RESULT_KEY)

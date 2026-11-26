@@ -14183,16 +14183,54 @@ def _cpr_id_key(series):
     return text.where(~text.str.lower().isin(["", "nan", "none", "null", "nat"]), None)
 
 
+_CPR_DATE_RE = re.compile(r"^\s*(\d{1,2})[/\-.](\d{1,2})[/\-.](\d{2,4})")
+
+
+def _cpr_parse_dates(series, dayfirst=False):
+    """قراءة التواريخ مع التعامل مع الصيغ المختلطة (تاريخ بس / تاريخ ووقت) في نفس العمود."""
+    kwargs = {"dayfirst": True} if dayfirst else {}
+    parsed = pd.to_datetime(series, errors="coerce", **kwargs)
+    source = int(series.notna().sum())
+    if source and int(parsed.notna().sum()) < source * 0.98:
+        try:
+            alt = pd.to_datetime(series, errors="coerce", format="mixed", **kwargs)
+            if int(alt.notna().sum()) > int(parsed.notna().sum()):
+                parsed = alt
+        except (TypeError, ValueError):
+            pass
+    return parsed
+
+
 def _cpr_to_datetime(series):
+    """يقرا التواريخ وبيحدد تلقائيًا لو الصيغة يوم/شهر ولا شهر/يوم (عشان 02/08 ما تتقرأش فبراير بالغلط)."""
     import warnings
+    if pd.api.types.is_datetime64_any_dtype(series):
+        return series
+    parts = series.dropna().astype(str).str.extract(_CPR_DATE_RE)
+    first = pd.to_numeric(parts[0], errors="coerce")
+    second = pd.to_numeric(parts[1], errors="coerce")
+    dayfirst = None
+    if (first > 12).any() and not (second > 12).any():
+        dayfirst = True
+    elif (second > 12).any() and not (first > 12).any():
+        dayfirst = False
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
-        parsed = pd.to_datetime(series, errors="coerce")
-        if len(series) and parsed.notna().mean() < 0.5:
-            alt = pd.to_datetime(series, errors="coerce", dayfirst=True)
-            if alt.notna().sum() > parsed.notna().sum():
-                parsed = alt
-    return parsed
+        if dayfirst is not None:
+            return _cpr_parse_dates(series, dayfirst=dayfirst)
+        month_first = _cpr_parse_dates(series, dayfirst=False)
+        day_first = _cpr_parse_dates(series, dayfirst=True)
+        n_m, n_d = int(month_first.notna().sum()), int(day_first.notna().sum())
+        if n_d > n_m * 1.05:
+            return day_first
+        if n_m > n_d * 1.05:
+            return month_first
+
+        def span(values):
+            valid = values.dropna()
+            return (valid.quantile(0.98) - valid.quantile(0.02)) if len(valid) > 1 else pd.Timedelta(0)
+
+        return day_first if span(day_first) < span(month_first) else month_first
 
 
 def _cpr_id_columns(df):
@@ -14683,6 +14721,8 @@ def compute_collector_performance(act, pay, port, cfg):
         "has_act": bool(has_act), "has_act_key": has_act_key, "has_class": has_class,
         "period": (cfg.get("start"), cfg.get("end")), "value_basis": cfg.get("value_basis", "total"),
         "name_map": name_map,
+        "frames": {"Pi": Pi, "Yi": Yi, "Ai": Ai, "pay_key_col": pay_key_col, "cust_col": pc.get("customer"),
+                   "has_act_time": has_act_time, "has_act_key": has_act_key},
     }
 
 
@@ -14732,6 +14772,384 @@ def _cpr_build_insights(M, cat_tables, focus_tables, used, has_act, has_act_key,
                 lines.append(f"{dim_name}: أضعف تغطية في «{r['أضعف فئة تغطية']}» ({r['تغطيته فيها (الأضعف) %']:.1f}%).")
         out[ckey] = lines
     return out
+
+
+# ---------------------------------------------------------------- التقرير الشهري (بنفس شكل ملف الوطنية)
+CPR_MONTHS_AR = ["يناير", "فبراير", "مارس", "ابريل", "مايو", "يونيو", "يوليو", "اغسطس", "سبتمبر", "اكتوبر", "نوفمبر", "ديسمبر"]
+CPR_REPORT_DEFAULTS = {"branch": "الرياض", "supervisor": "عبدالمجيد صالح", "company": "الوطنية"}
+CPR_COLLECTION_THRESHOLDS = {"very_good": 1.35, "good": 1.0, "mid": 0.8, "weak": 0.5}
+CPR_ACTIVITY_THRESHOLDS = {"very_good": 1.2, "good": 0.7, "weak": 0.5}
+
+
+def _cpr_period_label(start, end):
+    if start is None or end is None:
+        return "الفترة"
+    s, e = pd.Timestamp(start), pd.Timestamp(end)
+    if s.year == e.year and s.month == e.month and s.day == 1 and e.day == s.days_in_month:
+        return f"{CPR_MONTHS_AR[s.month - 1]} {s.year}"
+    return f"{s:%Y-%m-%d} إلى {e:%Y-%m-%d}"
+
+
+def _cpr_collection_level(ratio, t):
+    if ratio >= t["very_good"]:
+        return "جيد جدا"
+    if ratio >= t["good"]:
+        return "جيد"
+    if ratio >= t["mid"]:
+        return "متوسط"
+    if ratio >= t["weak"]:
+        return "ضعيف"
+    return "ضعيف جدا"
+
+
+def _cpr_activity_level(ratio, t):
+    if ratio >= t["very_good"]:
+        return "جيد جدا"
+    if ratio >= t["good"]:
+        return "جيد"
+    if ratio >= t["weak"]:
+        return "ضعيف"
+    return "ضعيف جدا"
+
+
+def compute_monthly_report(result, meta):
+    """يطلّع بيانات التقرير الشهري: التحصيل اليومي + مجمع النشاطات + الملخص لكل محصل."""
+    fr = result["frames"]
+    Pi, Yi, Ai = fr["Pi"], fr["Yi"], fr["Ai"]
+    M = result["metrics"]
+    name_map = result["name_map"]
+    ckeys = list(M.index)
+    label = _cpr_period_label(*result["period"])
+    notes_w = []
+    company = (meta.get("company") or "").strip()
+
+    def display(key):
+        base = name_map.get(key, key)
+        if meta.get("suffix") and company and not base.endswith(company):
+            return f"{base} - {company}"
+        return base
+
+    # ---------- التحصيل اليومي ----------
+    Yd = Yi[Yi["_ckey"].isin(ckeys)].copy()
+    key_col = fr.get("pay_key_col")
+    acct = _cpr_id_key(Yd[key_col]).fillna("") if key_col and key_col in Yd.columns else pd.Series("", index=Yd.index)
+    dates = Yd["_date"].dt.normalize() if "_date" in Yd.columns else pd.Series(pd.NaT, index=Yd.index)
+    pay_daily = pd.DataFrame({
+        "_ckey": Yd["_ckey"].to_numpy(), "account": acct.to_numpy(),
+        "amount": Yd["_amt"].to_numpy(), "date": pd.to_datetime(dates).to_numpy(),
+    })
+    pay_daily["name"] = pay_daily["_ckey"].map(display)
+    pay_daily = pay_daily.sort_values(["date", "name"], kind="stable").reset_index(drop=True)
+    if "_date" not in Yd.columns:
+        notes_w.append("ملف السدادات مفيهوش عمود تاريخ — عمود «تاريخ السداد» هيطلع فاضي.")
+
+    # ---------- مجمع النشاطات (يومي لكل محصل) ----------
+    act_daily = None
+    covered_mode = meta.get("covered_mode", "statements")
+    if Ai is not None and fr.get("has_act_time") and len(Ai):
+        A2 = Ai[Ai["_ckey"].isin(ckeys)].dropna(subset=["_day"])
+        by_customer = covered_mode == "customers" and fr.get("has_act_key")
+        if by_customer:
+            cov = A2.groupby(["_ckey", "_day"])["_key"].nunique()
+            succ = A2[A2["_success"]].groupby(["_ckey", "_day"])["_key"].nunique()
+        else:
+            cov = A2.groupby(["_ckey", "_day"]).size()
+            succ = A2[A2["_success"]].groupby(["_ckey", "_day"]).size()
+            if covered_mode == "customers":
+                notes_w.append("مفيش عمود رقم حساب للنشاط — اتحسبت «المغطاة» بعدد الإفادات بدل العملاء المميزين.")
+        act_daily = pd.DataFrame({"cov": cov}).join(succ.rename("succ")).fillna(0).astype(int).reset_index()
+        act_daily.columns = ["_ckey", "date", "cov", "succ"]
+        act_daily["name"] = act_daily["_ckey"].map(display)
+        act_daily = act_daily.sort_values(["date", "name"], kind="stable").reset_index(drop=True)
+    elif Ai is not None and not fr.get("has_act_time"):
+        notes_w.append("ملف النشاط مفيهوش عمود وقت — شيت «مجمع النشاطات» هيطلع فاضي واتحسبت المغطاة من إجمالي الإفادات.")
+    if Ai is None:
+        notes_w.append("ملف النشاط مش مرفوع — أعمدة المغطاة والناجحة هتطلع صفر وتقييم النشاط مش هيظهر.")
+    elif not result.get("has_class"):
+        notes_w.append("مفيش عمود تصنيف في النشاط — الناجحة هتطلع صفر.")
+
+    # ---------- الملخص لكل محصل ----------
+    acc_n = Pi.groupby("_ckey")["_key"].nunique()
+    cust_col = fr.get("cust_col")
+    if cust_col and cust_col in Pi.columns:
+        cust = _cpr_id_key(Pi[cust_col])
+        cust = cust.where(cust.notna(), Pi["_key"])
+        cust_n = pd.DataFrame({"_ckey": Pi["_ckey"].to_numpy(), "_c": cust.to_numpy()}).groupby("_ckey")["_c"].nunique()
+    else:
+        cust_n = acc_n
+    if act_daily is not None:
+        covered = act_daily.groupby("_ckey")["cov"].sum()
+        success = act_daily.groupby("_ckey")["succ"].sum()
+    elif Ai is not None and "إجمالي الإفادات" in M.columns:
+        covered = M["إجمالي الإفادات"].astype(int)
+        success = M["إفادات ناجحة"].astype(int) if "إفادات ناجحة" in M.columns else pd.Series(0, index=M.index)
+    else:
+        covered = pd.Series(0, index=M.index)
+        success = pd.Series(0, index=M.index)
+    receipts = Yd.groupby("_ckey").size()
+    amount = Yd.groupby("_ckey")["_amt"].sum()
+
+    order = sorted(ckeys)
+    S = pd.DataFrame(index=order)
+    S["name"] = [display(k) for k in order]
+    S["customers"] = cust_n.reindex(order).fillna(0).astype(int)
+    S["accounts"] = acc_n.reindex(order).fillna(0).astype(int)
+    S["covered"] = covered.reindex(order).fillna(0).astype(int)
+    S["success"] = success.reindex(order).fillna(0).astype(int)
+    S["receipts"] = receipts.reindex(order).fillna(0).astype(int)
+    S["amount"] = amount.reindex(order).fillna(0.0)
+
+    any_work = (S["covered"] > 0) | (S["amount"] > 0)
+    n0 = max(int(any_work.sum()), 1)
+    med_acc = float(S.loc[S["accounts"] > 0, "accounts"].median()) if (S["accounts"] > 0).any() else 0.0
+    # محفظة شبه فارغة ونشاط/تحصيل شبه صفر (مستقيل مثلًا): بيتشال من متوسط الفريق عشان ما يقلّلوش المتوسط
+    near_empty = (
+        (med_acc > 0) & (S["accounts"] < 0.25 * med_acc)
+        & (S["covered"] < 0.05 * max(S["covered"].sum() / n0, 1))
+        & (S["amount"] < 0.05 * max(S["amount"].sum() / n0, 1))
+    )
+    active = any_work & ~near_empty
+    n_active = max(int(active.sum()), 1)
+    avg_cov = S.loc[active, "covered"].sum() / n_active
+    avg_amt = S.loc[active, "amount"].sum() / n_active
+    top_amt = S["amount"].idxmax() if S["amount"].max() > 0 else None
+    top_cov = S["covered"].idxmax() if S["covered"].max() > 0 else None
+    has_act_data = Ai is not None
+    has_pay_data = S["amount"].sum() > 0
+
+    c_thr = {**CPR_COLLECTION_THRESHOLDS, **(meta.get("coll_thr") or {})}
+    a_thr = {**CPR_ACTIVITY_THRESHOLDS, **(meta.get("act_thr") or {})}
+    notes = []
+    for key, row in S.iterrows():
+        if near_empty[key]:
+            notes.append("مستقيل / محفظة شبه فارغة (راجع)")
+            continue
+        if not active[key]:
+            notes.append("لا يوجد نشاط ولا تحصيل في الفترة")
+            continue
+        parts = []
+        if has_pay_data:
+            if key == top_amt:
+                parts.append("اعلي تحصيل")
+            else:
+                parts.append("تحصيل " + _cpr_collection_level(row["amount"] / avg_amt if avg_amt > 0 else 0, c_thr))
+        if has_act_data and avg_cov > 0:
+            text = "نشاط " + _cpr_activity_level(row["covered"] / avg_cov, a_thr)
+            if key == top_cov:
+                text += " (الاعلي نشاط)"
+            parts.append(text)
+        notes.append(" - ".join(parts))
+    S["note"] = notes
+
+    return {
+        "label": label, "meta": meta, "pay_daily": pay_daily, "act_daily": act_daily, "summary": S,
+        "warnings": notes_w, "covered_mode": covered_mode,
+        "n_active": n_active, "avg_cov": avg_cov, "avg_amt": avg_amt,
+    }
+
+
+def _cpr_monthly_excel(report):
+    """إكسيل بنفس شكل «مجمع الأداء الشهري»: التحصيل اليومي + مجمع النشاطات + الملخص لكل محصل."""
+    from openpyxl import Workbook
+    from openpyxl.formatting.rule import ColorScaleRule, DataBarRule
+    from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
+    from openpyxl.worksheet.table import Table, TableStyleInfo
+
+    meta, label = report["meta"], report["label"]
+    branch, supervisor, company = meta["branch"], meta["supervisor"], meta["company"]
+    font_ar = "Sakkal Majalla"
+    center = Alignment(horizontal="center", vertical="center")
+    thin = Side(style="thin", color="999999")
+    box = Border(left=thin, right=thin, top=thin, bottom=thin)
+    white_bold = Font(name=font_ar, size=11, bold=True, color="FFFFFF")
+    body = Font(name=font_ar, size=11)
+    fill = lambda hex_: PatternFill("solid", fgColor=hex_)
+    pivot_fill = fill("2F5597")
+
+    wb = Workbook()
+    # ---------------- التحصيل اليومي ----------------
+    ws = wb.active
+    ws.title = "التحصيل اليومي"
+    ws.sheet_view.showGridLines = False
+    headers = ["الفرع", "اسم المشرف", "الشركة", "اسم المحصل", "رقم الحساب / رقم المديونية / رقم القرض", "المبلغ المحصل", "تاريخ السداد"]
+    for i, h in enumerate(headers):
+        c = ws.cell(2, 2 + i, h)
+        c.font, c.alignment, c.fill = white_bold, center, pivot_fill
+    pay = report["pay_daily"]
+    for r, row in enumerate(pay.itertuples(index=False), start=3):
+        values = [branch, supervisor, company, row.name, row.account, float(row.amount),
+                  row.date.to_pydatetime() if pd.notna(row.date) else None]
+        for i, v in enumerate(values):
+            c = ws.cell(r, 2 + i, v)
+            c.font, c.alignment = body, center
+        ws.cell(r, 6).number_format = "@"
+        ws.cell(r, 7).number_format = "#,##0.00"
+        ws.cell(r, 8).number_format = "yyyy-mm-dd"
+    last_pay = 2 + len(pay)
+    if len(pay):
+        table = Table(displayName="DailyCollection", ref=f"B2:H{last_pay}")
+        table.tableStyleInfo = TableStyleInfo(name="TableStyleMedium20", showRowStripes=True)
+        ws.add_table(table)
+    for col, text in zip("JKL", ["المشرف", "الشركة", "المبلغ المحصل"]):
+        c = ws[f"{col}3"]
+        c.value, c.font, c.alignment, c.fill, c.border = text, white_bold, center, pivot_fill, box
+    ws["J4"], ws["K4"] = supervisor, company
+    ws["L4"] = f"=SUM(G3:G{max(last_pay, 3)})"
+    ws["J5"], ws["L5"] = "الإجمالي", "=L4"
+    for coord in ("J4", "K4", "L4", "J5", "K5", "L5"):
+        c = ws[coord]
+        c.font, c.alignment, c.border = body, center, box
+    ws["L4"].number_format = ws["L5"].number_format = "#,##0"
+    ws["J5"].font = Font(name=font_ar, size=11, bold=True)
+    for col, w in {"A": 3, "B": 11, "C": 16, "D": 11, "E": 26, "F": 34, "G": 16, "H": 14, "J": 18, "K": 12, "L": 15}.items():
+        ws.column_dimensions[col].width = w
+
+    # ---------------- مجمع النشاطات ----------------
+    wa = wb.create_sheet("مجمع النشاطات")
+    wa.sheet_view.showGridLines = False
+    headers = ["الفرع", "اسم المشرف", "الشركة", "اسم المحصل", "عدد العملاء المغطاة", "عدد العملاء الناجحة", "تاريخ اليوم"]
+    for i, h in enumerate(headers):
+        c = wa.cell(2, 2 + i, h)
+        c.font, c.alignment, c.fill = white_bold, center, pivot_fill
+    act = report["act_daily"]
+    n_act_rows = 0 if act is None else len(act)
+    if act is not None:
+        for r, row in enumerate(act.itertuples(index=False), start=3):
+            values = [branch, supervisor, company, row.name, int(row.cov), int(row.succ),
+                      row.date.to_pydatetime() if pd.notna(row.date) else None]
+            for i, v in enumerate(values):
+                c = wa.cell(r, 2 + i, v)
+                c.font, c.alignment = body, center
+            wa.cell(r, 8).number_format = "yyyy-mm-dd"
+    last_act = 2 + n_act_rows
+    if n_act_rows:
+        table = Table(displayName="DailyActivity", ref=f"B2:H{last_act}")
+        table.tableStyleInfo = TableStyleInfo(name="TableStyleMedium20", showRowStripes=True)
+        wa.add_table(table)
+    for col, text in zip("KLMNO", ["المشرف", "الشركة", "عدد العملاء المغطاة", "عدد العملاء الناجحة", "نسبة المكالمات الناجحة من اجمالى المغطاة"]):
+        c = wa[f"{col}2"]
+        c.value, c.font, c.alignment, c.fill, c.border = text, white_bold, center, pivot_fill, box
+    wa["K3"], wa["L3"] = supervisor, company
+    wa["M3"], wa["N3"] = f"=SUM(F3:F{max(last_act, 3)})", f"=SUM(G3:G{max(last_act, 3)})"
+    wa["O3"] = "=IF(M3=0,0,N3/M3)"
+    wa["K4"] = "الإجمالي"
+    wa["M4"], wa["N4"], wa["O4"] = "=M3", "=N3", "=O3"
+    for coord in ("K3", "L3", "M3", "N3", "O3", "K4", "L4", "M4", "N4", "O4"):
+        c = wa[coord]
+        c.font, c.alignment, c.border = body, center, box
+    wa["O3"].number_format = wa["O4"].number_format = "0.0%"
+    wa["K4"].font = Font(name=font_ar, size=11, bold=True)
+    for col, w in {"A": 3, "B": 11, "C": 16, "D": 11, "E": 26, "F": 20, "G": 20, "H": 14, "K": 18, "L": 12, "M": 20, "N": 20, "O": 34}.items():
+        wa.column_dimensions[col].width = w
+
+    # ---------------- الملخص لكل محصل ----------------
+    wsu = wb.create_sheet("الملخص لكل محصل")
+    wsu.sheet_view.showGridLines = False
+    cols = [
+        ("الفرع", "5B9BD5"), ("اسم المشرف", "5B9BD5"), ("الشركة", "5B9BD5"), ("اسم الموظف", "5B9BD5"),
+        (f"عدد العملاء المحفظة خلال {label}", "2B4D89"), (f"عدد الحسابات المحفظة خلال {label}", "2B4D89"),
+        (f"عدد العملاء المغطاه خلال {label}", "00B0F0"), (f"عدد العملاء الناجحة خلال {label}", "00B0F0"),
+        ("نسبة الناجح من اجمالي المغطاة", "2B4D89"), ("نسبة تغطية المحصل من اجمالي الفريق", "2B4D89"),
+        ("عدد الايصالات المحصلة", "5B9BD5"), (f"المبلغ المحصل خلال {label}", "5B9BD5"),
+        ("نسبة التحصيل من اجمالي التحصيل", "5B9BD5"), (f"ملاحظات موظف العمليات علي الموظف خلال {label}", "C00000"),
+    ]
+    for i, (text, color) in enumerate(cols):
+        c = wsu.cell(2, 2 + i, text)
+        c.font, c.fill = white_bold, fill(color)
+        c.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+    wsu.row_dimensions[2].height = 36
+    S = report["summary"]
+    first, last = 3, 2 + len(S)
+    for r, row in enumerate(S.itertuples(index=False), start=first):
+        values = {2: branch, 3: supervisor, 4: company, 5: row.name, 6: int(row.customers), 7: int(row.accounts),
+                  8: int(row.covered), 9: int(row.success),
+                  10: f"=IF(H{r}=0,0,I{r}/H{r})",
+                  11: f"=IF(SUM($H${first}:$H${last})=0,0,H{r}/SUM($H${first}:$H${last}))",
+                  12: int(row.receipts), 13: float(row.amount),
+                  14: f"=IF(SUM($M${first}:$M${last})=0,0,M{r}/SUM($M${first}:$M${last}))",
+                  15: row.note}
+        for col, v in values.items():
+            c = wsu.cell(r, col, v)
+            c.font, c.alignment = body, center
+        wsu.cell(r, 10).number_format = "0.00%"
+        wsu.cell(r, 11).number_format = "0.00%"
+        wsu.cell(r, 13).number_format = "#,##0_);(#,##0)"
+        wsu.cell(r, 14).number_format = "0.0%"
+        wsu.row_dimensions[r].height = 18
+    total_row = last + 1
+    total_font = Font(name=font_ar, size=11, bold=True)
+    top_border = Border(top=Side(style="medium", color="2B4D89"))
+    wsu.cell(total_row, 5, "الإجمالي")
+    for col in (6, 7, 8, 9, 12, 13):
+        letter = chr(64 + col)
+        wsu.cell(total_row, col, f"=SUM({letter}{first}:{letter}{last})")
+    wsu.cell(total_row, 10, f"=IF(H{total_row}=0,0,I{total_row}/H{total_row})")
+    wsu.cell(total_row, 11, f"=SUM(K{first}:K{last})")
+    wsu.cell(total_row, 14, f"=SUM(N{first}:N{last})")
+    for col in range(2, 16):
+        c = wsu.cell(total_row, col)
+        c.font, c.alignment, c.border = total_font, center, top_border
+    wsu.cell(total_row, 10).number_format = wsu.cell(total_row, 11).number_format = "0.00%"
+    wsu.cell(total_row, 13).number_format = "#,##0_);(#,##0)"
+    wsu.cell(total_row, 14).number_format = "0.0%"
+    if len(S):
+        wsu.conditional_formatting.add(
+            f"M{first}:M{last}",
+            ColorScaleRule(start_type="min", start_color="F8696B", mid_type="percentile", mid_value=50,
+                           mid_color="FFEB84", end_type="max", end_color="63BE7B"),
+        )
+        for col in ("J", "K", "N"):
+            wsu.conditional_formatting.add(
+                f"{col}{first}:{col}{last}", DataBarRule(start_type="num", start_value=0, end_type="max", color="63BE7B")
+            )
+    for col, w in {"A": 3, "B": 9, "C": 15, "D": 11, "E": 27, "F": 19, "G": 24, "H": 19, "I": 21, "J": 19, "K": 24,
+                   "L": 16, "M": 21, "N": 24, "O": 50}.items():
+        wsu.column_dimensions[col].width = w
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
+
+
+def _cpr_render_monthly(report):
+    S = report["summary"]
+    st.markdown(f"### 📑 تقرير الأداء الشهري — {report['label']}")
+    total_cov, total_succ = int(S["covered"].sum()), int(S["success"].sum())
+    st.caption(
+        f"بنفس شكل ملف «مجمع الأداء الشهري»: التحصيل اليومي · مجمع النشاطات · الملخص لكل محصل. "
+        f"المغطاة = {'عملاء مميزين في اليوم' if report['covered_mode'] == 'customers' else 'عدد الإفادات'} · "
+        f"الملاحظات تلقائية حسب نسبة كل محصل لمتوسط المحصلين الفعّالين وتقدر تعدّلها في الإكسيل."
+    )
+    for warning in report["warnings"]:
+        st.warning(warning)
+    show = pd.DataFrame({
+        "المحصّل": S["name"], "عملاء المحفظة": S["customers"], "حسابات المحفظة": S["accounts"],
+        "المغطاة": S["covered"], "الناجحة": S["success"],
+        "نسبة الناجح %": (S["success"] / S["covered"].where(S["covered"] > 0) * 100),
+        "تغطية المحصل من الفريق %": (S["covered"] / max(total_cov, 1) * 100),
+        "الإيصالات": S["receipts"], "المبلغ المحصّل": S["amount"],
+        "نسبة التحصيل من الإجمالي %": (S["amount"] / max(float(S["amount"].sum()), 1e-9) * 100),
+        "ملاحظات": S["note"],
+    }).reset_index(drop=True)
+    st.dataframe(_cpr_style(show), use_container_width=True, hide_index=True)
+    st.caption(
+        f"الإجمالي: مغطاة {total_cov:,} · ناجحة {total_succ:,} "
+        f"({(total_succ / total_cov * 100) if total_cov else 0:.1f}%) · تحصيل {float(S['amount'].sum()):,.0f} "
+        f"من {int(S['receipts'].sum()):,} إيصال."
+    )
+    left, right = st.columns(2)
+    with left:
+        with st.expander(f"💰 التحصيل اليومي ({len(report['pay_daily']):,} سداد)"):
+            pay = report["pay_daily"].rename(columns={"name": "المحصّل", "account": "رقم الحساب", "amount": "المبلغ", "date": "التاريخ"})
+            st.dataframe(pay.drop(columns=["_ckey"]).head(500), use_container_width=True, hide_index=True)
+    with right:
+        act = report["act_daily"]
+        with st.expander(f"📞 مجمع النشاطات ({0 if act is None else len(act):,} يوم-محصل)"):
+            if act is None:
+                st.write("مفيش نشاط يومي متاح.")
+            else:
+                shown = act.rename(columns={"name": "المحصّل", "cov": "المغطاة", "succ": "الناجحة", "date": "اليوم"})
+                st.dataframe(shown.drop(columns=["_ckey"]).head(500), use_container_width=True, hide_index=True)
 
 
 # ---------------------------------------------------------------- الواجهة
@@ -15151,6 +15569,7 @@ def page_collectors_performance():
             p_type = _cpr_pick("نوع المحفظة", port, CPR_PORTFOLIO_TYPE_CANDIDATES, "cpr_p_type", tag=tag)
         with b3:
             p_custom = _cpr_pick("فئة إضافية (أي عمود)", port, [], "cpr_p_custom", tag=tag)
+        p_customer = _cpr_pick("عمود العميل (لحساب «عدد العملاء» في التقرير الشهري)", port, WALLET_CUSTOMER_ID_CANDIDATES, "cpr_p_cust", tag=tag)
         st.markdown("**السدادات**")
         d1, d2, d3, d4 = st.columns(4)
         with d1:
@@ -15239,26 +15658,67 @@ def page_collectors_performance():
                 weights[key] = st.number_input(label, min_value=0, max_value=100, value=int(default), step=5, key=f"cpr_w_{key}")
         st.caption("المقاييس غير المتاحة (مثلًا مفيش ملف نشاط) بتتشال والأوزان بتتوزع على الباقي تلقائيًا.")
 
+    with st.expander("📑 إعدادات التقرير الشهري (بنفس شكل ملف الوطنية)", expanded=False):
+        r1, r2, r3 = st.columns(3)
+        with r1:
+            rep_branch = st.text_input("الفرع", value=CPR_REPORT_DEFAULTS["branch"], key="cpr_rep_branch")
+        with r2:
+            rep_supervisor = st.text_input("اسم المشرف", value=CPR_REPORT_DEFAULTS["supervisor"], key="cpr_rep_sup")
+        with r3:
+            rep_company = st.text_input("الشركة", value=CPR_REPORT_DEFAULTS["company"], key="cpr_rep_comp")
+        rep_suffix = st.checkbox("إضافة اسم الشركة بعد اسم المحصل (مثال: حسن قاسم - الوطنية)", value=True, key="cpr_rep_suffix")
+        covered_label = st.radio(
+            "طريقة عدّ «العملاء المغطاة» و«الناجحة» في اليوم",
+            ["كل الإفادات (زي «مغطاة / ناجحة» في داش بورد النشاط)", "عملاء مميزين في اليوم (عميل بيتحسب مرة واحدة)"],
+            horizontal=True, key="cpr_rep_covered",
+        )
+        st.markdown("**عتبات التقييم التلقائي** — نسبة المحصل لمتوسط المحصلين الفعّالين (1.0 = زي المتوسط)")
+        t1, t2, t3, t4, t5, t6, t7 = st.columns(7)
+        with t1:
+            ct_vg = st.number_input("تحصيل: جيد جدا ≥", 0.0, 10.0, CPR_COLLECTION_THRESHOLDS["very_good"], 0.05, key="cpr_ct_vg")
+        with t2:
+            ct_g = st.number_input("تحصيل: جيد ≥", 0.0, 10.0, CPR_COLLECTION_THRESHOLDS["good"], 0.05, key="cpr_ct_g")
+        with t3:
+            ct_m = st.number_input("تحصيل: متوسط ≥", 0.0, 10.0, CPR_COLLECTION_THRESHOLDS["mid"], 0.05, key="cpr_ct_m")
+        with t4:
+            ct_w = st.number_input("تحصيل: ضعيف ≥", 0.0, 10.0, CPR_COLLECTION_THRESHOLDS["weak"], 0.05, key="cpr_ct_w")
+        with t5:
+            at_vg = st.number_input("نشاط: جيد جدا ≥", 0.0, 10.0, CPR_ACTIVITY_THRESHOLDS["very_good"], 0.05, key="cpr_at_vg")
+        with t6:
+            at_g = st.number_input("نشاط: جيد ≥", 0.0, 10.0, CPR_ACTIVITY_THRESHOLDS["good"], 0.05, key="cpr_at_g")
+        with t7:
+            at_w = st.number_input("نشاط: ضعيف ≥", 0.0, 10.0, CPR_ACTIVITY_THRESHOLDS["weak"], 0.05, key="cpr_at_w")
+        st.caption("أقل من «ضعيف» = ضعيف جدا. أعلى محصل تحصيلًا بيتكتب له «اعلي تحصيل» وأعلى نشاطًا «(الاعلي نشاط)».")
+    report_meta = {
+        "branch": rep_branch.strip(), "supervisor": rep_supervisor.strip(), "company": rep_company.strip(),
+        "suffix": rep_suffix, "covered_mode": "customers" if covered_label.startswith("عملاء") else "statements",
+        "coll_thr": {"very_good": ct_vg, "good": ct_g, "mid": ct_m, "weak": ct_w},
+        "act_thr": {"very_good": at_vg, "good": at_g, "weak": at_w},
+    }
+
     cfg = {
         "port_cols": {"collector": p_collector, "net": p_net, "paid": p_paid, "assign": p_assign, "debit": p_debit,
-                      "aging": p_aging, "priority": p_priority, "ptype": p_type, "custom": p_custom},
+                      "aging": p_aging, "priority": p_priority, "ptype": p_type, "custom": p_custom, "customer": p_customer},
         "pay_cols": {"collector": y_collector, "date": y_date, "amount": y_amount},
         "act_cols": {"collector": a_collector, "time": a_time, "class": a_class},
         "pay_key": y_key, "act_key": a_key, "port_key": None,
         "start": start, "end": end, "include_keys": include, "weights": weights, "value_basis": value_basis,
     }
     signature = hashlib.md5(repr((tag, sorted(include), start, end, weights, value_basis, cfg["port_cols"],
-                                  cfg["pay_cols"], cfg["act_cols"], y_key, a_key)).encode("utf-8")).hexdigest()
+                                  cfg["pay_cols"], cfg["act_cols"], y_key, a_key, sorted(report_meta.items(), key=str))).encode("utf-8")).hexdigest()
 
     if st.button("🏆 احسب أداء المحصلين", type="primary", use_container_width=True, disabled=not include, key="cpr_run"):
         with st.spinner("جارٍ حساب الأداء والفئات..."):
             try:
                 result = compute_collector_performance(act if a_collector else None, pay, port, cfg)
                 excel_bytes = _cpr_excel(result)
+                report = compute_monthly_report(result, report_meta)
+                report_excel = _cpr_monthly_excel(report)
             except Exception as error:
                 st.error(f"حصل خطأ أثناء الحساب: {error}")
                 return
-        st.session_state[CPR_RESULT_KEY] = {"signature": signature, "result": result, "excel": excel_bytes}
+        st.session_state[CPR_RESULT_KEY] = {"signature": signature, "result": result, "excel": excel_bytes,
+                                            "report": report, "report_excel": report_excel}
 
     stored = st.session_state.get(CPR_RESULT_KEY)
     if not stored:
@@ -15269,11 +15729,20 @@ def page_collectors_performance():
 
     result = stored["result"]
     stamp = datetime.now().strftime("%Y%m%d_%H%M")
-    st.download_button(
-        "📥 تحميل التقرير الكامل (Excel)", data=stored["excel"], file_name=f"أداء_المحصلين_{stamp}.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        use_container_width=True, key="cpr_download",
-    )
+    mime = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    d1, d2 = st.columns(2)
+    with d1:
+        st.download_button(
+            "📥 تقرير الأداء الشهري (بنفس شكل ملف الوطنية)", data=stored["report_excel"],
+            file_name=f"مجمع_الاداء_{stored['report']['label'].replace(' ', '_')}_{stamp}.xlsx",
+            mime=mime, use_container_width=True, type="primary", key="cpr_download_monthly",
+        )
+    with d2:
+        st.download_button(
+            "📥 التقرير التحليلي الكامل (ترتيب + فئات)", data=stored["excel"], file_name=f"أداء_المحصلين_{stamp}.xlsx",
+            mime=mime, use_container_width=True, key="cpr_download",
+        )
+    _cpr_render_monthly(stored["report"])
     _cpr_render_ranking(result)
     _cpr_render_metrics(result)
     _cpr_render_categories(result)
